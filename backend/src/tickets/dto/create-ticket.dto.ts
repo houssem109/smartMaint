@@ -35,6 +35,11 @@ export class CreateTicketDto {
   @IsOptional()
   priority?: TicketPriority;
 
+  @ApiProperty({ example: 'windows_update', required: false })
+  @IsString()
+  @IsOptional()
+  subcategory?: string;
+
   @ApiProperty({ example: 'Machine A', required: false })
   @IsString()
   @IsOptional()

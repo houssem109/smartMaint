@@ -28,10 +28,13 @@ export enum TicketPriority {
 }
 
 export enum TicketCategory {
+  SOFTWARE = 'software',
+  HARDWARE = 'hardware',
   ELECTRICAL = 'electrical',
   MECHANICAL = 'mechanical',
   IT = 'it',
   PLUMBING = 'plumbing',
+  TASK = 'task',
   OTHER = 'other',
 }
 
@@ -72,6 +75,9 @@ export class Ticket {
     default: TicketStatus.OPEN,
   })
   status: TicketStatus;
+
+  @Column({ nullable: true })
+  subcategory: string;
 
   @Column({ nullable: true })
   machine: string;

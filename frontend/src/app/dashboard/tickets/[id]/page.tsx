@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
+import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -16,6 +16,7 @@ interface Ticket {
   status: string;
   priority: string;
   category: string;
+  subcategory?: string;
   machine?: string;
   area?: string;
   createdAt: string;
@@ -243,6 +244,14 @@ export default function TicketDetailPage() {
                       <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Assigned To</dt>
                       <dd className="text-sm text-gray-900 dark:text-white font-semibold">
                         {ticket.assignedTo.fullName || ticket.assignedTo.email}
+                      </dd>
+                    </div>
+                  )}
+                  {ticket.subcategory && (
+                    <div>
+                      <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Type</dt>
+                      <dd className="text-sm text-gray-900 dark:text-white font-semibold">
+                        {ticket.subcategory.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                       </dd>
                     </div>
                   )}

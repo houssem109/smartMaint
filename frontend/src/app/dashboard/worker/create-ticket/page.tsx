@@ -2,23 +2,82 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
+import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
+
+// Category suboptions - inputs change based on selected category
+const CATEGORY_OPTIONS = [
+  { value: 'software', label: 'Software Problem', subcategories: [
+    { value: 'windows_update', label: 'Windows Update' },
+    { value: 'bsod', label: 'BSOD (Blue Screen)' },
+    { value: 'software_crash', label: 'Software Crash' },
+    { value: 'app_error', label: 'Application Error' },
+    { value: 'network', label: 'Network/Connectivity' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'hardware', label: 'Hardware', subcategories: [
+    { value: 'machine_part', label: 'Machine Part' },
+    { value: 'motor', label: 'Motor' },
+    { value: 'sensor', label: 'Sensor' },
+    { value: 'conveyor', label: 'Conveyor' },
+    { value: 'electrical_component', label: 'Electrical Component' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'mechanical', label: 'Mechanical', subcategories: [
+    { value: 'bearing', label: 'Bearing' },
+    { value: 'belt', label: 'Belt' },
+    { value: 'gear', label: 'Gear' },
+    { value: 'pump', label: 'Pump' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'electrical', label: 'Electrical', subcategories: [
+    { value: 'wiring', label: 'Wiring' },
+    { value: 'circuit_breaker', label: 'Circuit Breaker' },
+    { value: 'motor', label: 'Motor' },
+    { value: 'switch', label: 'Switch' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'plumbing', label: 'Plumbing', subcategories: [
+    { value: 'pipe', label: 'Pipe' },
+    { value: 'valve', label: 'Valve' },
+    { value: 'pump', label: 'Pump' },
+    { value: 'drain', label: 'Drain' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'task', label: 'Task', subcategories: [
+    { value: 'cleaning', label: 'Cleaning' },
+    { value: 'inspection', label: 'Inspection' },
+    { value: 'calibration', label: 'Calibration' },
+    { value: 'preventive_maintenance', label: 'Preventive Maintenance' },
+    { value: 'other', label: 'Other' },
+  ]},
+  { value: 'other', label: 'Other', subcategories: [] },
+];
 
 export default function CreateTicketPage() {
   const router = useRouter();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    category: 'other',
+    category: 'software',
+    subcategory: '',
     priority: 'medium',
     machine: '',
     area: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const currentCategory = CATEGORY_OPTIONS.find((c) => c.value === formData.category);
+  const hasSubcategories = currentCategory && currentCategory.subcategories.length > 0;
+  const showMachineField = ['hardware', 'mechanical', 'electrical', 'plumbing'].includes(formData.category);
+  const showAreaField = true; // Most categories benefit from location
+
+  const handleCategoryChange = (category: string) => {
+    setFormData({ ...formData, category, subcategory: '' });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,24 +142,45 @@ export default function CreateTicketPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
+                  Category
+                </label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
+                  className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
+                >
+                  {CATEGORY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {hasSubcategories && (
                 <div>
                   <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
-                    Category
+                    Type / Subcategory *
                   </label>
                   <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    required
+                    value={formData.subcategory}
+                    onChange={(e) => setFormData({ ...formData, subcategory: e.target.value })}
                     className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
                   >
-                    <option value="electrical">Electrical</option>
-                    <option value="mechanical">Mechanical</option>
-                    <option value="it">IT</option>
-                    <option value="plumbing">Plumbing</option>
-                    <option value="other">Other</option>
+                    <option value="">Select type...</option>
+                    {currentCategory?.subcategories.map((sub) => (
+                      <option key={sub.value} value={sub.value}>
+                        {sub.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
+              )}
 
+              <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
                     Priority
@@ -116,9 +196,24 @@ export default function CreateTicketPage() {
                     <option value="critical">Critical</option>
                   </select>
                 </div>
+
+                {showAreaField && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
+                      Area/Location
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.area}
+                      onChange={(e) => setFormData({ ...formData, area: e.target.value })}
+                      className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
+                      placeholder="e.g., Production Line 1"
+                    />
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {showMachineField && (
                 <div>
                   <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
                     Machine/Equipment
@@ -128,23 +223,10 @@ export default function CreateTicketPage() {
                     value={formData.machine}
                     onChange={(e) => setFormData({ ...formData, machine: e.target.value })}
                     className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
-                    placeholder="e.g., Machine A"
+                    placeholder="e.g., Machine A, Conveyor B2"
                   />
                 </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2 font-semibold">
-                    Area/Location
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.area}
-                    onChange={(e) => setFormData({ ...formData, area: e.target.value })}
-                    className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
-                    placeholder="e.g., Production Line 1"
-                  />
-                </div>
-              </div>
+              )}
 
               <div className="flex space-x-4">
                 <button
