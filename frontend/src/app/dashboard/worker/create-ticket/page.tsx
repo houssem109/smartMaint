@@ -47,10 +47,13 @@ const CATEGORY_OPTIONS = [
     { value: 'other', label: 'Other' },
   ]},
   { value: 'task', label: 'Task', subcategories: [
-    { value: 'cleaning', label: 'Cleaning' },
-    { value: 'inspection', label: 'Inspection' },
-    { value: 'calibration', label: 'Calibration' },
-    { value: 'preventive_maintenance', label: 'Preventive Maintenance' },
+    { value: 'change_database_value', label: 'Change Value in Database' },
+    { value: 'remove_data', label: 'Remove Something' },
+    { value: 'update_code', label: 'Update Code' },
+    { value: 'fix_bug', label: 'Fix Bug' },
+    { value: 'add_feature', label: 'Add Feature' },
+    { value: 'refactor_code', label: 'Refactor Code' },
+    { value: 'database_migration', label: 'Database Migration' },
     { value: 'other', label: 'Other' },
   ]},
   { value: 'other', label: 'Other', subcategories: [] },
@@ -101,7 +104,7 @@ export default function CreateTicketPage() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['worker', 'admin', 'technician']}>
+    <ProtectedRoute allowedRoles={['worker']}>
       <Layout title="Create New Ticket">
         <div className="max-w-2xl mx-auto">
           <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">

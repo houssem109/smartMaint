@@ -74,7 +74,7 @@ export default function TechnicianDashboard() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['technician', 'admin']}>
+    <ProtectedRoute allowedRoles={['technician']}>
       <Layout title="Technician Dashboard">
         <div className="space-y-6">
           {/* Stats Cards */}

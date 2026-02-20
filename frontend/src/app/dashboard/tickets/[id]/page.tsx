@@ -111,7 +111,14 @@ export default function TicketDetailPage() {
       await api.delete(`/tickets/${ticket.id}`);
       toast.success('Ticket deleted successfully!', { id: toastId });
       setTimeout(() => {
-        router.push('/dashboard/worker');
+        // Redirect to user's own dashboard based on role
+        if (user?.role === 'admin') {
+          router.push('/dashboard/admin');
+        } else if (user?.role === 'technician') {
+          router.push('/dashboard/technician');
+        } else {
+          router.push('/dashboard/worker');
+        }
       }, 1000);
     } catch (error: any) {
       console.error('Failed to delete ticket:', error);

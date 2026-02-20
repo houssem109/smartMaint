@@ -64,7 +64,7 @@ export default function WorkerDashboard() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['worker', 'admin', 'technician']}>
+    <ProtectedRoute allowedRoles={['worker']}>
       <Layout title="Worker Dashboard">
         <div className="space-y-6">
           <div className="flex justify-between items-center">

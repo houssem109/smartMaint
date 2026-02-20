@@ -96,9 +96,6 @@ export default function AdminDashboard() {
                 >
                   🔄 Refresh
                 </button>
-                <Link href="/dashboard/worker" className="text-blue-600 dark:text-blue-400 hover:underline text-sm font-semibold">
-                  View All
-                </Link>
               </div>
             </div>
             {loading ? (

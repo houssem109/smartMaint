@@ -25,10 +25,20 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
       setAuth: (user, token) => {
         localStorage.setItem('token', token);
+        // Set cookies for middleware access
+        if (typeof document !== 'undefined') {
+          document.cookie = `token=${token}; path=/; max-age=604800; SameSite=Lax`;
+          document.cookie = `userRole=${user.role}; path=/; max-age=604800; SameSite=Lax`;
+        }
         set({ user, token, isAuthenticated: true });
       },
       logout: () => {
         localStorage.removeItem('token');
+        // Clear cookies
+        if (typeof document !== 'undefined') {
+          document.cookie = 'token=; path=/; max-age=0';
+          document.cookie = 'userRole=; path=/; max-age=0';
+        }
         set({ user: null, token: null, isAuthenticated: false });
       },
     }),
