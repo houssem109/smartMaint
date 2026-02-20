@@ -74,7 +74,7 @@ export default function WorkerDashboard() {
           <div className="flex justify-between items-center">
             <h2 className="text-2xl font-bold">My Tickets</h2>
             <Button asChild>
-              <Link href="/dashboard/worker/create-ticket">+ Create New Ticket</Link>
+              <Link href="/dashboard/create-ticket">+ Create New Ticket</Link>
             </Button>
           </div>
 
@@ -95,7 +95,7 @@ export default function WorkerDashboard() {
               <CardContent className="py-12 text-center">
                 <p className="mb-4 text-muted-foreground">No tickets yet</p>
                 <Button variant="link" asChild>
-                  <Link href="/dashboard/worker/create-ticket">Create your first ticket</Link>
+                  <Link href="/dashboard/create-ticket">Create your first ticket</Link>
                 </Button>
               </CardContent>
             </Card>

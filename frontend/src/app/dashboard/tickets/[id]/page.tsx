@@ -291,6 +291,7 @@ export default function TicketDetailPage() {
                     </div>
                   </dl>
                 </CardContent>
+              </Card>
             </div>
 
             {/* Back Button */}
