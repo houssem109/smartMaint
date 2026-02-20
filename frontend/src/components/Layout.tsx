@@ -1,58 +1,79 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { useAuthStore } from '@/store/auth-store';
 import { useThemeStore } from '@/store/theme-store';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+import AdminSidebar from './AdminSidebar';
 
 interface LayoutProps {
   children: React.ReactNode;
   title: string;
+  showSidebar?: boolean;
 }
 
-export default function Layout({ children, title }: LayoutProps) {
-  const router = useRouter();
-  const { user, logout } = useAuthStore();
+export default function Layout({ children, title, showSidebar = false }: LayoutProps) {
+  const { user } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
-
-  const handleLogout = () => {
-    logout();
-    router.push('/login');
-  };
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
-      <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+    <div className="min-h-screen bg-background transition-colors">
+      {/* Top Navigation */}
+      <nav className="bg-card shadow-sm border-b sticky top-0 z-30">
+        <div className="px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            {/* Left side - Menu button (only if sidebar is enabled) */}
             <div className="flex items-center">
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">🚀 SmartMaint AI</h1>
-              <span className="ml-4 text-gray-600 dark:text-gray-400">|</span>
-              <span className="ml-4 text-gray-900 dark:text-gray-100 font-semibold">{title}</span>
+              {showSidebar && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="mr-4"
+                >
+                  ☰
+                </Button>
+              )}
+              <span className="font-semibold">{title}</span>
             </div>
+
+            {/* Right side - Theme toggle and user info */}
             <div className="flex items-center space-x-4">
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={toggleTheme}
-                className="px-3 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
                 title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               >
                 {theme === 'dark' ? '☀️' : '🌙'}
-              </button>
-              <span className="text-sm text-gray-900 dark:text-gray-100 font-semibold">
+              </Button>
+              <span className="text-sm font-semibold">
                 {user?.fullName || user?.email} ({user?.role})
               </span>
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 text-sm text-white bg-red-600 rounded-lg hover:bg-red-700 font-semibold"
-              >
-                Logout
-              </button>
             </div>
           </div>
         </div>
       </nav>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {children}
-      </main>
+
+      {/* Main content area */}
+      <div className="flex">
+        {/* Sidebar (only if enabled) */}
+        {showSidebar && (
+          <AdminSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+        )}
+
+        {/* Content */}
+        <main className={cn(
+          'flex-1 transition-all duration-300',
+          showSidebar ? 'lg:ml-0' : ''
+        )}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {children}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

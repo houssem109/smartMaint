@@ -6,6 +6,11 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
 import Link from 'next/link';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select } from '@/components/ui/select';
 
 interface Ticket {
   id: string;
@@ -45,25 +50,25 @@ export default function TechnicianDashboard() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      open: 'bg-blue-100 text-blue-800',
-      in_review: 'bg-yellow-100 text-yellow-800',
-      in_progress: 'bg-purple-100 text-purple-800',
-      solved: 'bg-green-100 text-green-800',
-      closed: 'bg-gray-100 text-gray-800',
+  const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
+    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      open: 'default',
+      in_review: 'secondary',
+      in_progress: 'secondary',
+      solved: 'default',
+      closed: 'outline',
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return variants[status] || 'secondary';
   };
 
-  const getPriorityColor = (priority: string) => {
-    const colors: Record<string, string> = {
-      low: 'bg-green-100 text-green-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-orange-100 text-orange-800',
-      critical: 'bg-red-100 text-red-800',
+  const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
+    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      low: 'outline',
+      medium: 'secondary',
+      high: 'default',
+      critical: 'destructive',
     };
-    return colors[priority] || 'bg-gray-100 text-gray-800';
+    return variants[priority] || 'secondary';
   };
 
   const stats = {
@@ -79,132 +84,126 @@ export default function TechnicianDashboard() {
         <div className="space-y-6">
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-              <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold">Total Tickets</div>
-              <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.total}</div>
-            </div>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-              <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold">Open</div>
-              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{stats.open}</div>
-            </div>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-              <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold">In Progress</div>
-              <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{stats.inProgress}</div>
-            </div>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
-              <div className="text-sm text-gray-600 dark:text-gray-400 font-semibold">Critical</div>
-              <div className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.critical}</div>
-            </div>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total Tickets</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stats.total}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Open</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-primary">{stats.open}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">In Progress</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{stats.inProgress}</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Critical</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-destructive">{stats.critical}</div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Filters */}
-          <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
-            <div className="flex justify-between items-center">
-              <div className="flex space-x-2">
-                {['all', 'open', 'in_progress', 'solved'].map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => {
-                      setFilter(status);
-                      setLoading(true);
-                    }}
-                    className={`px-4 py-2 rounded-lg font-semibold ${
-                      filter === status
-                        ? 'bg-blue-600 dark:bg-blue-700 text-white'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-600'
-                    }`}
-                  >
-                    {status.replace('_', ' ').toUpperCase()}
-                  </button>
-                ))}
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex justify-between items-center">
+                <div className="flex space-x-2">
+                  {['all', 'open', 'in_progress', 'solved'].map((status) => (
+                    <Button
+                      key={status}
+                      variant={filter === status ? 'default' : 'outline'}
+                      onClick={() => {
+                        setFilter(status);
+                        setLoading(true);
+                      }}
+                    >
+                      {status.replace('_', ' ').toUpperCase()}
+                    </Button>
+                  ))}
+                </div>
+                <Button variant="outline" onClick={fetchTickets}>
+                  🔄 Refresh
+                </Button>
               </div>
-              <button
-                onClick={fetchTickets}
-                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 font-semibold"
-              >
-                🔄 Refresh
-              </button>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {/* Tickets Table */}
           {loading ? (
-            <div className="text-center py-12">
-              <p className="text-gray-900 dark:text-white font-semibold">Loading tickets...</p>
-            </div>
+            <Card>
+              <CardContent className="py-12">
+                <p className="text-center text-muted-foreground">Loading tickets...</p>
+              </CardContent>
+            </Card>
           ) : tickets.length === 0 ? (
-            <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow">
-              <p className="text-gray-900 dark:text-white font-semibold">No tickets found</p>
-            </div>
+            <Card>
+              <CardContent className="py-12">
+                <p className="text-center text-muted-foreground">No tickets found</p>
+              </CardContent>
+            </Card>
           ) : (
-            <div className="bg-white dark:bg-gray-800 shadow rounded-lg overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Title
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Priority
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Category
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Created
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-900 dark:text-white uppercase">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                  {tickets.map((ticket) => (
-                    <tr key={ticket.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{ticket.title}</div>
-                        <div className="text-sm text-gray-700 dark:text-gray-300 truncate max-w-xs">
-                          {ticket.description}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(
-                            ticket.status,
-                          )}`}
-                        >
-                          {ticket.status.replace('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`px-2 py-1 text-xs font-semibold rounded-full ${getPriorityColor(
-                            ticket.priority,
-                          )}`}
-                        >
-                          {ticket.priority}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white font-medium">{ticket.category}</td>
-                      <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
-                        {new Date(ticket.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 text-sm">
-                        <Link
-                          href={`/dashboard/tickets/${ticket.id}`}
-                          className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Priority</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tickets.map((ticket) => (
+                      <TableRow key={ticket.id}>
+                        <TableCell>
+                          <div className="font-medium">{ticket.title}</div>
+                          <div className="text-sm text-muted-foreground truncate max-w-xs">
+                            {ticket.description}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getStatusVariant(ticket.status)}>
+                            {ticket.status.replace('_', ' ')}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={getPriorityVariant(ticket.priority)}>
+                            {ticket.priority}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{ticket.category}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {new Date(ticket.createdAt).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/dashboard/tickets/${ticket.id}`}>View</Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           )}
         </div>
       </Layout>

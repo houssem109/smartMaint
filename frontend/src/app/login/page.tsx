@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -47,68 +51,64 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
-      <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">🚀 SmartMaint AI</h1>
-          <p className="text-gray-700 dark:text-gray-300 font-semibold">Maintenance Management System</p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 p-4">
+      <Card className="max-w-md w-full">
+        <CardHeader className="text-center">
+          <CardTitle className="text-3xl mb-2">🚀 SmartMaint AI</CardTitle>
+          <CardDescription>Maintenance Management System</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && (
+              <div className="bg-destructive/15 border border-destructive text-destructive px-4 py-3 rounded-md text-sm">
+                {error}
+              </div>
+            )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-200 px-4 py-3 rounded font-semibold">
-              {error}
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                placeholder="admin@smartmaint.com"
+              />
             </div>
-          )}
 
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-              Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
-              placeholder="admin@smartmaint.com"
-            />
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full"
+              size="lg"
+            >
+              {loading ? 'Logging in...' : 'Login'}
+            </Button>
+          </form>
+
+          <div className="mt-6 pt-6 border-t">
+            <p className="text-sm text-muted-foreground text-center mb-2">Default Credentials:</p>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p>Admin: admin@smartmaint.com / admin123</p>
+              <p>Technician: tech@smartmaint.com / tech123</p>
+              <p>Worker: worker@smartmaint.com / worker123</p>
+            </div>
           </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-semibold"
-              placeholder="••••••••"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 dark:bg-blue-700 text-white py-3 px-4 rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition font-bold text-lg"
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
-
-        <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-          <p className="text-sm text-gray-900 dark:text-gray-100 text-center mb-2 font-semibold">Default Credentials:</p>
-          <div className="text-xs text-gray-800 dark:text-gray-300 space-y-1 font-medium">
-            <p>Admin: admin@smartmaint.com / admin123</p>
-            <p>Technician: tech@smartmaint.com / tech123</p>
-            <p>Worker: worker@smartmaint.com / worker123</p>
-          </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

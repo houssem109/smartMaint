@@ -8,6 +8,10 @@ import Layout from '@/components/Layout';
 import ConfirmModal from '@/components/ConfirmModal';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Select } from '@/components/ui/select';
 
 interface Ticket {
   id: string;
@@ -73,25 +77,25 @@ export default function TicketDetailPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      open: 'bg-blue-100 text-blue-800',
-      in_review: 'bg-yellow-100 text-yellow-800',
-      in_progress: 'bg-purple-100 text-purple-800',
-      solved: 'bg-green-100 text-green-800',
-      closed: 'bg-gray-100 text-gray-800',
+  const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
+    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      open: 'default',
+      in_review: 'secondary',
+      in_progress: 'secondary',
+      solved: 'default',
+      closed: 'outline',
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
+    return variants[status] || 'secondary';
   };
 
-  const getPriorityColor = (priority: string) => {
-    const colors: Record<string, string> = {
-      low: 'bg-green-100 text-green-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      high: 'bg-orange-100 text-orange-800',
-      critical: 'bg-red-100 text-red-800',
+  const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
+    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+      low: 'outline',
+      medium: 'secondary',
+      high: 'default',
+      critical: 'destructive',
     };
-    return colors[priority] || 'bg-gray-100 text-gray-800';
+    return variants[priority] || 'secondary';
   };
 
   const canUpdateStatus = user?.role === 'admin' || user?.role === 'technician';
@@ -152,152 +156,148 @@ export default function TicketDetailPage() {
     <ProtectedRoute>
       <Layout title="Ticket Details">
         {loading ? (
-          <div className="text-center py-12">
-            <p className="text-gray-900">Loading ticket...</p>
-          </div>
+          <Card>
+            <CardContent className="py-12">
+              <p className="text-center text-muted-foreground">Loading ticket...</p>
+            </CardContent>
+          </Card>
         ) : !ticket ? (
-          <div className="text-center py-12">
-            <p className="text-gray-900">Ticket not found</p>
-          </div>
+          <Card>
+            <CardContent className="py-12">
+              <p className="text-center text-muted-foreground">Ticket not found</p>
+            </CardContent>
+          </Card>
         ) : (
           <div className="max-w-4xl mx-auto space-y-6">
             {/* Header */}
-            <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{ticket.title}</h2>
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <CardTitle className="mb-2">{ticket.title}</CardTitle>
+                    <div className="flex space-x-2">
+                      <Badge variant={getStatusVariant(ticket.status)}>
+                        {ticket.status.replace('_', ' ')}
+                      </Badge>
+                      <Badge variant={getPriorityVariant(ticket.priority)}>
+                        {ticket.priority}
+                      </Badge>
+                      <Badge variant="secondary">{ticket.category}</Badge>
+                    </div>
+                  </div>
                   <div className="flex space-x-2">
-                    <span
-                      className={`px-3 py-1 text-sm font-semibold rounded-full ${getStatusColor(
-                        ticket.status,
-                      )}`}
-                    >
-                      {ticket.status.replace('_', ' ')}
-                    </span>
-                    <span
-                      className={`px-3 py-1 text-sm font-semibold rounded-full ${getPriorityColor(
-                        ticket.priority,
-                      )}`}
-                    >
-                      {ticket.priority}
-                    </span>
-                    <span className="px-3 py-1 text-sm bg-gray-100 text-gray-900 rounded-full">
-                      {ticket.category}
-                    </span>
+                    {canUpdateStatus && (
+                      <>
+                        <Select
+                          value={newStatus}
+                          onChange={(e) => setNewStatus(e.target.value)}
+                          className="w-40"
+                        >
+                          <option value="open">Open</option>
+                          <option value="in_review">In Review</option>
+                          <option value="in_progress">In Progress</option>
+                          <option value="solved">Solved</option>
+                          <option value="closed">Closed</option>
+                        </Select>
+                        <Button
+                          onClick={handleStatusUpdate}
+                          disabled={updating || newStatus === ticket.status}
+                        >
+                          {updating ? 'Updating...' : 'Update Status'}
+                        </Button>
+                      </>
+                    )}
+                    {canClose && ticket.status !== 'closed' && (
+                      <Button
+                        variant="default"
+                        onClick={handleCloseTicketClick}
+                        disabled={updating}
+                      >
+                        {updating ? 'Closing...' : 'Close Ticket'}
+                      </Button>
+                    )}
+                    {canDelete && (
+                      <Button variant="destructive" onClick={handleDeleteClick}>
+                        Delete Ticket
+                      </Button>
+                    )}
                   </div>
                 </div>
-                <div className="flex space-x-2">
-                  {canUpdateStatus && (
-                    <>
-                      <select
-                        value={newStatus}
-                        onChange={(e) => setNewStatus(e.target.value)}
-                        className="px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-semibold"
-                      >
-                        <option value="open">Open</option>
-                        <option value="in_review">In Review</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="solved">Solved</option>
-                        <option value="closed">Closed</option>
-                      </select>
-                      <button
-                        onClick={handleStatusUpdate}
-                        disabled={updating || newStatus === ticket.status}
-                        className="px-4 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 font-semibold"
-                      >
-                        {updating ? 'Updating...' : 'Update Status'}
-                      </button>
-                    </>
-                  )}
-                  {canClose && ticket.status !== 'closed' && (
-                    <button
-                      onClick={handleCloseTicketClick}
-                      disabled={updating}
-                      className="px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50 font-semibold"
-                    >
-                      {updating ? 'Closing...' : 'Close Ticket'}
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button
-                      onClick={handleDeleteClick}
-                      className="px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 font-semibold"
-                    >
-                      Delete Ticket
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
+              </CardHeader>
+            </Card>
 
             {/* Details */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-                <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">Description</h3>
-                <p className="text-gray-900 dark:text-gray-100 whitespace-pre-wrap font-semibold">{ticket.description}</p>
-              </div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Description</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="whitespace-pre-wrap">{ticket.description}</p>
+                </CardContent>
+              </Card>
 
-              <div className="bg-white dark:bg-gray-800 shadow rounded-lg p-6">
-                <h3 className="text-lg font-bold mb-4 text-gray-900 dark:text-white">Details</h3>
-                <dl className="space-y-3">
-                  <div>
-                    <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Created By</dt>
-                    <dd className="text-sm text-gray-900 dark:text-white font-semibold">
-                      {ticket.createdBy?.fullName || ticket.createdBy?.email || 'Unknown'}
-                    </dd>
-                  </div>
-                  {ticket.assignedTo && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <dl className="space-y-3">
                     <div>
-                      <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Assigned To</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white font-semibold">
-                        {ticket.assignedTo.fullName || ticket.assignedTo.email}
+                      <dt className="text-sm font-medium text-muted-foreground">Created By</dt>
+                      <dd className="text-sm">
+                        {ticket.createdBy?.fullName || ticket.createdBy?.email || 'Unknown'}
                       </dd>
                     </div>
-                  )}
-                  {ticket.subcategory && (
+                    {ticket.assignedTo && (
+                      <div>
+                        <dt className="text-sm font-medium text-muted-foreground">Assigned To</dt>
+                        <dd className="text-sm">
+                          {ticket.assignedTo.fullName || ticket.assignedTo.email}
+                        </dd>
+                      </div>
+                    )}
+                    {ticket.subcategory && (
+                      <div>
+                        <dt className="text-sm font-medium text-muted-foreground">Type</dt>
+                        <dd className="text-sm">
+                          {ticket.subcategory.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                        </dd>
+                      </div>
+                    )}
+                    {ticket.machine && (
+                      <div>
+                        <dt className="text-sm font-medium text-muted-foreground">Machine</dt>
+                        <dd className="text-sm">{ticket.machine}</dd>
+                      </div>
+                    )}
+                    {ticket.area && (
+                      <div>
+                        <dt className="text-sm font-medium text-muted-foreground">Area</dt>
+                        <dd className="text-sm">{ticket.area}</dd>
+                      </div>
+                    )}
                     <div>
-                      <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Type</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white font-semibold">
-                        {ticket.subcategory.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
+                      <dt className="text-sm font-medium text-muted-foreground">Created</dt>
+                      <dd className="text-sm">
+                        {new Date(ticket.createdAt).toLocaleString()}
                       </dd>
                     </div>
-                  )}
-                  {ticket.machine && (
                     <div>
-                      <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Machine</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white font-semibold">{ticket.machine}</dd>
+                      <dt className="text-sm font-medium text-muted-foreground">Last Updated</dt>
+                      <dd className="text-sm">
+                        {new Date(ticket.updatedAt).toLocaleString()}
+                      </dd>
                     </div>
-                  )}
-                  {ticket.area && (
-                    <div>
-                      <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Area</dt>
-                      <dd className="text-sm text-gray-900 dark:text-white font-semibold">{ticket.area}</dd>
-                    </div>
-                  )}
-                  <div>
-                    <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Created</dt>
-                    <dd className="text-sm text-gray-900 dark:text-white font-semibold">
-                      {new Date(ticket.createdAt).toLocaleString()}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm font-medium text-gray-700 dark:text-gray-300">Last Updated</dt>
-                    <dd className="text-sm text-gray-900 dark:text-white font-semibold">
-                      {new Date(ticket.updatedAt).toLocaleString()}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
+                  </dl>
+                </CardContent>
             </div>
 
             {/* Back Button */}
             <div>
-              <button
-                onClick={() => router.back()}
-                className="px-4 py-2 border-2 border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-white font-semibold"
-              >
+              <Button variant="outline" onClick={() => router.back()}>
                 ← Back
-              </button>
+              </Button>
             </div>
           </div>
         )}

@@ -26,7 +26,8 @@ export class UsersService {
 
   async findAll(): Promise<User[]> {
     return this.usersRepository.find({
-      select: ['id', 'username', 'email', 'role', 'fullName', 'isActive', 'createdAt'],
+      select: ['id', 'username', 'email', 'role', 'fullName', 'phoneNumber', 'isActive', 'createdAt'],
+      order: { createdAt: 'DESC' },
     });
   }
 
