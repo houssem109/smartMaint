@@ -15,6 +15,10 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<any> {
     const user = await this.usersService.findByEmail(email);
     if (user && (await bcrypt.compare(password, user.password))) {
+      // Check if user is active
+      if (!user.isActive) {
+        throw new UnauthorizedException('Your account has been deactivated. Please contact an administrator.');
+      }
       const { password, ...result } = user;
       return result;
     }

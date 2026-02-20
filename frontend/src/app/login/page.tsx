@@ -44,7 +44,11 @@ export default function LoginPage() {
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || 'Login failed. Please check your credentials.';
       setError(errorMessage);
-      toast.error(errorMessage, { id: toastId });
+      toast.error(errorMessage, { id: toastId, duration: 5000 });
+      // Keep error visible on page
+      setTimeout(() => {
+        // Error will remain visible until user tries again or clears it
+      }, 100);
     } finally {
       setLoading(false);
     }

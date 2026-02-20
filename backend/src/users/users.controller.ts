@@ -16,6 +16,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from './entities/user.entity';
 import { CreateUserDto } from './dto/create-user.dto';
+import { EmailService } from '../common/services/email.service';
 import * as bcrypt from 'bcrypt';
 
 @ApiTags('Users')
@@ -23,18 +24,38 @@ import * as bcrypt from 'bcrypt';
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly emailService: EmailService,
+  ) {}
 
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Create new user (Admin only)' })
   async create(@Body() createUserDto: CreateUserDto) {
+    // Store plain password before hashing for email
+    const plainPassword = createUserDto.password;
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
-    return this.usersService.create({
+    
+    const user = await this.usersService.create({
       ...createUserDto,
       password: hashedPassword,
+      isActive: true, // Ensure new users are active by default
     });
+    
+    // Send welcome email with credentials (non-blocking)
+    this.emailService.sendWelcomeEmail(
+      createUserDto.email,
+      plainPassword, // Send plain password
+      createUserDto.fullName,
+      createUserDto.username,
+    ).catch((error) => {
+      // Log error but don't fail user creation
+      console.error('Failed to send welcome email:', error);
+    });
+    
+    return user;
   }
 
   @Get()
@@ -67,7 +88,11 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN)
   @ApiOperation({ summary: 'Update user (Admin only)' })
-  update(@Param('id') id: string, @Body() updateData: any) {
+  async update(@Param('id') id: string, @Body() updateData: any) {
+    // Hash password if it's being updated
+    if (updateData.password) {
+      updateData.password = await bcrypt.hash(updateData.password, 10);
+    }
     return this.usersService.update(id, updateData);
   }
 
