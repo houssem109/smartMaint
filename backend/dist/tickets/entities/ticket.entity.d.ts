@@ -15,10 +15,13 @@ export declare enum TicketPriority {
     CRITICAL = "critical"
 }
 export declare enum TicketCategory {
+    SOFTWARE = "software",
+    HARDWARE = "hardware",
     ELECTRICAL = "electrical",
     MECHANICAL = "mechanical",
     IT = "it",
     PLUMBING = "plumbing",
+    TASK = "task",
     OTHER = "other"
 }
 export declare enum TicketSource {
@@ -33,6 +36,7 @@ export declare class Ticket {
     category: TicketCategory;
     priority: TicketPriority;
     status: TicketStatus;
+    subcategory: string;
     machine: string;
     area: string;
     source: TicketSource;

@@ -31,10 +31,13 @@ var TicketPriority;
 })(TicketPriority || (exports.TicketPriority = TicketPriority = {}));
 var TicketCategory;
 (function (TicketCategory) {
+    TicketCategory["SOFTWARE"] = "software";
+    TicketCategory["HARDWARE"] = "hardware";
     TicketCategory["ELECTRICAL"] = "electrical";
     TicketCategory["MECHANICAL"] = "mechanical";
     TicketCategory["IT"] = "it";
     TicketCategory["PLUMBING"] = "plumbing";
+    TicketCategory["TASK"] = "task";
     TicketCategory["OTHER"] = "other";
 })(TicketCategory || (exports.TicketCategory = TicketCategory = {}));
 var TicketSource;
@@ -82,6 +85,10 @@ __decorate([
     }),
     __metadata("design:type", String)
 ], Ticket.prototype, "status", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ nullable: true }),
+    __metadata("design:type", String)
+], Ticket.prototype, "subcategory", void 0);
 __decorate([
     (0, typeorm_1.Column)({ nullable: true }),
     __metadata("design:type", String)

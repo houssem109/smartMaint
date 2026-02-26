@@ -20,9 +20,26 @@ const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const user_entity_1 = require("./entities/user.entity");
+const create_user_dto_1 = require("./dto/create-user.dto");
+const email_service_1 = require("../common/services/email.service");
+const bcrypt = require("bcrypt");
 let UsersController = class UsersController {
-    constructor(usersService) {
+    constructor(usersService, emailService) {
         this.usersService = usersService;
+        this.emailService = emailService;
+    }
+    async create(createUserDto) {
+        const plainPassword = createUserDto.password;
+        const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+        const user = await this.usersService.create({
+            ...createUserDto,
+            password: hashedPassword,
+            isActive: true,
+        });
+        this.emailService.sendWelcomeEmail(createUserDto.email, plainPassword, createUserDto.fullName, createUserDto.username).catch((error) => {
+            console.error('Failed to send welcome email:', error);
+        });
+        return user;
     }
     findAll() {
         return this.usersService.findAll();
@@ -36,7 +53,10 @@ let UsersController = class UsersController {
     findOne(id) {
         return this.usersService.findOne(id);
     }
-    update(id, updateData) {
+    async update(id, updateData) {
+        if (updateData.password) {
+            updateData.password = await bcrypt.hash(updateData.password, 10);
+        }
         return this.usersService.update(id, updateData);
     }
     remove(id) {
@@ -44,6 +64,16 @@ let UsersController = class UsersController {
     }
 };
 exports.UsersController = UsersController;
+__decorate([
+    (0, common_1.Post)(),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Create new user (Admin only)' }),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [create_user_dto_1.CreateUserDto]),
+    __metadata("design:returntype", Promise)
+], UsersController.prototype, "create", null);
 __decorate([
     (0, common_1.Get)(),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
@@ -85,7 +115,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], UsersController.prototype, "update", null);
 __decorate([
     (0, common_1.Delete)(':id'),
@@ -102,6 +132,7 @@ exports.UsersController = UsersController = __decorate([
     (0, common_1.Controller)('users'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, swagger_1.ApiBearerAuth)(),
-    __metadata("design:paramtypes", [users_service_1.UsersService])
+    __metadata("design:paramtypes", [users_service_1.UsersService,
+        email_service_1.EmailService])
 ], UsersController);
 //# sourceMappingURL=users.controller.js.map

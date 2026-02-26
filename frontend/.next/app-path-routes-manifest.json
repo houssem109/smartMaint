@@ -1,0 +1,11 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/dashboard/admin/page": "/dashboard/admin",
+  "/dashboard/technician/page": "/dashboard/technician",
+  "/dashboard/tickets/[id]/page": "/dashboard/tickets/[id]",
+  "/dashboard/worker/create-ticket/page": "/dashboard/worker/create-ticket",
+  "/dashboard/worker/page": "/dashboard/worker",
+  "/login/page": "/login",
+  "/page": "/"
+}

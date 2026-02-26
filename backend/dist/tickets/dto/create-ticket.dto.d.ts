@@ -4,6 +4,7 @@ export declare class CreateTicketDto {
     description: string;
     category?: TicketCategory;
     priority?: TicketPriority;
+    subcategory?: string;
     machine?: string;
     area?: string;
     source?: TicketSource;

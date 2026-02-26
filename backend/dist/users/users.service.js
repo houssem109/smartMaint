@@ -33,7 +33,8 @@ let UsersService = class UsersService {
     }
     async findAll() {
         return this.usersRepository.find({
-            select: ['id', 'username', 'email', 'role', 'fullName', 'isActive', 'createdAt'],
+            select: ['id', 'username', 'email', 'role', 'fullName', 'phoneNumber', 'isActive', 'createdAt'],
+            order: { createdAt: 'DESC' },
         });
     }
     async findOne(id) {

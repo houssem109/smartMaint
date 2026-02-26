@@ -1,7 +1,11 @@
 import { UsersService } from './users.service';
+import { CreateUserDto } from './dto/create-user.dto';
+import { EmailService } from '../common/services/email.service';
 export declare class UsersController {
     private readonly usersService;
-    constructor(usersService: UsersService);
+    private readonly emailService;
+    constructor(usersService: UsersService, emailService: EmailService);
+    create(createUserDto: CreateUserDto): Promise<import("./entities/user.entity").User>;
     findAll(): Promise<import("./entities/user.entity").User[]>;
     findTechnicians(): Promise<import("./entities/user.entity").User[]>;
     getProfile(req: any): Promise<import("./entities/user.entity").User>;

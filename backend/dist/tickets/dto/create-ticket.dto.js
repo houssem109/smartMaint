@@ -42,6 +42,12 @@ __decorate([
     __metadata("design:type", String)
 ], CreateTicketDto.prototype, "priority", void 0);
 __decorate([
+    (0, swagger_1.ApiProperty)({ example: 'windows_update', required: false }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateTicketDto.prototype, "subcategory", void 0);
+__decorate([
     (0, swagger_1.ApiProperty)({ example: 'Machine A', required: false }),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),

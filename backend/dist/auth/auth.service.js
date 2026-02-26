@@ -22,6 +22,9 @@ let AuthService = class AuthService {
     async validateUser(email, password) {
         const user = await this.usersService.findByEmail(email);
         if (user && (await bcrypt.compare(password, user.password))) {
+            if (!user.isActive) {
+                throw new common_1.UnauthorizedException('Your account has been deactivated. Please contact an administrator.');
+            }
             const { password, ...result } = user;
             return result;
         }
