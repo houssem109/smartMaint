@@ -24,13 +24,15 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
       setAuth: (user, token) => {
+        const normalizedRole = user.role?.toLowerCase?.() ?? user.role;
+        const normalizedUser = { ...user, role: normalizedRole };
         localStorage.setItem('token', token);
-        // Set cookies for middleware access
+        // Set cookies for middleware access (always lowercase role)
         if (typeof document !== 'undefined') {
           document.cookie = `token=${token}; path=/; max-age=604800; SameSite=Lax`;
-          document.cookie = `userRole=${user.role}; path=/; max-age=604800; SameSite=Lax`;
+          document.cookie = `userRole=${normalizedRole}; path=/; max-age=604800; SameSite=Lax`;
         }
-        set({ user, token, isAuthenticated: true });
+        set({ user: normalizedUser, token, isAuthenticated: true });
       },
       logout: () => {
         localStorage.removeItem('token');

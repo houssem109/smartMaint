@@ -101,7 +101,7 @@ let TicketsService = class TicketsService {
         if (!ticket) {
             throw new common_1.NotFoundException('Ticket not found');
         }
-        if (userRole === user_entity_1.UserRole.ADMIN) {
+        if (userRole === user_entity_1.UserRole.ADMIN || userRole === user_entity_1.UserRole.SUPERADMIN) {
             await this.ticketsRepository.remove(ticket);
             return;
         }
@@ -112,7 +112,7 @@ let TicketsService = class TicketsService {
         throw new common_1.ForbiddenException('You do not have permission to delete this ticket');
     }
     async assignTicket(ticketId, technicianId, userId, userRole) {
-        if (userRole !== user_entity_1.UserRole.ADMIN && userRole !== user_entity_1.UserRole.TECHNICIAN) {
+        if (userRole !== user_entity_1.UserRole.ADMIN && userRole !== user_entity_1.UserRole.SUPERADMIN && userRole !== user_entity_1.UserRole.TECHNICIAN) {
             throw new common_1.ForbiddenException('Only admins and technicians can assign tickets');
         }
         const ticket = await this.findOne(ticketId, userId, userRole);

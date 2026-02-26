@@ -19,7 +19,7 @@ export default function Home() {
 
     if (isAuthenticated && user) {
       // Redirect based on role
-      if (user.role === 'admin') {
+      if (user.role === 'admin' || user.role === 'superadmin') {
         router.push('/dashboard/admin');
       } else if (user.role === 'technician') {
         router.push('/dashboard/technician');

@@ -15,14 +15,19 @@ const useAuthStore = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_mo
         token: null,
         isAuthenticated: false,
         setAuth: (user, token)=>{
+            const normalizedRole = user.role?.toLowerCase?.() ?? user.role;
+            const normalizedUser = {
+                ...user,
+                role: normalizedRole
+            };
             localStorage.setItem('token', token);
-            // Set cookies for middleware access
+            // Set cookies for middleware access (always lowercase role)
             if (typeof document !== 'undefined') {
                 document.cookie = `token=${token}; path=/; max-age=604800; SameSite=Lax`;
-                document.cookie = `userRole=${user.role}; path=/; max-age=604800; SameSite=Lax`;
+                document.cookie = `userRole=${normalizedRole}; path=/; max-age=604800; SameSite=Lax`;
             }
             set({
-                user,
+                user: normalizedUser,
                 token,
                 isAuthenticated: true
             });
@@ -81,7 +86,7 @@ function Home() {
             if (!isHydrated) return;
             if (isAuthenticated && user) {
                 // Redirect based on role
-                if (user.role === 'admin') {
+                if (user.role === 'admin' || user.role === 'superadmin') {
                     router.push('/dashboard/admin');
                 } else if (user.role === 'technician') {
                     router.push('/dashboard/technician');

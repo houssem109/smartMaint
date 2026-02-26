@@ -45,6 +45,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: smartmaint-backend
+    env_file:
+      - .env
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       DATABASE_HOST: postgres
@@ -55,14 +57,14 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-in-production}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN}
       PORT: 3001
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-noreply@smartmaint.com}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     volumes:

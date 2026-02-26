@@ -30,16 +30,19 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
       return;
     }
 
-    // Check role-based access
-    if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+    // Check role-based access (case-insensitive)
+    const userRole = user?.role?.toLowerCase?.();
+    const normalizedAllowedRoles = allowedRoles?.map((r) => r.toLowerCase());
+
+    if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
       setShowForbidden(true);
       toast.error('Access forbidden: You do not have permission to access this page.');
       
       // Redirect to appropriate dashboard after a short delay
       setTimeout(() => {
-        if (user.role === 'admin') {
+        if (userRole === 'admin' || userRole === 'superadmin') {
           router.push('/dashboard/admin');
-        } else if (user.role === 'technician') {
+        } else if (userRole === 'technician') {
           router.push('/dashboard/technician');
         } else {
           router.push('/dashboard/worker');
@@ -60,7 +63,9 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
   }
 
   // Show forbidden page if user doesn't have required role
-  if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+  const userRole = user?.role?.toLowerCase?.();
+  const normalizedAllowedRoles = allowedRoles?.map((r) => r.toLowerCase());
+  if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
     return <Forbidden />;
   }
 

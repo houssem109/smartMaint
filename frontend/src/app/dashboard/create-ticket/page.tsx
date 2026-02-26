@@ -66,8 +66,9 @@ const CATEGORY_OPTIONS = [
 ];
 
 function getDashboardPath(role: string) {
-  if (role === 'admin') return '/dashboard/admin';
-  if (role === 'technician') return '/dashboard/technician';
+  const r = role?.toLowerCase?.();
+  if (r === 'admin' || r === 'superadmin') return '/dashboard/admin';
+  if (r === 'technician') return '/dashboard/technician';
   return '/dashboard/worker';
 }
 
@@ -116,7 +117,7 @@ export default function CreateTicketPage() {
     }
   };
 
-  const showSidebar = user?.role === 'admin';
+  const showSidebar = user?.role === 'admin' || user?.role === 'superadmin';
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin', 'technician', 'worker']}>

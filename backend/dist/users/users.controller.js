@@ -28,7 +28,14 @@ let UsersController = class UsersController {
         this.usersService = usersService;
         this.emailService = emailService;
     }
-    async create(createUserDto) {
+    async create(req, createUserDto) {
+        if (createUserDto.role === user_entity_1.UserRole.SUPERADMIN) {
+            throw new common_1.ForbiddenException('Creating superadmin users is not allowed');
+        }
+        if (req.user.role === user_entity_1.UserRole.ADMIN &&
+            createUserDto.role === user_entity_1.UserRole.ADMIN) {
+            throw new common_1.ForbiddenException('Only superadmin can create admin users');
+        }
         const plainPassword = createUserDto.password;
         const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
         const user = await this.usersService.create({
@@ -50,16 +57,44 @@ let UsersController = class UsersController {
     getProfile(req) {
         return this.usersService.findOne(req.user.id);
     }
+    async updateMe(req, body) {
+        const updateData = {};
+        if (body.fullName !== undefined)
+            updateData.fullName = body.fullName;
+        if (body.username !== undefined)
+            updateData.username = body.username;
+        if (body.phoneNumber !== undefined)
+            updateData.phoneNumber = body.phoneNumber;
+        if (body.password) {
+            updateData.password = await bcrypt.hash(body.password, 10);
+        }
+        return this.usersService.update(req.user.id, updateData);
+    }
     findOne(id) {
         return this.usersService.findOne(id);
     }
-    async update(id, updateData) {
+    async update(req, id, updateData) {
+        const target = await this.usersService.findOne(id);
+        if (updateData.role === user_entity_1.UserRole.SUPERADMIN && target.email !== 'superadmin@smartmaint.com') {
+            throw new common_1.ForbiddenException('Promoting users to superadmin is not allowed');
+        }
+        if (req.user.role === user_entity_1.UserRole.ADMIN) {
+            if (target.role === user_entity_1.UserRole.ADMIN || target.role === user_entity_1.UserRole.SUPERADMIN) {
+                throw new common_1.ForbiddenException('Only superadmin can modify admin or superadmin users');
+            }
+        }
         if (updateData.password) {
             updateData.password = await bcrypt.hash(updateData.password, 10);
         }
         return this.usersService.update(id, updateData);
     }
-    remove(id) {
+    async remove(req, id) {
+        if (req.user.role === user_entity_1.UserRole.ADMIN) {
+            const target = await this.usersService.findOne(id);
+            if (target.role === user_entity_1.UserRole.ADMIN || target.role === user_entity_1.UserRole.SUPERADMIN) {
+                throw new common_1.ForbiddenException('Only superadmin can delete admin or superadmin users');
+            }
+        }
         return this.usersService.remove(id);
     }
 };
@@ -67,18 +102,19 @@ exports.UsersController = UsersController;
 __decorate([
     (0, common_1.Post)(),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Create new user (Admin only)' }),
-    __param(0, (0, common_1.Body)()),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Create new user (Admin/Superadmin only)' }),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_user_dto_1.CreateUserDto]),
+    __metadata("design:paramtypes", [Object, create_user_dto_1.CreateUserDto]),
     __metadata("design:returntype", Promise)
 ], UsersController.prototype, "create", null);
 __decorate([
     (0, common_1.Get)(),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Get all users (Admin only)' }),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Get all users (Admin/Superadmin only)' }),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
@@ -99,6 +135,15 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "getProfile", null);
 __decorate([
+    (0, common_1.Patch)('me'),
+    (0, swagger_1.ApiOperation)({ summary: 'Update current user profile (email cannot be changed)' }),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], UsersController.prototype, "updateMe", null);
+__decorate([
     (0, common_1.Get)(':id'),
     (0, swagger_1.ApiOperation)({ summary: 'Get user by ID' }),
     __param(0, (0, common_1.Param)('id')),
@@ -109,23 +154,25 @@ __decorate([
 __decorate([
     (0, common_1.Patch)(':id'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Update user (Admin only)' }),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Body)()),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Update user (Admin/Superadmin only; admin cannot edit other admins)' }),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", Promise)
 ], UsersController.prototype, "update", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Delete user (Admin only)' }),
-    __param(0, (0, common_1.Param)('id')),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Delete user (Admin/Superadmin only; admin cannot delete other admins)' }),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
 ], UsersController.prototype, "remove", null);
 exports.UsersController = UsersController = __decorate([
     (0, swagger_1.ApiTags)('Users'),

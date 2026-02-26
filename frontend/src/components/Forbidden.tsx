@@ -12,8 +12,9 @@ export default function Forbidden() {
 
   const getDashboardPath = () => {
     if (!user) return '/login';
-    if (user.role === 'admin') return '/dashboard/admin';
-    if (user.role === 'technician') return '/dashboard/technician';
+    const role = user.role?.toLowerCase?.();
+    if (role === 'admin' || role === 'superadmin') return '/dashboard/admin';
+    if (role === 'technician') return '/dashboard/technician';
     return '/dashboard/worker';
   };
 

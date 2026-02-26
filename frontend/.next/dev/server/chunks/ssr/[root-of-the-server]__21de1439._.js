@@ -33,14 +33,19 @@ const useAuthStore = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_mo
         token: null,
         isAuthenticated: false,
         setAuth: (user, token)=>{
+            const normalizedRole = user.role?.toLowerCase?.() ?? user.role;
+            const normalizedUser = {
+                ...user,
+                role: normalizedRole
+            };
             localStorage.setItem('token', token);
-            // Set cookies for middleware access
+            // Set cookies for middleware access (always lowercase role)
             if (typeof document !== 'undefined') {
                 document.cookie = `token=${token}; path=/; max-age=604800; SameSite=Lax`;
-                document.cookie = `userRole=${user.role}; path=/; max-age=604800; SameSite=Lax`;
+                document.cookie = `userRole=${normalizedRole}; path=/; max-age=604800; SameSite=Lax`;
             }
             set({
-                user,
+                user: normalizedUser,
                 token,
                 isAuthenticated: true
             });
@@ -649,8 +654,9 @@ function Forbidden() {
     const { user } = (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$store$2f$auth$2d$store$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useAuthStore"])();
     const getDashboardPath = ()=>{
         if (!user) return '/login';
-        if (user.role === 'admin') return '/dashboard/admin';
-        if (user.role === 'technician') return '/dashboard/technician';
+        const role = user.role?.toLowerCase?.();
+        if (role === 'admin' || role === 'superadmin') return '/dashboard/admin';
+        if (role === 'technician') return '/dashboard/technician';
         return '/dashboard/worker';
     };
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$Layout$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["default"], {
@@ -678,22 +684,22 @@ function Forbidden() {
                                         d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                                     }, void 0, false, {
                                         fileName: "[project]/src/components/Forbidden.tsx",
-                                        lineNumber: 33,
+                                        lineNumber: 34,
                                         columnNumber: 19
                                     }, this)
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/Forbidden.tsx",
-                                    lineNumber: 27,
+                                    lineNumber: 28,
                                     columnNumber: 17
                                 }, this)
                             }, void 0, false, {
                                 fileName: "[project]/src/components/Forbidden.tsx",
-                                lineNumber: 26,
+                                lineNumber: 27,
                                 columnNumber: 15
                             }, this)
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 25,
+                            lineNumber: 26,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("h1", {
@@ -701,7 +707,7 @@ function Forbidden() {
                             children: "Access Forbidden"
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 42,
+                            lineNumber: 43,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -709,7 +715,7 @@ function Forbidden() {
                             children: "You don't have permission to access this page."
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 45,
+                            lineNumber: 46,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -717,7 +723,7 @@ function Forbidden() {
                             children: "This page is restricted to specific user roles. Please contact an administrator if you believe this is an error."
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 48,
+                            lineNumber: 49,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Button"], {
@@ -727,28 +733,28 @@ function Forbidden() {
                             children: "Go to My Dashboard"
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 51,
+                            lineNumber: 52,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/Forbidden.tsx",
-                    lineNumber: 24,
+                    lineNumber: 25,
                     columnNumber: 11
                 }, this)
             }, void 0, false, {
                 fileName: "[project]/src/components/Forbidden.tsx",
-                lineNumber: 23,
+                lineNumber: 24,
                 columnNumber: 9
             }, this)
         }, void 0, false, {
             fileName: "[project]/src/components/Forbidden.tsx",
-            lineNumber: 22,
+            lineNumber: 23,
             columnNumber: 7
         }, this)
     }, void 0, false, {
         fileName: "[project]/src/components/Forbidden.tsx",
-        lineNumber: 21,
+        lineNumber: 22,
         columnNumber: 5
     }, this);
 }
@@ -788,15 +794,17 @@ function ProtectedRoute({ children, allowedRoles }) {
             router.push('/login');
             return;
         }
-        // Check role-based access
-        if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+        // Check role-based access (case-insensitive)
+        const userRole = user?.role?.toLowerCase?.();
+        const normalizedAllowedRoles = allowedRoles?.map((r)=>r.toLowerCase());
+        if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
             setShowForbidden(true);
             __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$sonner$2f$dist$2f$index$2e$mjs__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["toast"].error('Access forbidden: You do not have permission to access this page.');
             // Redirect to appropriate dashboard after a short delay
             setTimeout(()=>{
-                if (user.role === 'admin') {
+                if (userRole === 'admin' || userRole === 'superadmin') {
                     router.push('/dashboard/admin');
-                } else if (user.role === 'technician') {
+                } else if (userRole === 'technician') {
                     router.push('/dashboard/technician');
                 } else {
                     router.push('/dashboard/worker');
@@ -820,7 +828,7 @@ function ProtectedRoute({ children, allowedRoles }) {
                         className: "inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"
                     }, void 0, false, {
                         fileName: "[project]/src/components/ProtectedRoute.tsx",
-                        lineNumber: 55,
+                        lineNumber: 58,
                         columnNumber: 11
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -828,26 +836,28 @@ function ProtectedRoute({ children, allowedRoles }) {
                         children: "Loading..."
                     }, void 0, false, {
                         fileName: "[project]/src/components/ProtectedRoute.tsx",
-                        lineNumber: 56,
+                        lineNumber: 59,
                         columnNumber: 11
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/src/components/ProtectedRoute.tsx",
-                lineNumber: 54,
+                lineNumber: 57,
                 columnNumber: 9
             }, this)
         }, void 0, false, {
             fileName: "[project]/src/components/ProtectedRoute.tsx",
-            lineNumber: 53,
+            lineNumber: 56,
             columnNumber: 7
         }, this);
     }
     // Show forbidden page if user doesn't have required role
-    if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+    const userRole = user?.role?.toLowerCase?.();
+    const normalizedAllowedRoles = allowedRoles?.map((r)=>r.toLowerCase());
+    if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
         return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$Forbidden$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["default"], {}, void 0, false, {
             fileName: "[project]/src/components/ProtectedRoute.tsx",
-            lineNumber: 64,
+            lineNumber: 69,
             columnNumber: 12
         }, this);
     }

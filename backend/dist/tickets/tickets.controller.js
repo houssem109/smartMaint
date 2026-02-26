@@ -108,7 +108,7 @@ __decorate([
 __decorate([
     (0, common_1.Post)(':id/assign'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
     (0, swagger_1.ApiOperation)({ summary: 'Assign ticket to technician' }),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Body)('technicianId')),

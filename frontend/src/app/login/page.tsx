@@ -27,13 +27,13 @@ export default function LoginPage() {
     try {
       const response = await api.post('/auth/login', { email, password });
       const { access_token, user } = response.data;
-      
+
       setAuth(user, access_token);
       toast.success(`Welcome back, ${user.fullName || user.email}!`, { id: toastId });
-      
+
       // Redirect based on role
       setTimeout(() => {
-        if (user.role === 'admin') {
+        if (user.role === 'admin' || user.role === 'superadmin') {
           router.push('/dashboard/admin');
         } else if (user.role === 'technician') {
           router.push('/dashboard/technician');
@@ -44,11 +44,10 @@ export default function LoginPage() {
     } catch (err: any) {
       const errorMessage = err.response?.data?.message || 'Login failed. Please check your credentials.';
       setError(errorMessage);
-      toast.error(errorMessage, { id: toastId, duration: 5000 });
-      // Keep error visible on page
-      setTimeout(() => {
-        // Error will remain visible until user tries again or clears it
-      }, 100);
+      // Show the toast error for longer so the user can read it
+      toast.error(errorMessage, { id: toastId, duration: 8000 });
+      // Note: the inline error box on the form will stay visible
+      // until the user submits again (where we clear it at the top of handleSubmit).
     } finally {
       setLoading(false);
     }

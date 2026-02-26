@@ -2,7 +2,8 @@ import { Ticket } from '../../tickets/entities/ticket.entity';
 export declare enum UserRole {
     WORKER = "worker",
     TECHNICIAN = "technician",
-    ADMIN = "admin"
+    ADMIN = "admin",
+    SUPERADMIN = "superadmin"
 }
 export declare class User {
     id: string;

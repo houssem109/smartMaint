@@ -10,6 +10,30 @@ async function seedDatabase(dataSource) {
     }
     const userRepository = dataSource.getRepository(user_entity_1.User);
     const ticketRepository = dataSource.getRepository(ticket_entity_1.Ticket);
+    let superadmin = await userRepository.findOne({ where: { email: 'superadmin@smartmaint.com' } });
+    const superadminPlainPassword = 'superadmin123';
+    const superadminPassword = await bcrypt.hash(superadminPlainPassword, 10);
+    if (!superadmin) {
+        superadmin = userRepository.create({
+            username: 'superadmin',
+            email: 'superadmin@smartmaint.com',
+            password: superadminPassword,
+            role: user_entity_1.UserRole.SUPERADMIN,
+            fullName: 'Super Administrator',
+            isActive: true,
+        });
+        await userRepository.save(superadmin);
+        console.log('✅ Superadmin user created');
+    }
+    else {
+        await userRepository.update(superadmin.id, {
+            role: user_entity_1.UserRole.SUPERADMIN,
+            fullName: 'Super Administrator',
+            isActive: true,
+            password: superadminPassword,
+        });
+        console.log('✅ Superadmin user updated and password reset');
+    }
     let admin = await userRepository.findOne({ where: { email: 'admin@smartmaint.com' } });
     if (!admin) {
         const adminPassword = await bcrypt.hash('admin123', 10);
@@ -18,14 +42,14 @@ async function seedDatabase(dataSource) {
             email: 'admin@smartmaint.com',
             password: adminPassword,
             role: user_entity_1.UserRole.ADMIN,
-            fullName: 'System Administrator',
+            fullName: 'System Admin',
             isActive: true,
         });
         await userRepository.save(admin);
-        console.log('✅ Admin user created');
+        console.log('✅ Admin (normal admin) user created');
     }
     else if (admin.role !== user_entity_1.UserRole.ADMIN) {
-        await userRepository.update(admin.id, { role: user_entity_1.UserRole.ADMIN, fullName: 'System Administrator' });
+        await userRepository.update(admin.id, { role: user_entity_1.UserRole.ADMIN, fullName: 'System Admin' });
         console.log('✅ Admin user role fixed to admin');
     }
     let technician = await userRepository.findOne({ where: { email: 'tech@smartmaint.com' } });

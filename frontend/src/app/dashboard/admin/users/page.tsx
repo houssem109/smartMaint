@@ -34,14 +34,14 @@ interface User {
 }
 
 const ROLES_BY_CURRENT: Record<string, { value: string; label: string }[]> = {
+  // Superadmin can manage admins/technicians/workers, but cannot create more superadmins
   superadmin: [
-    { value: 'superadmin', label: 'Super Admin' },
     { value: 'admin', label: 'Admin' },
     { value: 'technician', label: 'Technician' },
     { value: 'worker', label: 'Worker' },
   ],
+  // Normal admin cannot create or edit admin/superadmin users -> hide those roles in the form
   admin: [
-    { value: 'admin', label: 'Admin' },
     { value: 'technician', label: 'Technician' },
     { value: 'worker', label: 'Worker' },
   ],
@@ -61,7 +61,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const roles = ROLES_BY_CURRENT[currentUser?.role === 'superadmin' ? 'superadmin' : 'admin'] ?? ROLES_BY_CURRENT.admin;
-  const canEditDeleteOtherAdmins = currentUser?.role === 'superadmin';
+  const canEditDeleteAdminRoles = currentUser?.role === 'superadmin';
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -137,7 +137,7 @@ export default function AdminUsersPage() {
           phoneNumber: form.phoneNumber || undefined,
           role: form.role,
         });
-        toast.success('User created');
+        toast.success('User created. If email is configured, a welcome email was sent.');
       }
       closeModal();
       fetchUsers();
@@ -225,27 +225,29 @@ export default function AdminUsersPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              {(canEditDeleteOtherAdmins || user.role !== 'admin') && (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => openEdit(user)}
-                                    title="Edit"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => setDeleteTarget(user)}
-                                    title="Delete"
-                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </>
-                              )}
+                              {(canEditDeleteAdminRoles || (user.role !== 'admin' && user.role !== 'superadmin')) &&
+                                // Superadmin should not see edit/delete for their own superadmin account
+                                !(currentUser?.id === user.id && user.role === 'superadmin') && (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => openEdit(user)}
+                                      title="Edit"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => setDeleteTarget(user)}
+                                      title="Delete"
+                                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </>
+                                )}
                             </div>
                           </TableCell>
                         </TableRow>

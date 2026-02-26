@@ -34,7 +34,19 @@ export class UsersController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({ summary: 'Create new user (Admin/Superadmin only)' })
-  async create(@Body() createUserDto: CreateUserDto) {
+  async create(@Request() req, @Body() createUserDto: CreateUserDto) {
+    // No one can create additional superadmin accounts via API
+    if (createUserDto.role === UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Creating superadmin users is not allowed');
+    }
+
+    // Normal admin cannot create admin accounts (only technicians/workers)
+    if (
+      req.user.role === UserRole.ADMIN &&
+      createUserDto.role === UserRole.ADMIN
+    ) {
+      throw new ForbiddenException('Only superadmin can create admin users');
+    }
     // Store plain password before hashing for email
     const plainPassword = createUserDto.password;
     const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
@@ -61,8 +73,8 @@ export class UsersController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get all users (Admin only)' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Get all users (Admin/Superadmin only)' })
   findAll() {
     return this.usersService.findAll();
   }
@@ -110,11 +122,17 @@ export class UsersController {
     @Param('id') id: string,
     @Body() updateData: any,
   ) {
-    // Admin cannot edit other admins; only superadmin can
+    const target = await this.usersService.findOne(id);
+
+    // Prevent changing anyone into a superadmin (only the seeded superadmin should exist)
+    if (updateData.role === UserRole.SUPERADMIN && target.email !== 'superadmin@smartmaint.com') {
+      throw new ForbiddenException('Promoting users to superadmin is not allowed');
+    }
+
+    // Admin cannot edit admin or superadmin users; only superadmin can
     if (req.user.role === UserRole.ADMIN) {
-      const target = await this.usersService.findOne(id);
-      if (target.role === UserRole.ADMIN) {
-        throw new ForbiddenException('You cannot edit another admin');
+      if (target.role === UserRole.ADMIN || target.role === UserRole.SUPERADMIN) {
+        throw new ForbiddenException('Only superadmin can modify admin or superadmin users');
       }
     }
     if (updateData.password) {
@@ -130,8 +148,8 @@ export class UsersController {
   async remove(@Request() req, @Param('id') id: string) {
     if (req.user.role === UserRole.ADMIN) {
       const target = await this.usersService.findOne(id);
-      if (target.role === UserRole.ADMIN) {
-        throw new ForbiddenException('You cannot delete another admin');
+      if (target.role === UserRole.ADMIN || target.role === UserRole.SUPERADMIN) {
+        throw new ForbiddenException('Only superadmin can delete admin or superadmin users');
       }
     }
     return this.usersService.remove(id);

@@ -18,8 +18,9 @@ export async function seedDatabase(dataSource: DataSource) {
 
   // Create or fix superadmin (single person only)
   let superadmin = await userRepository.findOne({ where: { email: 'superadmin@smartmaint.com' } });
+  const superadminPlainPassword = 'superadmin123';
+  const superadminPassword = await bcrypt.hash(superadminPlainPassword, 10);
   if (!superadmin) {
-    const superadminPassword = await bcrypt.hash('superadmin123', 10);
     superadmin = userRepository.create({
       username: 'superadmin',
       email: 'superadmin@smartmaint.com',
@@ -30,12 +31,18 @@ export async function seedDatabase(dataSource: DataSource) {
     });
     await userRepository.save(superadmin);
     console.log('✅ Superadmin user created');
-  } else if (superadmin.role !== UserRole.SUPERADMIN) {
-    await userRepository.update(superadmin.id, { role: UserRole.SUPERADMIN, fullName: 'Super Administrator' });
-    console.log('✅ Superadmin user role fixed');
+  } else {
+    // Always ensure role, name, active, and password are in a known state
+    await userRepository.update(superadmin.id, {
+      role: UserRole.SUPERADMIN,
+      fullName: 'Super Administrator',
+      isActive: true,
+      password: superadminPassword,
+    });
+    console.log('✅ Superadmin user updated and password reset');
   }
 
-  // Create or fix default admin user (ensure role is always admin)
+  // Create or fix default admin user (NORMAL ADMIN, not superadmin)
   let admin = await userRepository.findOne({ where: { email: 'admin@smartmaint.com' } });
   if (!admin) {
     const adminPassword = await bcrypt.hash('admin123', 10);
@@ -44,13 +51,13 @@ export async function seedDatabase(dataSource: DataSource) {
       email: 'admin@smartmaint.com',
       password: adminPassword,
       role: UserRole.ADMIN,
-      fullName: 'System Administrator',
+      fullName: 'System Admin',
       isActive: true,
     });
     await userRepository.save(admin);
-    console.log('✅ Admin user created');
+    console.log('✅ Admin (normal admin) user created');
   } else if (admin.role !== UserRole.ADMIN) {
-    await userRepository.update(admin.id, { role: UserRole.ADMIN, fullName: 'System Administrator' });
+    await userRepository.update(admin.id, { role: UserRole.ADMIN, fullName: 'System Admin' });
     console.log('✅ Admin user role fixed to admin');
   }
 

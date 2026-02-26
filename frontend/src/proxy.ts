@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Role-based route protection
+// NOTE: superadmin should be treated like an admin for dashboard access.
 const roleRoutes: Record<string, string[]> = {
-  '/dashboard/admin': ['admin'],
+  '/dashboard/admin': ['admin', 'superadmin'],
   '/dashboard/technician': ['technician'],
   '/dashboard/worker': ['worker'],
   // Shared: any authenticated role can create a ticket
-  '/dashboard/create-ticket': ['admin', 'technician', 'worker'],
+  '/dashboard/create-ticket': ['admin', 'superadmin', 'technician', 'worker'],
 };
 
 export function proxy(request: NextRequest) {
@@ -15,7 +16,7 @@ export function proxy(request: NextRequest) {
 
   for (const [route, allowedRoles] of Object.entries(roleRoutes)) {
     if (pathname.startsWith(route)) {
-      const userRole = request.cookies.get('userRole')?.value;
+      const userRole = request.cookies.get('userRole')?.value?.toLowerCase();
       const token = request.cookies.get('token')?.value;
 
       if (!token) {

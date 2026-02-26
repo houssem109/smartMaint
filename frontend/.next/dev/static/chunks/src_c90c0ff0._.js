@@ -15,14 +15,19 @@ const useAuthStore = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_mo
         token: null,
         isAuthenticated: false,
         setAuth: (user, token)=>{
+            const normalizedRole = user.role?.toLowerCase?.() ?? user.role;
+            const normalizedUser = {
+                ...user,
+                role: normalizedRole
+            };
             localStorage.setItem('token', token);
-            // Set cookies for middleware access
+            // Set cookies for middleware access (always lowercase role)
             if (typeof document !== 'undefined') {
                 document.cookie = `token=${token}; path=/; max-age=604800; SameSite=Lax`;
-                document.cookie = `userRole=${user.role}; path=/; max-age=604800; SameSite=Lax`;
+                document.cookie = `userRole=${normalizedRole}; path=/; max-age=604800; SameSite=Lax`;
             }
             set({
-                user,
+                user: normalizedUser,
                 token,
                 isAuthenticated: true
             });
@@ -85,7 +90,7 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$
 ;
 ;
 ;
-const buttonVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0", {
+const buttonVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-base font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0", {
     variants: {
         variant: {
             default: "bg-primary text-primary-foreground shadow hover:bg-primary/90",
@@ -96,10 +101,10 @@ const buttonVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_
             link: "text-primary underline-offset-4 hover:underline"
         },
         size: {
-            default: "h-9 px-4 py-2",
-            sm: "h-8 rounded-md px-3 text-xs",
-            lg: "h-10 rounded-md px-8",
-            icon: "h-9 w-9"
+            default: "h-10 px-4 py-2",
+            sm: "h-9 rounded-md px-3 text-sm",
+            lg: "h-11 rounded-md px-8 text-base",
+            icon: "h-10 w-10"
         }
     },
     defaultVariants: {
@@ -148,7 +153,7 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$
 ;
 ;
 ;
-const badgeVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", {
+const badgeVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("inline-flex items-center rounded-md border px-2.5 py-0.5 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2", {
     variants: {
         variant: {
             default: "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
@@ -297,7 +302,7 @@ function AdminSidebar({ isOpen, onToggle }) {
                     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$client$2f$app$2d$dir$2f$link$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"], {
                         href: href,
                         title: !isOpen ? label : undefined,
-                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('flex items-center rounded-lg font-medium transition-colors', isOpen ? 'gap-3 px-3 py-2.5 text-sm' : 'justify-center p-2.5', isActive ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'),
+                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('flex items-center rounded-lg font-medium transition-colors', isOpen ? 'gap-3 px-3 py-2.5 text-base' : 'justify-center p-2.5', isActive ? 'bg-primary text-primary-foreground' : 'text-foreground/90 hover:bg-accent hover:text-foreground'),
                         children: [
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(Icon, {
                                 className: "h-5 w-5 shrink-0"
@@ -332,7 +337,7 @@ function AdminSidebar({ isOpen, onToggle }) {
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$client$2f$app$2d$dir$2f$link$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"], {
                         href: "/dashboard/settings",
                         title: !isOpen ? 'Settings' : undefined,
-                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('flex items-center rounded-lg font-medium transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground', isOpen ? 'gap-3 px-3 py-2.5 text-sm' : 'justify-center p-2.5', pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/') ? 'bg-accent text-accent-foreground' : ''),
+                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('flex items-center rounded-lg font-medium transition-colors text-foreground/90 hover:bg-accent hover:text-foreground', isOpen ? 'gap-3 px-3 py-2.5 text-base' : 'justify-center p-2.5', pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/') ? 'bg-accent text-foreground' : ''),
                         children: [
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$settings$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Settings$3e$__["Settings"], {
                                 className: "h-5 w-5 shrink-0"
@@ -342,7 +347,7 @@ function AdminSidebar({ isOpen, onToggle }) {
                                 columnNumber: 11
                             }, this),
                             isOpen && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                className: "text-sm font-medium",
+                                className: "text-base font-medium",
                                 children: "Settings"
                             }, void 0, false, {
                                 fileName: "[project]/src/components/AdminSidebar.tsx",
@@ -357,7 +362,7 @@ function AdminSidebar({ isOpen, onToggle }) {
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Button"], {
                         variant: "ghost",
-                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('w-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive', isOpen ? 'justify-start gap-3 px-3 py-2.5' : 'justify-center p-2.5'),
+                        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])('w-full text-foreground/90 hover:bg-destructive/10 hover:text-destructive text-base', isOpen ? 'justify-start gap-3 px-3 py-2.5' : 'justify-center p-2.5'),
                         onClick: handleLogout,
                         title: !isOpen ? 'Log out' : undefined,
                         children: [
@@ -369,7 +374,7 @@ function AdminSidebar({ isOpen, onToggle }) {
                                 columnNumber: 11
                             }, this),
                             isOpen && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
-                                className: "text-sm font-medium",
+                                className: "text-base font-medium",
                                 children: "Log out"
                             }, void 0, false, {
                                 fileName: "[project]/src/components/AdminSidebar.tsx",
@@ -448,7 +453,7 @@ function Layout({ children, title, showSidebar = false }) {
                 onToggle: ()=>setSidebarOpen(!sidebarOpen)
             }, void 0, false, {
                 fileName: "[project]/src/components/Layout.tsx",
-                lineNumber: 27,
+                lineNumber: 26,
                 columnNumber: 9
             }, this),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -458,25 +463,25 @@ function Layout({ children, title, showSidebar = false }) {
                         className: "sticky top-0 z-30 flex h-14 items-center gap-4 border-b border-border/40 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60 px-4 sm:px-6 lg:px-8",
                         children: [
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h1", {
-                                className: "text-lg font-semibold tracking-tight",
+                                className: "text-xl font-semibold tracking-tight",
                                 children: title
                             }, void 0, false, {
                                 fileName: "[project]/src/components/Layout.tsx",
-                                lineNumber: 32,
+                                lineNumber: 31,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
                                 className: "ml-auto flex items-center gap-3",
                                 children: [
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "hidden sm:flex items-center gap-2 text-sm text-muted-foreground",
+                                        className: "hidden sm:flex items-center gap-2 text-base text-muted-foreground",
                                         children: [
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
                                                 className: "font-medium text-foreground",
                                                 children: user?.fullName || user?.email
                                             }, void 0, false, {
                                                 fileName: "[project]/src/components/Layout.tsx",
-                                                lineNumber: 35,
+                                                lineNumber: 34,
                                                 columnNumber: 15
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$ui$2f$badge$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Badge"], {
@@ -485,13 +490,13 @@ function Layout({ children, title, showSidebar = false }) {
                                                 children: user?.role
                                             }, void 0, false, {
                                                 fileName: "[project]/src/components/Layout.tsx",
-                                                lineNumber: 38,
+                                                lineNumber: 37,
                                                 columnNumber: 15
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/src/components/Layout.tsx",
-                                        lineNumber: 34,
+                                        lineNumber: 33,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Button"], {
@@ -504,30 +509,30 @@ function Layout({ children, title, showSidebar = false }) {
                                             className: "h-4 w-4"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/Layout.tsx",
-                                            lineNumber: 50,
+                                            lineNumber: 49,
                                             columnNumber: 17
                                         }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$moon$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$export__default__as__Moon$3e$__["Moon"], {
                                             className: "h-4 w-4"
                                         }, void 0, false, {
                                             fileName: "[project]/src/components/Layout.tsx",
-                                            lineNumber: 52,
+                                            lineNumber: 51,
                                             columnNumber: 17
                                         }, this)
                                     }, void 0, false, {
                                         fileName: "[project]/src/components/Layout.tsx",
-                                        lineNumber: 42,
+                                        lineNumber: 41,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/src/components/Layout.tsx",
-                                lineNumber: 33,
+                                lineNumber: 32,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/src/components/Layout.tsx",
-                        lineNumber: 31,
+                        lineNumber: 30,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("main", {
@@ -537,24 +542,24 @@ function Layout({ children, title, showSidebar = false }) {
                             children: children
                         }, void 0, false, {
                             fileName: "[project]/src/components/Layout.tsx",
-                            lineNumber: 59,
+                            lineNumber: 58,
                             columnNumber: 11
                         }, this)
                     }, void 0, false, {
                         fileName: "[project]/src/components/Layout.tsx",
-                        lineNumber: 58,
+                        lineNumber: 57,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/src/components/Layout.tsx",
-                lineNumber: 30,
+                lineNumber: 29,
                 columnNumber: 7
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/src/components/Layout.tsx",
-        lineNumber: 25,
+        lineNumber: 24,
         columnNumber: 5
     }, this);
 }
@@ -705,8 +710,9 @@ function Forbidden() {
     const { user } = (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$store$2f$auth$2d$store$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["useAuthStore"])();
     const getDashboardPath = ()=>{
         if (!user) return '/login';
-        if (user.role === 'admin') return '/dashboard/admin';
-        if (user.role === 'technician') return '/dashboard/technician';
+        const role = user.role?.toLowerCase?.();
+        if (role === 'admin' || role === 'superadmin') return '/dashboard/admin';
+        if (role === 'technician') return '/dashboard/technician';
         return '/dashboard/worker';
     };
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$Layout$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"], {
@@ -734,22 +740,22 @@ function Forbidden() {
                                         d: "M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                                     }, void 0, false, {
                                         fileName: "[project]/src/components/Forbidden.tsx",
-                                        lineNumber: 33,
+                                        lineNumber: 34,
                                         columnNumber: 19
                                     }, this)
                                 }, void 0, false, {
                                     fileName: "[project]/src/components/Forbidden.tsx",
-                                    lineNumber: 27,
+                                    lineNumber: 28,
                                     columnNumber: 17
                                 }, this)
                             }, void 0, false, {
                                 fileName: "[project]/src/components/Forbidden.tsx",
-                                lineNumber: 26,
+                                lineNumber: 27,
                                 columnNumber: 15
                             }, this)
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 25,
+                            lineNumber: 26,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("h1", {
@@ -757,7 +763,7 @@ function Forbidden() {
                             children: "Access Forbidden"
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 42,
+                            lineNumber: 43,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -765,7 +771,7 @@ function Forbidden() {
                             children: "You don't have permission to access this page."
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 45,
+                            lineNumber: 46,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -773,7 +779,7 @@ function Forbidden() {
                             children: "This page is restricted to specific user roles. Please contact an administrator if you believe this is an error."
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 48,
+                            lineNumber: 49,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Button"], {
@@ -783,28 +789,28 @@ function Forbidden() {
                             children: "Go to My Dashboard"
                         }, void 0, false, {
                             fileName: "[project]/src/components/Forbidden.tsx",
-                            lineNumber: 51,
+                            lineNumber: 52,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "[project]/src/components/Forbidden.tsx",
-                    lineNumber: 24,
+                    lineNumber: 25,
                     columnNumber: 11
                 }, this)
             }, void 0, false, {
                 fileName: "[project]/src/components/Forbidden.tsx",
-                lineNumber: 23,
+                lineNumber: 24,
                 columnNumber: 9
             }, this)
         }, void 0, false, {
             fileName: "[project]/src/components/Forbidden.tsx",
-            lineNumber: 22,
+            lineNumber: 23,
             columnNumber: 7
         }, this)
     }, void 0, false, {
         fileName: "[project]/src/components/Forbidden.tsx",
-        lineNumber: 21,
+        lineNumber: 22,
         columnNumber: 5
     }, this);
 }
@@ -861,16 +867,20 @@ function ProtectedRoute({ children, allowedRoles }) {
                 router.push('/login');
                 return;
             }
-            // Check role-based access
-            if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+            // Check role-based access (case-insensitive)
+            const userRole = user?.role?.toLowerCase?.();
+            const normalizedAllowedRoles = allowedRoles?.map({
+                "ProtectedRoute.useEffect": (r)=>r.toLowerCase()
+            }["ProtectedRoute.useEffect"]);
+            if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
                 setShowForbidden(true);
                 __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$sonner$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["toast"].error('Access forbidden: You do not have permission to access this page.');
                 // Redirect to appropriate dashboard after a short delay
                 setTimeout({
                     "ProtectedRoute.useEffect": ()=>{
-                        if (user.role === 'admin') {
+                        if (userRole === 'admin' || userRole === 'superadmin') {
                             router.push('/dashboard/admin');
-                        } else if (user.role === 'technician') {
+                        } else if (userRole === 'technician') {
                             router.push('/dashboard/technician');
                         } else {
                             router.push('/dashboard/worker');
@@ -896,7 +906,7 @@ function ProtectedRoute({ children, allowedRoles }) {
                         className: "inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"
                     }, void 0, false, {
                         fileName: "[project]/src/components/ProtectedRoute.tsx",
-                        lineNumber: 55,
+                        lineNumber: 58,
                         columnNumber: 11
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -904,26 +914,28 @@ function ProtectedRoute({ children, allowedRoles }) {
                         children: "Loading..."
                     }, void 0, false, {
                         fileName: "[project]/src/components/ProtectedRoute.tsx",
-                        lineNumber: 56,
+                        lineNumber: 59,
                         columnNumber: 11
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/src/components/ProtectedRoute.tsx",
-                lineNumber: 54,
+                lineNumber: 57,
                 columnNumber: 9
             }, this)
         }, void 0, false, {
             fileName: "[project]/src/components/ProtectedRoute.tsx",
-            lineNumber: 53,
+            lineNumber: 56,
             columnNumber: 7
         }, this);
     }
     // Show forbidden page if user doesn't have required role
-    if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+    const userRole = user?.role?.toLowerCase?.();
+    const normalizedAllowedRoles = allowedRoles?.map((r)=>r.toLowerCase());
+    if (normalizedAllowedRoles && userRole && !normalizedAllowedRoles.includes(userRole)) {
         return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$src$2f$components$2f$Forbidden$2e$tsx__$5b$app$2d$client$5d$__$28$ecmascript$29$__["default"], {}, void 0, false, {
             fileName: "[project]/src/components/ProtectedRoute.tsx",
-            lineNumber: 64,
+            lineNumber: 69,
             columnNumber: 12
         }, this);
     }
@@ -1000,7 +1012,7 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$
 const Input = /*#__PURE__*/ __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["forwardRef"](_c = ({ className, type, ...props }, ref)=>{
     return /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])("input", {
         type: type,
-        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])("flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm", className),
+        className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])("flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-sm transition-colors file:border-0 file:bg-transparent file:text-base file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50", className),
         ref: ref,
         ...props
     }, void 0, false, {
@@ -1037,7 +1049,7 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$
 ;
 ;
 ;
-const labelVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70");
+const labelVariants = (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$class$2d$variance$2d$authority$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cva"])("text-base font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70");
 const Label = /*#__PURE__*/ __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["forwardRef"](_c = ({ className, ...props }, ref)=>/*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$dist$2f$compiled$2f$react$2f$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f40$radix$2d$ui$2f$react$2d$label$2f$dist$2f$index$2e$mjs__$5b$app$2d$client$5d$__$28$ecmascript$29$__["Root"], {
         ref: ref,
         className: (0, __TURBOPACK__imported__module__$5b$project$5d2f$src$2f$lib$2f$utils$2e$ts__$5b$app$2d$client$5d$__$28$ecmascript$29$__["cn"])(labelVariants(), className),

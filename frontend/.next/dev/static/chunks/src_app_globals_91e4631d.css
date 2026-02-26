@@ -452,6 +452,10 @@ body {
   display: inline-block;
 }
 
+.inline {
+  display: inline;
+}
+
 .flex {
   display: flex;
 }
@@ -474,6 +478,10 @@ body {
 
 .h-10 {
   height: 2.5rem;
+}
+
+.h-11 {
+  height: 2.75rem;
 }
 
 .h-12 {
@@ -526,10 +534,6 @@ body {
 
 .h-screen {
   height: 100vh;
-}
-
-.h-11 {
-  height: 2.75rem;
 }
 
 .max-h-\[--radix-select-content-available-height\] {
@@ -1356,10 +1360,6 @@ body {
   letter-spacing: .05em;
 }
 
-.text-accent-foreground {
-  color: hsl(var(--accent-foreground));
-}
-
 .text-card-foreground {
   color: hsl(var(--card-foreground));
 }
@@ -1379,6 +1379,10 @@ body {
 
 .text-foreground {
   color: hsl(var(--foreground));
+}
+
+.text-foreground\/90 {
+  color: hsl(var(--foreground) / .9);
 }
 
 .text-gray-700 {
@@ -1419,10 +1423,6 @@ body {
 .text-white {
   --tw-text-opacity: 1;
   color: rgb(255 255 255 / var(--tw-text-opacity, 1));
-}
-
-.text-foreground\/90 {
-  color: hsl(var(--foreground) / .9);
 }
 
 .underline-offset-4 {
@@ -1539,11 +1539,6 @@ body {
 
 .file\:bg-transparent::file-selector-button {
   background-color: #0000;
-}
-
-.file\:text-sm::file-selector-button {
-  font-size: .875rem;
-  line-height: 1.25rem;
 }
 
 .file\:text-base::file-selector-button {

@@ -53,9 +53,11 @@ __turbopack_context__.s([
 var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$server$2e$js__$5b$middleware$5d$__$28$ecmascript$29$__ = __turbopack_context__.i("[project]/node_modules/next/server.js [middleware] (ecmascript)");
 ;
 // Role-based route protection
+// NOTE: superadmin should be treated like an admin for dashboard access.
 const roleRoutes = {
     '/dashboard/admin': [
-        'admin'
+        'admin',
+        'superadmin'
     ],
     '/dashboard/technician': [
         'technician'
@@ -66,6 +68,7 @@ const roleRoutes = {
     // Shared: any authenticated role can create a ticket
     '/dashboard/create-ticket': [
         'admin',
+        'superadmin',
         'technician',
         'worker'
     ]
@@ -74,7 +77,7 @@ function proxy(request) {
     const { pathname } = request.nextUrl;
     for (const [route, allowedRoles] of Object.entries(roleRoutes)){
         if (pathname.startsWith(route)) {
-            const userRole = request.cookies.get('userRole')?.value;
+            const userRole = request.cookies.get('userRole')?.value?.toLowerCase();
             const token = request.cookies.get('token')?.value;
             if (!token) {
                 const loginUrl = new URL('/login', request.url);
