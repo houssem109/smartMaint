@@ -83,7 +83,7 @@ export class TicketsController {
 
   @Post(':id/assign')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
   @ApiOperation({ summary: 'Assign ticket to technician' })
   assignTicket(
     @Param('id') ticketId: string,

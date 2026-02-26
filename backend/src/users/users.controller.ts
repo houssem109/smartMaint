@@ -8,6 +8,7 @@ import {
   Delete,
   UseGuards,
   Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UsersService } from './users.service';
@@ -31,8 +32,8 @@ export class UsersController {
 
   @Post()
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Create new user (Admin only)' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Create new user (Admin/Superadmin only)' })
   async create(@Body() createUserDto: CreateUserDto) {
     // Store plain password before hashing for email
     const plainPassword = createUserDto.password;
@@ -78,6 +79,22 @@ export class UsersController {
     return this.usersService.findOne(req.user.id);
   }
 
+  @Patch('me')
+  @ApiOperation({ summary: 'Update current user profile (email cannot be changed)' })
+  async updateMe(
+    @Request() req,
+    @Body() body: { fullName?: string; username?: string; phoneNumber?: string; password?: string },
+  ) {
+    const updateData: Record<string, unknown> = {};
+    if (body.fullName !== undefined) updateData.fullName = body.fullName;
+    if (body.username !== undefined) updateData.username = body.username;
+    if (body.phoneNumber !== undefined) updateData.phoneNumber = body.phoneNumber;
+    if (body.password) {
+      updateData.password = await bcrypt.hash(body.password, 10);
+    }
+    return this.usersService.update(req.user.id, updateData);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get user by ID' })
   findOne(@Param('id') id: string) {
@@ -86,10 +103,20 @@ export class UsersController {
 
   @Patch(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Update user (Admin only)' })
-  async update(@Param('id') id: string, @Body() updateData: any) {
-    // Hash password if it's being updated
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Update user (Admin/Superadmin only; admin cannot edit other admins)' })
+  async update(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() updateData: any,
+  ) {
+    // Admin cannot edit other admins; only superadmin can
+    if (req.user.role === UserRole.ADMIN) {
+      const target = await this.usersService.findOne(id);
+      if (target.role === UserRole.ADMIN) {
+        throw new ForbiddenException('You cannot edit another admin');
+      }
+    }
     if (updateData.password) {
       updateData.password = await bcrypt.hash(updateData.password, 10);
     }
@@ -98,9 +125,15 @@ export class UsersController {
 
   @Delete(':id')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Delete user (Admin only)' })
-  remove(@Param('id') id: string) {
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Delete user (Admin/Superadmin only; admin cannot delete other admins)' })
+  async remove(@Request() req, @Param('id') id: string) {
+    if (req.user.role === UserRole.ADMIN) {
+      const target = await this.usersService.findOne(id);
+      if (target.role === UserRole.ADMIN) {
+        throw new ForbiddenException('You cannot delete another admin');
+      }
+    }
     return this.usersService.remove(id);
   }
 }

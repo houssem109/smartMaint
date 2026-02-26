@@ -16,11 +16,30 @@ export async function seedDatabase(dataSource: DataSource) {
   const userRepository = dataSource.getRepository(User);
   const ticketRepository = dataSource.getRepository(Ticket);
 
-  // Create default admin user
-  const adminExists = await userRepository.findOne({ where: { email: 'admin@smartmaint.com' } });
-  if (!adminExists) {
+  // Create or fix superadmin (single person only)
+  let superadmin = await userRepository.findOne({ where: { email: 'superadmin@smartmaint.com' } });
+  if (!superadmin) {
+    const superadminPassword = await bcrypt.hash('superadmin123', 10);
+    superadmin = userRepository.create({
+      username: 'superadmin',
+      email: 'superadmin@smartmaint.com',
+      password: superadminPassword,
+      role: UserRole.SUPERADMIN,
+      fullName: 'Super Administrator',
+      isActive: true,
+    });
+    await userRepository.save(superadmin);
+    console.log('✅ Superadmin user created');
+  } else if (superadmin.role !== UserRole.SUPERADMIN) {
+    await userRepository.update(superadmin.id, { role: UserRole.SUPERADMIN, fullName: 'Super Administrator' });
+    console.log('✅ Superadmin user role fixed');
+  }
+
+  // Create or fix default admin user (ensure role is always admin)
+  let admin = await userRepository.findOne({ where: { email: 'admin@smartmaint.com' } });
+  if (!admin) {
     const adminPassword = await bcrypt.hash('admin123', 10);
-    const admin = userRepository.create({
+    admin = userRepository.create({
       username: 'admin',
       email: 'admin@smartmaint.com',
       password: adminPassword,
@@ -30,13 +49,16 @@ export async function seedDatabase(dataSource: DataSource) {
     });
     await userRepository.save(admin);
     console.log('✅ Admin user created');
+  } else if (admin.role !== UserRole.ADMIN) {
+    await userRepository.update(admin.id, { role: UserRole.ADMIN, fullName: 'System Administrator' });
+    console.log('✅ Admin user role fixed to admin');
   }
 
-  // Create default technician
-  const techExists = await userRepository.findOne({ where: { email: 'tech@smartmaint.com' } });
-  if (!techExists) {
+  // Create or fix default technician
+  let technician = await userRepository.findOne({ where: { email: 'tech@smartmaint.com' } });
+  if (!technician) {
     const techPassword = await bcrypt.hash('tech123', 10);
-    const technician = userRepository.create({
+    technician = userRepository.create({
       username: 'technician',
       email: 'tech@smartmaint.com',
       password: techPassword,
@@ -46,9 +68,12 @@ export async function seedDatabase(dataSource: DataSource) {
     });
     await userRepository.save(technician);
     console.log('✅ Technician user created');
+  } else if (technician.role !== UserRole.TECHNICIAN) {
+    await userRepository.update(technician.id, { role: UserRole.TECHNICIAN, fullName: 'John Technician' });
+    console.log('✅ Technician user role fixed to technician');
   }
 
-  // Create default worker
+  // Create or fix default worker
   let worker = await userRepository.findOne({ where: { email: 'worker@smartmaint.com' } });
   if (!worker) {
     const workerPassword = await bcrypt.hash('worker123', 10);
@@ -62,9 +87,10 @@ export async function seedDatabase(dataSource: DataSource) {
     });
     await userRepository.save(worker);
     console.log('✅ Worker user created');
+  } else if (worker.role !== UserRole.WORKER) {
+    await userRepository.update(worker.id, { role: UserRole.WORKER, fullName: 'Jane Worker' });
+    console.log('✅ Worker user role fixed to worker');
   }
-
-  const technician = await userRepository.findOne({ where: { email: 'tech@smartmaint.com' } });
 
   // Create sample tickets with problems
   const ticketCount = await ticketRepository.count();

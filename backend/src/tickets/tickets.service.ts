@@ -139,9 +139,9 @@ export class TicketsService {
       throw new NotFoundException('Ticket not found');
     }
 
-    // Admins can delete any ticket
+    // Admins and superadmins can delete any ticket
     // Workers can only delete their own tickets
-    if (userRole === UserRole.ADMIN) {
+    if (userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN) {
       await this.ticketsRepository.remove(ticket);
       return;
     }
@@ -160,7 +160,7 @@ export class TicketsService {
     userId: string,
     userRole: UserRole,
   ): Promise<Ticket> {
-    if (userRole !== UserRole.ADMIN && userRole !== UserRole.TECHNICIAN) {
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPERADMIN && userRole !== UserRole.TECHNICIAN) {
       throw new ForbiddenException('Only admins and technicians can assign tickets');
     }
 

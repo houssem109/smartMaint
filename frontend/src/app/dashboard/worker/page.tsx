@@ -71,10 +71,10 @@ export default function WorkerDashboard() {
     <ProtectedRoute allowedRoles={['worker']}>
       <Layout title="Worker Dashboard">
         <div className="space-y-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-bold">My Tickets</h2>
-            <Button asChild>
-              <Link href="/dashboard/create-ticket">+ Create New Ticket</Link>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-xl font-semibold tracking-tight">My Tickets</h2>
+            <Button asChild className="w-fit">
+              <Link href="/dashboard/create-ticket">Create New Ticket</Link>
             </Button>
           </div>
 

@@ -12,6 +12,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select } from '@/components/ui/native-select';
+import {
+  Ticket as TicketIcon,
+  ArrowLeft,
+  Loader2,
+  Save,
+  Lock,
+  Trash2,
+} from 'lucide-react';
 
 interface Ticket {
   id: string;
@@ -77,30 +85,31 @@ export default function TicketDetailPage() {
     }
   };
 
-  const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-      open: 'default',
-      in_review: 'secondary',
-      in_progress: 'secondary',
-      solved: 'default',
-      closed: 'outline',
+  const getStatusBadgeClass = (status: string): string => {
+    const classes: Record<string, string> = {
+      open: 'bg-blue-500 text-white border-0 hover:bg-blue-600',
+      in_review: 'bg-amber-500 text-white border-0 hover:bg-amber-600',
+      in_progress: 'bg-sky-500 text-white border-0 hover:bg-sky-600',
+      solved: 'bg-emerald-600 text-white border-0 hover:bg-emerald-700',
+      closed: 'bg-slate-500 text-white border-0 hover:bg-slate-600',
     };
-    return variants[status] || 'secondary';
+    return classes[status] ?? 'bg-secondary text-secondary-foreground';
   };
 
-  const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-      low: 'outline',
-      medium: 'secondary',
-      high: 'default',
-      critical: 'destructive',
+  const getPriorityBadgeClass = (priority: string): string => {
+    const classes: Record<string, string> = {
+      low: 'bg-slate-500 text-white border-0 hover:bg-slate-600',
+      medium: 'bg-blue-500 text-white border-0 hover:bg-blue-600',
+      high: 'bg-amber-500 text-white border-0 hover:bg-amber-600',
+      critical: 'bg-red-600 text-white border-0 hover:bg-red-700',
     };
-    return variants[priority] || 'secondary';
+    return classes[priority] ?? 'bg-secondary text-secondary-foreground';
   };
 
-  const canUpdateStatus = user?.role === 'admin' || user?.role === 'technician';
-  const canDelete = user?.role === 'admin' || (user?.role === 'worker' && ticket?.createdById === user?.id);
-  const canClose = user?.role === 'admin' || user?.role === 'technician';
+  const canUpdateStatus = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
+  const canDelete = user?.role === 'admin' || user?.role === 'superadmin' || (user?.role === 'worker' && ticket?.createdById === user?.id);
+  const canClose = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
+  const showSidebar = user?.role === 'admin' || user?.role === 'superadmin';
 
   const handleDeleteClick = () => {
     setShowDeleteModal(true);
@@ -116,7 +125,7 @@ export default function TicketDetailPage() {
       toast.success('Ticket deleted successfully!', { id: toastId });
       setTimeout(() => {
         // Redirect to user's own dashboard based on role
-        if (user?.role === 'admin') {
+        if (user?.role === 'admin' || user?.role === 'superadmin') {
           router.push('/dashboard/admin');
         } else if (user?.role === 'technician') {
           router.push('/dashboard/technician');
@@ -154,151 +163,165 @@ export default function TicketDetailPage() {
 
   return (
     <ProtectedRoute>
-      <Layout title="Ticket Details">
+      <Layout title="Ticket Details" showSidebar={showSidebar}>
         {loading ? (
-          <Card>
-            <CardContent className="py-12">
-              <p className="text-center text-muted-foreground">Loading ticket...</p>
-            </CardContent>
-          </Card>
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="h-10 w-10 animate-spin text-muted-foreground mb-4" />
+            <p className="text-muted-foreground text-base">Loading ticket…</p>
+          </div>
         ) : !ticket ? (
-          <Card>
-            <CardContent className="py-12">
-              <p className="text-center text-muted-foreground">Ticket not found</p>
+          <Card className="max-w-md mx-auto border-border/50">
+            <CardContent className="py-12 text-center">
+              <TicketIcon className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+              <p className="text-muted-foreground text-base">Ticket not found</p>
+              <Button variant="outline" className="mt-4" onClick={() => router.back()}>
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back
+              </Button>
             </CardContent>
           </Card>
         ) : (
-          <div className="max-w-4xl mx-auto space-y-6">
-            {/* Header */}
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="mb-2">{ticket.title}</CardTitle>
-                    <div className="flex space-x-2">
-                      <Badge variant={getStatusVariant(ticket.status)}>
-                        {ticket.status.replace('_', ' ')}
-                      </Badge>
-                      <Badge variant={getPriorityVariant(ticket.priority)}>
-                        {ticket.priority}
-                      </Badge>
-                      <Badge variant="secondary">{ticket.category}</Badge>
-                    </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    {canUpdateStatus && (
-                      <>
-                        <Select
-                          value={newStatus}
-                          onChange={(e) => setNewStatus(e.target.value)}
-                          className="w-40"
-                        >
-                          <option value="open">Open</option>
-                          <option value="in_review">In Review</option>
-                          <option value="in_progress">In Progress</option>
-                          <option value="solved">Solved</option>
-                          <option value="closed">Closed</option>
-                        </Select>
-                        <Button
-                          onClick={handleStatusUpdate}
-                          disabled={updating || newStatus === ticket.status}
-                        >
-                          {updating ? 'Updating...' : 'Update Status'}
-                        </Button>
-                      </>
-                    )}
-                    {canClose && ticket.status !== 'closed' && (
-                      <Button
-                        variant="default"
-                        onClick={handleCloseTicketClick}
-                        disabled={updating}
+          <div className="max-w-5xl mx-auto">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.back()}
+              className="gap-2 text-muted-foreground hover:text-foreground mb-3"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Button>
+
+            {/* Title row: title (left) + status & actions (right) */}
+            <header className="mb-3">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground break-words flex-1 min-w-0">
+                  {ticket.title}
+                </h1>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {canUpdateStatus && (
+                    <>
+                      <Select
+                        value={newStatus}
+                        onChange={(e) => setNewStatus(e.target.value)}
+                        className="h-9 min-w-[7rem] rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
                       >
-                        {updating ? 'Closing...' : 'Close Ticket'}
+                        <option value="open">Open</option>
+                        <option value="in_review">In Review</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="solved">Solved</option>
+                        <option value="closed">Closed</option>
+                      </Select>
+                      <Button
+                        size="sm"
+                        onClick={handleStatusUpdate}
+                        disabled={updating || newStatus === ticket.status}
+                        className="gap-1.5 h-9"
+                      >
+                        {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        Update
                       </Button>
-                    )}
-                    {canDelete && (
-                      <Button variant="destructive" onClick={handleDeleteClick}>
-                        Delete Ticket
-                      </Button>
-                    )}
-                  </div>
+                    </>
+                  )}
+                  {canClose && ticket.status !== 'closed' && (
+                    <Button size="sm" variant="outline" onClick={handleCloseTicketClick} disabled={updating} className="gap-1.5 h-9">
+                      <Lock className="h-3.5 w-3.5" />
+                      Close
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Button size="sm" variant="destructive" onClick={handleDeleteClick} className="gap-1.5 h-9">
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </Button>
+                  )}
                 </div>
-              </CardHeader>
-            </Card>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm mt-2">
+                <Badge variant="outline" className={getStatusBadgeClass(ticket.status) + ' text-xs font-medium px-2.5 py-0.5'}>
+                  {ticket.status.replace('_', ' ')}
+                </Badge>
+                <Badge variant="outline" className={getPriorityBadgeClass(ticket.priority) + ' text-xs font-medium px-2.5 py-0.5'}>
+                  {ticket.priority}
+                </Badge>
+                <Badge variant="outline" className="bg-violet-500/90 text-white border-0 text-xs font-medium px-2.5 py-0.5">
+                  {ticket.category}
+                </Badge>
+                <span className="text-muted-foreground">·</span>
+                <span className="text-muted-foreground">
+                  {new Date(ticket.createdAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                </span>
+              </div>
+            </header>
 
-            {/* Details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Description</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="whitespace-pre-wrap">{ticket.description}</p>
-                </CardContent>
-              </Card>
+            <div className="border-t border-border/60 my-4" />
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Details</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <dl className="space-y-3">
-                    <div>
-                      <dt className="text-sm font-medium text-muted-foreground">Created By</dt>
-                      <dd className="text-sm">
-                        {ticket.createdBy?.fullName || ticket.createdBy?.email || 'Unknown'}
-                      </dd>
-                    </div>
+            {/* Main: description (left) + details sidebar (right) */}
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6 pt-2">
+              <section>
+                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Description
+                </h2>
+                <p className="whitespace-pre-wrap text-foreground leading-relaxed text-base">
+                  {ticket.description}
+                </p>
+              </section>
+
+              <aside className="lg:pl-0">
+                <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                    Details
+                  </h2>
+                  <ul className="space-y-2.5 text-sm">
+                    <li className="flex justify-between gap-3">
+                      <span className="text-muted-foreground shrink-0">Created by</span>
+                      <span className="font-medium text-right">
+                        {ticket.createdBy?.fullName || ticket.createdBy?.email || '—'}
+                      </span>
+                    </li>
                     {ticket.assignedTo && (
-                      <div>
-                        <dt className="text-sm font-medium text-muted-foreground">Assigned To</dt>
-                        <dd className="text-sm">
+                      <li className="flex justify-between gap-3">
+                        <span className="text-muted-foreground shrink-0">Assigned to</span>
+                        <span className="font-medium text-right">
                           {ticket.assignedTo.fullName || ticket.assignedTo.email}
-                        </dd>
-                      </div>
+                        </span>
+                      </li>
                     )}
                     {ticket.subcategory && (
-                      <div>
-                        <dt className="text-sm font-medium text-muted-foreground">Type</dt>
-                        <dd className="text-sm">
-                          {ticket.subcategory.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
-                        </dd>
-                      </div>
+                      <li className="flex justify-between gap-3">
+                        <span className="text-muted-foreground shrink-0">Type</span>
+                        <span className="font-medium text-right capitalize">
+                          {ticket.subcategory.replace(/_/g, ' ')}
+                        </span>
+                      </li>
                     )}
                     {ticket.machine && (
-                      <div>
-                        <dt className="text-sm font-medium text-muted-foreground">Machine</dt>
-                        <dd className="text-sm">{ticket.machine}</dd>
-                      </div>
+                      <li className="flex justify-between gap-3">
+                        <span className="text-muted-foreground shrink-0">Machine</span>
+                        <span className="font-medium text-right">{ticket.machine}</span>
+                      </li>
                     )}
                     {ticket.area && (
-                      <div>
-                        <dt className="text-sm font-medium text-muted-foreground">Area</dt>
-                        <dd className="text-sm">{ticket.area}</dd>
-                      </div>
+                      <li className="flex justify-between gap-3">
+                        <span className="text-muted-foreground shrink-0">Area</span>
+                        <span className="font-medium text-right">{ticket.area}</span>
+                      </li>
                     )}
-                    <div>
-                      <dt className="text-sm font-medium text-muted-foreground">Created</dt>
-                      <dd className="text-sm">
+                    <li className="flex justify-between gap-3">
+                      <span className="text-muted-foreground shrink-0">Created</span>
+                      <span className="font-medium text-right">
                         {new Date(ticket.createdAt).toLocaleString()}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-sm font-medium text-muted-foreground">Last Updated</dt>
-                      <dd className="text-sm">
+                      </span>
+                    </li>
+                    <li className="flex justify-between gap-3">
+                      <span className="text-muted-foreground shrink-0">Updated</span>
+                      <span className="font-medium text-right">
                         {new Date(ticket.updatedAt).toLocaleString()}
-                      </dd>
-                    </div>
-                  </dl>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Back Button */}
-            <div>
-              <Button variant="outline" onClick={() => router.back()}>
-                ← Back
-              </Button>
+                      </span>
+                    </li>
+                  </ul>
+                </div>
+              </aside>
             </div>
           </div>
         )}

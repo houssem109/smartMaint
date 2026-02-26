@@ -81,6 +81,12 @@ export default function TechnicianDashboard() {
     <ProtectedRoute allowedRoles={['technician']}>
       <Layout title="Technician Dashboard">
         <div className="space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <span />
+            <Button asChild className="w-fit">
+              <Link href="/dashboard/create-ticket">Create New Ticket</Link>
+            </Button>
+          </div>
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Card>

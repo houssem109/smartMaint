@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TicketIcon, Users, ClipboardList, UserCheck, RefreshCw } from 'lucide-react';
 
 interface Ticket {
   id: string;
@@ -66,85 +67,98 @@ export default function AdminDashboard() {
   };
 
   return (
-    <ProtectedRoute allowedRoles={['admin']}>
+    <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
       <Layout title="Admin Dashboard" showSidebar={true}>
-        <div className="space-y-6">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Tickets</CardTitle>
+        <div className="space-y-8">
+          {/* Stats */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Total Tickets
+                </CardTitle>
+                <TicketIcon className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stats.totalTickets}</div>
+                <p className="text-2xl font-bold tracking-tight">{stats.totalTickets}</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Open Tickets</CardTitle>
+            <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Open Tickets
+                </CardTitle>
+                <ClipboardList className="h-4 w-4 text-primary" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-primary">{stats.openTickets}</div>
+                <p className="text-2xl font-bold tracking-tight text-primary">{stats.openTickets}</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Users</CardTitle>
+            <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Total Users
+                </CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stats.totalUsers}</div>
+                <p className="text-2xl font-bold tracking-tight">{stats.totalUsers}</p>
               </CardContent>
             </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Active Users</CardTitle>
+            <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Active Users
+                </CardTitle>
+                <UserCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.activeUsers}</div>
+                <p className="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
+                  {stats.activeUsers}
+                </p>
               </CardContent>
             </Card>
           </div>
 
           {/* Recent Tickets */}
-          <Card>
-            <CardHeader>
-              <div className="flex justify-between items-center">
-                <CardTitle>Recent Tickets</CardTitle>
-                <Button variant="outline" size="sm" onClick={fetchData}>
-                  🔄 Refresh
+          <Card className="border-border/50 shadow-sm">
+            <CardHeader className="space-y-1">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="text-xl">Recent Tickets</CardTitle>
+                <Button variant="outline" size="sm" onClick={fetchData} className="gap-2 w-fit">
+                  <RefreshCw className="h-4 w-4" />
+                  Refresh
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="text-center py-8">
-                  <p className="text-muted-foreground">Loading...</p>
+                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                  Loading…
                 </div>
               ) : tickets.length === 0 ? (
-                <div className="text-center py-8">
-                  <p className="text-muted-foreground">No tickets yet</p>
+                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                  No tickets yet
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="rounded-lg border border-border/50 overflow-hidden">
                   {tickets.slice(0, 5).map((ticket) => (
                     <div
                       key={ticket.id}
-                      className="flex justify-between items-center p-3 rounded-lg border"
+                      className="flex flex-col gap-2 border-b border-border/50 last:border-0 p-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between"
                     >
-                      <div>
-                        <div className="font-medium">{ticket.title}</div>
-                        <div className="text-sm text-muted-foreground">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{ticket.title}</p>
+                        <p className="text-sm text-muted-foreground">
                           {new Date(ticket.createdAt).toLocaleDateString()}
-                        </div>
+                        </p>
                       </div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <Badge variant={ticket.status === 'open' ? 'default' : 'secondary'}>
-                          {ticket.status}
+                          {ticket.status.replace('_', ' ')}
                         </Badge>
                         <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/dashboard/tickets/${ticket.id}`}>
-                            View
-                          </Link>
+                          <Link href={`/dashboard/tickets/${ticket.id}`}>View</Link>
                         </Button>
                       </div>
                     </div>
@@ -154,10 +168,10 @@ export default function AdminDashboard() {
             </CardContent>
           </Card>
 
-          {/* Users Table */}
-          <Card>
+          {/* Users */}
+          <Card className="border-border/50 shadow-sm">
             <CardHeader>
-              <CardTitle>Users</CardTitle>
+              <CardTitle className="text-xl">Users</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -165,32 +179,38 @@ export default function AdminDashboard() {
                   <p className="text-muted-foreground">Loading...</p>
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Username</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users.map((user) => (
-                      <TableRow key={user.id}>
-                        <TableCell className="font-medium">{user.fullName || user.username}</TableCell>
-                        <TableCell>{user.email}</TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">{user.role}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                            {user.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </TableCell>
+                <div className="rounded-lg border border-border/50 overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {users.map((user) => (
+                        <TableRow key={user.id} className="transition-colors">
+                          <TableCell className="font-medium">
+                            {user.fullName || user.username}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                          <TableCell>
+                            <Badge variant="secondary" className="capitalize">
+                              {user.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={user.isActive ? 'default' : 'destructive'}>
+                              {user.isActive ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
