@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
+import { Select } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 
 // Category suboptions - inputs change based on selected category
