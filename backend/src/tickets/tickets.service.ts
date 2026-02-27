@@ -366,6 +366,53 @@ export class TicketsService {
     return qb.getMany();
   }
 
+  async getNotificationsForUser(
+    userId: string,
+    userRole: UserRole,
+    limit = 50,
+  ): Promise<(AuditLog & { ticketTitle?: string })[]> {
+    // Determine relevant tickets for this user
+    let tickets: Ticket[] = [];
+
+    if (userRole === UserRole.WORKER) {
+      tickets = await this.ticketsRepository.find({
+        where: { createdById: userId, isDeleted: false },
+        select: ['id', 'title'],
+      });
+    } else if (userRole === UserRole.TECHNICIAN) {
+      tickets = await this.ticketsRepository.find({
+        where: { assignedToId: userId, isDeleted: false },
+        select: ['id', 'title'],
+      });
+    } else {
+      // Admins/superadmins get global notifications via history page instead
+      return [];
+    }
+
+    if (tickets.length === 0) {
+      return [];
+    }
+
+    const idToTitle = new Map<string, string>();
+    const ticketIds = tickets.map((t) => {
+      idToTitle.set(t.id, t.title);
+      return t.id;
+    });
+
+    const logs = await this.auditLogRepository
+      .createQueryBuilder('log')
+      .where('log.entityType = :type', { type: 'ticket' })
+      .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+      .orderBy('log.timestamp', 'DESC')
+      .take(limit)
+      .getMany();
+
+    return logs.map((log) => ({
+      ...log,
+      ticketTitle: idToTitle.get(log.entityId),
+    }));
+  }
+
   private async logTicketAction(
     ticketId: string,
     actionType: ActionType,

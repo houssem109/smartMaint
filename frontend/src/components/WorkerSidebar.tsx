@@ -10,6 +10,7 @@ import {
   PanelLeft,
   LogOut,
   Settings,
+  Bell,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -20,6 +21,7 @@ interface WorkerSidebarProps {
 
 const navItems = [
   { href: '/dashboard/worker', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard/worker/notifications', label: 'Notifications', icon: Bell },
 ];
 
 export default function WorkerSidebar({ isOpen, onToggle }: WorkerSidebarProps) {

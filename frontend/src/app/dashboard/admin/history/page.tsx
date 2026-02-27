@@ -154,7 +154,17 @@ export default function TicketHistoryPage() {
                             {isTicket(entry) ? (
                               <Button variant="link" size="sm" asChild className="px-0">
                                 <Link href={`/dashboard/tickets/${entry.entityId}`}>
-                                  Ticket {entry.entityId.slice(0, 8)}…
+                                  {(() => {
+                                    const changes: any = entry.changes;
+                                    if (changes?.deletedSnapshot?.ticket?.title) {
+                                      return changes.deletedSnapshot.ticket.title;
+                                    }
+                                    if (changes?.title && typeof changes.title === 'object') {
+                                      if ('to' in changes.title) return String(changes.title.to);
+                                      if ('from' in changes.title) return String(changes.title.from);
+                                    }
+                                    return `Ticket ${entry.entityId.slice(0, 8)}…`;
+                                  })()}
                                 </Link>
                               </Button>
                             ) : isUser(entry) ? (

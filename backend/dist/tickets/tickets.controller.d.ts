@@ -14,6 +14,9 @@ export declare class TicketsController {
     downloadAttachment(attachmentId: string, res: Response): Promise<void>;
     findAll(req: any, status?: TicketStatus, category?: string, priority?: string, assignedToId?: string): Promise<import("./entities/ticket.entity").Ticket[]>;
     history(ticketId?: string, limit?: string): Promise<import("../common/entities/audit-log.entity").AuditLog[]>;
+    notifications(req: any, limit?: string): Promise<(import("../common/entities/audit-log.entity").AuditLog & {
+        ticketTitle?: string;
+    })[]>;
     findOne(id: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     update(id: string, updateTicketDto: UpdateTicketDto, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     remove(id: string, req: any): Promise<void>;

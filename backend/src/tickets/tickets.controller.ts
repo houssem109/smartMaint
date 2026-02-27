@@ -130,6 +130,13 @@ export class TicketsController {
     return this.ticketsService.getHistory(ticketId, take);
   }
 
+  @Get('notifications')
+  @ApiOperation({ summary: 'Get notifications for current user (worker/technician)' })
+  async notifications(@Request() req, @Query('limit') limit?: string) {
+    const take = limit ? Number(limit) || 50 : 50;
+    return this.ticketsService.getNotificationsForUser(req.user.id, req.user.role, take);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get ticket by ID' })
   findOne(@Param('id') id: string, @Request() req) {

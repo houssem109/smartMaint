@@ -269,6 +269,43 @@ let TicketsService = class TicketsService {
         }
         return qb.getMany();
     }
+    async getNotificationsForUser(userId, userRole, limit = 50) {
+        let tickets = [];
+        if (userRole === user_entity_1.UserRole.WORKER) {
+            tickets = await this.ticketsRepository.find({
+                where: { createdById: userId, isDeleted: false },
+                select: ['id', 'title'],
+            });
+        }
+        else if (userRole === user_entity_1.UserRole.TECHNICIAN) {
+            tickets = await this.ticketsRepository.find({
+                where: { assignedToId: userId, isDeleted: false },
+                select: ['id', 'title'],
+            });
+        }
+        else {
+            return [];
+        }
+        if (tickets.length === 0) {
+            return [];
+        }
+        const idToTitle = new Map();
+        const ticketIds = tickets.map((t) => {
+            idToTitle.set(t.id, t.title);
+            return t.id;
+        });
+        const logs = await this.auditLogRepository
+            .createQueryBuilder('log')
+            .where('log.entityType = :type', { type: 'ticket' })
+            .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+            .orderBy('log.timestamp', 'DESC')
+            .take(limit)
+            .getMany();
+        return logs.map((log) => ({
+            ...log,
+            ticketTitle: idToTitle.get(log.entityId),
+        }));
+    }
     async logTicketAction(ticketId, actionType, userId, changes) {
         const log = this.auditLogRepository.create({
             actionType,

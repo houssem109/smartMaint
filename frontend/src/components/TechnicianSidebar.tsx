@@ -9,6 +9,7 @@ import {
   PanelLeft,
   LogOut,
   Settings,
+  Bell,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -20,6 +21,7 @@ interface TechnicianSidebarProps {
 const navItems = [
   { href: '/dashboard/technician', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/technician/tickets', label: 'My Tickets', icon: Ticket },
+  { href: '/dashboard/technician/notifications', label: 'Notifications', icon: Bell },
 ];
 
 export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSidebarProps) {

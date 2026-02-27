@@ -24,5 +24,8 @@ export declare class TicketsService {
     addAttachments(ticketId: string, files: Express.Multer.File[], userId: string, userRole: UserRole): Promise<Attachment[]>;
     restore(id: string, userId: string, userRole: UserRole): Promise<Ticket>;
     getHistory(ticketId?: string, limit?: number): Promise<AuditLog[]>;
+    getNotificationsForUser(userId: string, userRole: UserRole, limit?: number): Promise<(AuditLog & {
+        ticketTitle?: string;
+    })[]>;
     private logTicketAction;
 }

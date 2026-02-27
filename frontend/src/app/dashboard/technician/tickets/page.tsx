@@ -124,6 +124,9 @@ export default function TechnicianTicketsPage() {
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-xl font-semibold tracking-tight">Tickets assigned to me</h2>
+            <Button asChild>
+              <Link href="/dashboard/create-ticket">Create New Ticket</Link>
+            </Button>
           </div>
 
           <Card className="border-border/50 shadow-sm">

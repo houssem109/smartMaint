@@ -63,6 +63,10 @@ let TicketsController = class TicketsController {
         const take = limit ? Number(limit) || 50 : 50;
         return this.ticketsService.getHistory(ticketId, take);
     }
+    async notifications(req, limit) {
+        const take = limit ? Number(limit) || 50 : 50;
+        return this.ticketsService.getNotificationsForUser(req.user.id, req.user.role, take);
+    }
     findOne(id, req) {
         return this.ticketsService.findOne(id, req.user.id, req.user.role);
     }
@@ -145,6 +149,15 @@ __decorate([
     __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", Promise)
 ], TicketsController.prototype, "history", null);
+__decorate([
+    (0, common_1.Get)('notifications'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get notifications for current user (worker/technician)' }),
+    __param(0, (0, common_1.Request)()),
+    __param(1, (0, common_1.Query)('limit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], TicketsController.prototype, "notifications", null);
 __decorate([
     (0, common_1.Get)(':id'),
     (0, swagger_1.ApiOperation)({ summary: 'Get ticket by ID' }),
