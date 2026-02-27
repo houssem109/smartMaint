@@ -118,6 +118,18 @@ export class TicketsController {
     });
   }
 
+  @Get('history')
+  @ApiOperation({ summary: 'Get ticket history (latest changes)' })
+  @ApiQuery({ name: 'ticketId', required: false })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  async history(
+    @Query('ticketId') ticketId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const take = limit ? Number(limit) || 50 : 50;
+    return this.ticketsService.getHistory(ticketId, take);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get ticket by ID' })
   findOne(@Param('id') id: string, @Request() req) {
@@ -138,6 +150,14 @@ export class TicketsController {
   @ApiOperation({ summary: 'Delete ticket (Admin or ticket creator)' })
   remove(@Param('id') id: string, @Request() req) {
     return this.ticketsService.remove(id, req.user.id, req.user.role);
+  }
+
+  @Post(':id/restore')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Restore a previously deleted ticket (Admin/Superadmin only)' })
+  restore(@Param('id') id: string, @Request() req) {
+    return this.ticketsService.restore(id, req.user.id, req.user.role);
   }
 
   @Post(':id/assign')

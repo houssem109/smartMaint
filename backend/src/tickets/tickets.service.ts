@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ticket, TicketStatus } from './entities/ticket.entity';
 import { Attachment } from './entities/attachment.entity';
+import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { UserRole } from '../users/entities/user.entity';
@@ -18,6 +19,8 @@ export class TicketsService {
     private ticketsRepository: Repository<Ticket>,
     @InjectRepository(Attachment)
     private attachmentsRepository: Repository<Attachment>,
+    @InjectRepository(AuditLog)
+    private auditLogRepository: Repository<AuditLog>,
   ) {}
 
   async create(createTicketDto: CreateTicketDto, userId: string): Promise<Ticket> {
@@ -25,7 +28,15 @@ export class TicketsService {
       ...createTicketDto,
       createdById: userId,
     });
-    return this.ticketsRepository.save(ticket);
+    const saved = await this.ticketsRepository.save(ticket);
+
+    await this.logTicketAction(saved.id, ActionType.CREATE, userId, {
+      title: saved.title,
+      status: saved.status,
+      priority: saved.priority,
+    });
+
+    return saved;
   }
 
   async findAll(
@@ -44,14 +55,13 @@ export class TicketsService {
       .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
       .leftJoinAndSelect('ticket.attachments', 'attachments');
 
-    // Role-based filtering
+    // Role-based filtering + exclude soft-deleted tickets
     if (userRole === UserRole.WORKER) {
-      queryBuilder.where('ticket.createdById = :userId', { userId });
-    } else if (userRole === UserRole.TECHNICIAN) {
-      // Technicians see all tickets (they can be assigned to any)
-      // No filter needed - they see all tickets
+      queryBuilder.where('ticket.createdById = :userId', { userId }).andWhere('ticket.isDeleted = false');
+    } else {
+      // Technicians, admins, superadmins see all non-deleted tickets
+      queryBuilder.where('ticket.isDeleted = false');
     }
-    // Admin sees all tickets (no filter)
 
     // Apply filters
     if (filters?.status) {
@@ -76,7 +86,7 @@ export class TicketsService {
 
   async findOne(id: string, userId: string, userRole: UserRole): Promise<Ticket> {
     const ticket = await this.ticketsRepository.findOne({
-      where: { id },
+      where: { id, isDeleted: false },
       relations: ['createdBy', 'assignedTo', 'conversations', 'attachments'],
     });
 
@@ -133,28 +143,90 @@ export class TicketsService {
     }
 
     Object.assign(ticket, updateTicketDto);
-    return this.ticketsRepository.save(ticket);
+    const before = {
+      status: ticket.status,
+      priority: ticket.priority,
+      assignedToId: ticket.assignedToId,
+    };
+
+    Object.assign(ticket, updateTicketDto);
+    const saved = await this.ticketsRepository.save(ticket);
+
+    const changes: Record<string, any> = {};
+    if (updateTicketDto.status && updateTicketDto.status !== before.status) {
+      changes.status = { from: before.status, to: updateTicketDto.status };
+    }
+    if (updateTicketDto.priority && updateTicketDto.priority !== before.priority) {
+      changes.priority = { from: before.priority, to: updateTicketDto.priority };
+    }
+    if (
+      typeof updateTicketDto['assignedToId'] !== 'undefined' &&
+      updateTicketDto['assignedToId'] !== before.assignedToId
+    ) {
+      changes.assignedToId = { from: before.assignedToId, to: updateTicketDto['assignedToId'] };
+    }
+
+    if (Object.keys(changes).length > 0) {
+      await this.logTicketAction(id, ActionType.UPDATE, userId, changes);
+    }
+
+    return saved;
   }
 
   async remove(id: string, userId: string, userRole: UserRole): Promise<void> {
-    const ticket = await this.ticketsRepository.findOne({ where: { id } });
+    const ticket = await this.ticketsRepository.findOne({
+      where: { id },
+      relations: ['attachments'],
+    });
     if (!ticket) {
       throw new NotFoundException('Ticket not found');
     }
 
     // Admins and superadmins can delete any ticket
     // Workers can only delete their own tickets
-    if (userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN) {
-      await this.ticketsRepository.remove(ticket);
-      return;
+    const canDeleteAsAdmin = userRole === UserRole.ADMIN || userRole === UserRole.SUPERADMIN;
+    const canDeleteAsWorker = userRole === UserRole.WORKER && ticket.createdById === userId;
+
+    if (!canDeleteAsAdmin && !canDeleteAsWorker) {
+      throw new ForbiddenException('You do not have permission to delete this ticket');
     }
 
-    if (userRole === UserRole.WORKER && ticket.createdById === userId) {
-      await this.ticketsRepository.remove(ticket);
-      return;
-    }
+    // Snapshot attachments for potential future hard-delete/restore
+    const attachments = await this.attachmentsRepository.find({ where: { ticketId: id } });
 
-    throw new ForbiddenException('You do not have permission to delete this ticket');
+    // Soft delete: move to "corbeille" instead of removing from DB
+    ticket.isDeleted = true;
+    ticket.deletedAt = new Date();
+    await this.ticketsRepository.save(ticket);
+
+    await this.logTicketAction(id, ActionType.DELETE, userId, {
+      deletedSnapshot: {
+        ticket: {
+          id: ticket.id,
+          title: ticket.title,
+          description: ticket.description,
+          category: ticket.category,
+          priority: ticket.priority,
+          status: ticket.status,
+          subcategory: ticket.subcategory,
+          machine: ticket.machine,
+          area: ticket.area,
+          source: ticket.source,
+          createdById: ticket.createdById,
+          assignedToId: ticket.assignedToId,
+          createdAt: ticket.createdAt,
+          updatedAt: ticket.updatedAt,
+        },
+        attachments: attachments.map((a) => ({
+          fileName: a.fileName,
+          filePath: a.filePath,
+          fileSize: a.fileSize,
+          mimeType: a.mimeType,
+          uploadedById: a.uploadedById,
+          uploadedAt: a.uploadedAt,
+        })),
+      },
+    });
   }
 
   async assignTicket(
@@ -171,7 +243,14 @@ export class TicketsService {
     ticket.assignedToId = technicianId;
     ticket.status = TicketStatus.IN_PROGRESS;
 
-    return this.ticketsRepository.save(ticket);
+    const saved = await this.ticketsRepository.save(ticket);
+
+    await this.logTicketAction(ticketId, ActionType.UPDATE, userId, {
+      assignedToId: { to: technicianId },
+      status: { to: TicketStatus.IN_PROGRESS },
+    });
+
+    return saved;
   }
 
   async addAttachments(
@@ -198,6 +277,109 @@ export class TicketsService {
       }),
     );
 
-    return this.attachmentsRepository.save(attachments);
+    const saved = await this.attachmentsRepository.save(attachments);
+
+    await this.logTicketAction(ticket.id, ActionType.UPDATE, userId, {
+      attachmentsAdded: saved.map((a) => a.fileName),
+    });
+
+    return saved;
+  }
+
+  async restore(id: string, userId: string, userRole: UserRole): Promise<Ticket> {
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only admin or superadmin can restore tickets');
+    }
+
+    // If ticket already exists, just undelete it
+    const existing = await this.ticketsRepository.findOne({
+      where: { id },
+      relations: ['attachments'],
+    });
+    if (existing) {
+      if (existing.isDeleted) {
+        existing.isDeleted = false;
+        existing.deletedAt = null;
+        const saved = await this.ticketsRepository.save(existing);
+        await this.logTicketAction(id, ActionType.ROLLBACK, userId, {
+          restoredFromDelete: true,
+        });
+        return saved;
+      }
+      return existing;
+    }
+
+    const log = await this.auditLogRepository.findOne({
+      where: { entityId: id, entityType: 'ticket', actionType: ActionType.DELETE },
+      order: { timestamp: 'DESC' },
+    });
+
+    const snapshot = log?.changes?.deletedSnapshot;
+    if (!snapshot?.ticket) {
+      throw new NotFoundException('No restore information found for this ticket');
+    }
+
+    const ticketSnapshot = snapshot.ticket as Partial<Ticket>;
+    const attachmentSnapshots = (snapshot.attachments as any[]) || [];
+
+    const restoredTicket = this.ticketsRepository.create(ticketSnapshot);
+    const savedTicket = await this.ticketsRepository.save(restoredTicket);
+
+    if (attachmentSnapshots.length > 0) {
+      const restoredAttachments = attachmentSnapshots.map((a) =>
+        this.attachmentsRepository.create({
+          ticketId: savedTicket.id,
+          fileName: a.fileName,
+          filePath: a.filePath,
+          fileSize: a.fileSize,
+          mimeType: a.mimeType,
+          uploadedById: a.uploadedById,
+          uploadedAt: a.uploadedAt,
+        }),
+      );
+      await this.attachmentsRepository.save(restoredAttachments);
+    }
+
+    await this.logTicketAction(id, ActionType.ROLLBACK, userId, {
+      restoredFromDelete: true,
+    });
+
+    return savedTicket;
+  }
+
+  async getHistory(ticketId?: string, limit = 50): Promise<AuditLog[]> {
+    const qb = this.auditLogRepository
+      .createQueryBuilder('log')
+      .orderBy('log.timestamp', 'DESC')
+      .take(limit);
+
+    if (ticketId) {
+      qb.where('log.entityType = :type', { type: 'ticket' }).andWhere(
+        'log.entityId = :ticketId',
+        { ticketId },
+      );
+    } else {
+      // Global history: show both ticket and user logs
+      qb.where('log.entityType IN (:...types)', { types: ['ticket', 'user'] });
+    }
+
+    return qb.getMany();
+  }
+
+  private async logTicketAction(
+    ticketId: string,
+    actionType: ActionType,
+    userId: string | null,
+    changes?: Record<string, any>,
+  ): Promise<void> {
+    const log = this.auditLogRepository.create({
+      actionType,
+      entityId: ticketId,
+      entityType: 'ticket',
+      userId: userId ?? null,
+      changes: changes ?? null,
+      reason: null,
+    });
+    await this.auditLogRepository.save(log);
   }
 }

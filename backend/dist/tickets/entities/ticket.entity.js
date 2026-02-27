@@ -132,6 +132,14 @@ __decorate([
     __metadata("design:type", Array)
 ], Ticket.prototype, "attachments", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ default: false }),
+    __metadata("design:type", Boolean)
+], Ticket.prototype, "isDeleted", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Date)
+], Ticket.prototype, "deletedAt", void 0);
+__decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
 ], Ticket.prototype, "createdAt", void 0);

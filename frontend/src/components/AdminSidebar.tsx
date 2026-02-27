@@ -12,6 +12,7 @@ import {
   PanelLeft,
   LogOut,
   Settings,
+  Clock,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: '/dashboard/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/admin/users', label: 'Users', icon: Users },
   { href: '/dashboard/admin/tickets', label: 'Tickets', icon: Ticket },
+  { href: '/dashboard/admin/history', label: 'History', icon: Clock },
 ];
 
 export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {

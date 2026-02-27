@@ -154,4 +154,12 @@ export class UsersController {
     }
     return this.usersService.remove(id);
   }
+
+  @Post(':id/restore')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Restore a previously deleted user (Superadmin only)' })
+  async restore(@Param('id') id: string, @Request() req) {
+    return this.usersService.restore(id, req.user.role);
+  }
 }

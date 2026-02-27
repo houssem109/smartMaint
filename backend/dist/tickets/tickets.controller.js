@@ -59,6 +59,10 @@ let TicketsController = class TicketsController {
             assignedToId,
         });
     }
+    async history(ticketId, limit) {
+        const take = limit ? Number(limit) || 50 : 50;
+        return this.ticketsService.getHistory(ticketId, take);
+    }
     findOne(id, req) {
         return this.ticketsService.findOne(id, req.user.id, req.user.role);
     }
@@ -67,6 +71,9 @@ let TicketsController = class TicketsController {
     }
     remove(id, req) {
         return this.ticketsService.remove(id, req.user.id, req.user.role);
+    }
+    restore(id, req) {
+        return this.ticketsService.restore(id, req.user.id, req.user.role);
     }
     assignTicket(ticketId, technicianId, req) {
         return this.ticketsService.assignTicket(ticketId, technicianId, req.user.id, req.user.role);
@@ -128,6 +135,17 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], TicketsController.prototype, "findAll", null);
 __decorate([
+    (0, common_1.Get)('history'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get ticket history (latest changes)' }),
+    (0, swagger_1.ApiQuery)({ name: 'ticketId', required: false }),
+    (0, swagger_1.ApiQuery)({ name: 'limit', required: false, type: Number }),
+    __param(0, (0, common_1.Query)('ticketId')),
+    __param(1, (0, common_1.Query)('limit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], TicketsController.prototype, "history", null);
+__decorate([
     (0, common_1.Get)(':id'),
     (0, swagger_1.ApiOperation)({ summary: 'Get ticket by ID' }),
     __param(0, (0, common_1.Param)('id')),
@@ -155,6 +173,17 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], TicketsController.prototype, "remove", null);
+__decorate([
+    (0, common_1.Post)(':id/restore'),
+    (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Restore a previously deleted ticket (Admin/Superadmin only)' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], TicketsController.prototype, "restore", null);
 __decorate([
     (0, common_1.Post)(':id/assign'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),

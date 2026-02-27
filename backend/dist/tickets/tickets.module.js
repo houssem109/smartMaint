@@ -14,6 +14,7 @@ const tickets_controller_1 = require("./tickets.controller");
 const ticket_entity_1 = require("./entities/ticket.entity");
 const conversation_entity_1 = require("./entities/conversation.entity");
 const attachment_entity_1 = require("./entities/attachment.entity");
+const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const users_module_1 = require("../users/users.module");
 let TicketsModule = class TicketsModule {
 };
@@ -21,7 +22,7 @@ exports.TicketsModule = TicketsModule;
 exports.TicketsModule = TicketsModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            typeorm_1.TypeOrmModule.forFeature([ticket_entity_1.Ticket, conversation_entity_1.Conversation, attachment_entity_1.Attachment]),
+            typeorm_1.TypeOrmModule.forFeature([ticket_entity_1.Ticket, conversation_entity_1.Conversation, attachment_entity_1.Attachment, audit_log_entity_1.AuditLog]),
             users_module_1.UsersModule,
         ],
         controllers: [tickets_controller_1.TicketsController],

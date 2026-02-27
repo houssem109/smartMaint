@@ -18,4 +18,5 @@ export declare class UsersController {
     findOne(id: string): Promise<import("./entities/user.entity").User>;
     update(req: any, id: string, updateData: any): Promise<import("./entities/user.entity").User>;
     remove(req: any, id: string): Promise<void>;
+    restore(id: string, req: any): Promise<import("./entities/user.entity").User>;
 }

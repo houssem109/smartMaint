@@ -46,6 +46,8 @@ export declare class Ticket {
     assignedTo: User;
     conversations: Conversation[];
     attachments: Attachment[];
+    isDeleted: boolean;
+    deletedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
 }

@@ -112,6 +112,12 @@ export class Ticket {
   @OneToMany(() => Attachment, (attachment) => attachment.ticket)
   attachments: Attachment[];
 
+  @Column({ default: false })
+  isDeleted: boolean;
+
+  @Column({ type: 'timestamp', nullable: true })
+  deletedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -13,8 +13,10 @@ export declare class TicketsController {
     uploadAttachments(ticketId: string, files: Express.Multer.File[], req: any): Promise<Attachment[]>;
     downloadAttachment(attachmentId: string, res: Response): Promise<void>;
     findAll(req: any, status?: TicketStatus, category?: string, priority?: string, assignedToId?: string): Promise<import("./entities/ticket.entity").Ticket[]>;
+    history(ticketId?: string, limit?: string): Promise<import("../common/entities/audit-log.entity").AuditLog[]>;
     findOne(id: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     update(id: string, updateTicketDto: UpdateTicketDto, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     remove(id: string, req: any): Promise<void>;
+    restore(id: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     assignTicket(ticketId: string, technicianId: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
 }
