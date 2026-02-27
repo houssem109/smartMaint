@@ -79,13 +79,24 @@ export default function TechnicianDashboard() {
 
   return (
     <ProtectedRoute allowedRoles={['technician']}>
-      <Layout title="Technician Dashboard">
-        <div className="space-y-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <span />
-            <Button asChild className="w-fit">
-              <Link href="/dashboard/create-ticket">Create New Ticket</Link>
-            </Button>
+      <Layout title="Technician Dashboard" showSidebar={true}>
+        <div className="space-y-8">
+          {/* Header + quick actions */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">My tickets overview</h2>
+              <p className="text-sm text-muted-foreground">
+                Track and work on tickets assigned to you in real time.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={fetchTickets}>
+                🔄 Refresh
+              </Button>
+              <Button asChild>
+                <Link href="/dashboard/create-ticket">Create New Ticket</Link>
+              </Button>
+            </div>
           </div>
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -141,9 +152,9 @@ export default function TechnicianDashboard() {
                     </Button>
                   ))}
                 </div>
-                <Button variant="outline" onClick={fetchTickets}>
-                  🔄 Refresh
-                </Button>
+                <span className="text-xs text-muted-foreground hidden sm:inline">
+                  Showing tickets filtered by status
+                </span>
               </div>
             </CardContent>
           </Card>

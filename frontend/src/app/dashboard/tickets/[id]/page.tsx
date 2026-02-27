@@ -36,6 +36,14 @@ interface Ticket {
   createdById?: string;
   createdBy?: { fullName: string; email: string };
   assignedTo?: { fullName: string; email: string };
+  attachments?: {
+    id: string;
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+    fileSize: number;
+    uploadedAt: string;
+  }[];
 }
 
 export default function TicketDetailPage() {
@@ -65,6 +73,22 @@ export default function TicketDetailPage() {
       toast.error(error.response?.data?.message || 'Failed to load ticket');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenAttachment = async (attachmentId: string, mimeType: string) => {
+    try {
+      const res = await api.get(`/tickets/attachments/${attachmentId}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Optionally revoke later
+      setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (error: any) {
+      console.error('Failed to open attachment:', error);
+      toast.error(error.response?.data?.message || 'Failed to open attachment');
     }
   };
 
@@ -265,6 +289,30 @@ export default function TicketDetailPage() {
                 <p className="whitespace-pre-wrap text-foreground leading-relaxed text-base">
                   {ticket.description}
                 </p>
+                {ticket.attachments && ticket.attachments.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                      Attachments
+                    </h3>
+                    <ul className="space-y-2">
+                      {ticket.attachments.map((att) => (
+                        <li key={att.id} className="flex items-center justify-between gap-2 text-sm">
+                          <span className="truncate max-w-xs text-foreground">
+                            {att.fileName}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0"
+                            onClick={() => handleOpenAttachment(att.id, att.mimeType)}
+                          >
+                            View / Download
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </section>
 
               <aside className="lg:pl-0">

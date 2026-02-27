@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ticket, TicketStatus } from './entities/ticket.entity';
+import { Attachment } from './entities/attachment.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { UserRole } from '../users/entities/user.entity';
@@ -15,6 +16,8 @@ export class TicketsService {
   constructor(
     @InjectRepository(Ticket)
     private ticketsRepository: Repository<Ticket>,
+    @InjectRepository(Attachment)
+    private attachmentsRepository: Repository<Attachment>,
   ) {}
 
   async create(createTicketDto: CreateTicketDto, userId: string): Promise<Ticket> {
@@ -169,5 +172,32 @@ export class TicketsService {
     ticket.status = TicketStatus.IN_PROGRESS;
 
     return this.ticketsRepository.save(ticket);
+  }
+
+  async addAttachments(
+    ticketId: string,
+    files: Express.Multer.File[],
+    userId: string,
+    userRole: UserRole,
+  ): Promise<Attachment[]> {
+    // Reuse permission checks from findOne
+    const ticket = await this.findOne(ticketId, userId, userRole);
+
+    if (!files || files.length === 0) {
+      return [];
+    }
+
+    const attachments = files.map((file) =>
+      this.attachmentsRepository.create({
+        ticketId: ticket.id,
+        fileName: file.originalname,
+        filePath: file.path,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        uploadedById: userId,
+      }),
+    );
+
+    return this.attachmentsRepository.save(attachments);
   }
 }

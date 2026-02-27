@@ -17,10 +17,12 @@ const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const ticket_entity_1 = require("./entities/ticket.entity");
+const attachment_entity_1 = require("./entities/attachment.entity");
 const user_entity_1 = require("../users/entities/user.entity");
 let TicketsService = class TicketsService {
-    constructor(ticketsRepository) {
+    constructor(ticketsRepository, attachmentsRepository) {
         this.ticketsRepository = ticketsRepository;
+        this.attachmentsRepository = attachmentsRepository;
     }
     async create(createTicketDto, userId) {
         const ticket = this.ticketsRepository.create({
@@ -120,11 +122,28 @@ let TicketsService = class TicketsService {
         ticket.status = ticket_entity_1.TicketStatus.IN_PROGRESS;
         return this.ticketsRepository.save(ticket);
     }
+    async addAttachments(ticketId, files, userId, userRole) {
+        const ticket = await this.findOne(ticketId, userId, userRole);
+        if (!files || files.length === 0) {
+            return [];
+        }
+        const attachments = files.map((file) => this.attachmentsRepository.create({
+            ticketId: ticket.id,
+            fileName: file.originalname,
+            filePath: file.path,
+            fileSize: file.size,
+            mimeType: file.mimetype,
+            uploadedById: userId,
+        }));
+        return this.attachmentsRepository.save(attachments);
+    }
 };
 exports.TicketsService = TicketsService;
 exports.TicketsService = TicketsService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(ticket_entity_1.Ticket)),
-    __metadata("design:paramtypes", [typeorm_2.Repository])
+    __param(1, (0, typeorm_1.InjectRepository)(attachment_entity_1.Attachment)),
+    __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository])
 ], TicketsService);
 //# sourceMappingURL=tickets.service.js.map

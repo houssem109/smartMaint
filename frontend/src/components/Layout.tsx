@@ -7,22 +7,30 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import AdminSidebar from './AdminSidebar';
+import TechnicianSidebar from './TechnicianSidebar';
+import WorkerSidebar from './WorkerSidebar';
 import { Sun, Moon } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
   title: string;
-  showSidebar?: boolean;
+  showSidebar?: boolean; // kept for backwards compatibility, now ignored
 }
 
-export default function Layout({ children, title, showSidebar = false }: LayoutProps) {
+export default function Layout({ children, title }: LayoutProps) {
   const { user } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors flex">
-      {showSidebar && (
+      {user?.role === 'worker' && (
+        <WorkerSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+      )}
+      {user?.role === 'technician' && (
+        <TechnicianSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+      )}
+      {(user?.role === 'admin' || user?.role === 'superadmin') && (
         <AdminSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       )}
 

@@ -19,7 +19,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Search, Plus, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw } from 'lucide-react';
+import { useAuthStore } from '@/store/auth-store';
 
 interface Ticket {
   id: string;
@@ -28,18 +29,13 @@ interface Ticket {
   status: string;
   priority: string;
   category: string;
-  subcategory?: string;
-  machine?: string;
-  area?: string;
   createdAt: string;
-  createdBy?: { fullName: string; email: string };
-  assignedTo?: { fullName: string; email: string };
+  assignedToId?: string;
 }
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'open', label: 'Open' },
-  { value: 'in_review', label: 'In review' },
   { value: 'in_progress', label: 'In progress' },
   { value: 'solved', label: 'Solved' },
   { value: 'closed', label: 'Closed' },
@@ -74,7 +70,8 @@ function getPriorityVariant(priority: string): 'default' | 'secondary' | 'destru
   return map[priority] ?? 'secondary';
 }
 
-export default function AdminTicketsPage() {
+export default function TechnicianTicketsPage() {
+  const currentUser = useAuthStore((s) => s.user);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -90,7 +87,11 @@ export default function AdminTicketsPage() {
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
       const res = await api.get<Ticket[]>('/tickets', { params });
-      setTickets(res.data);
+      // Show only tickets that are assigned to this technician
+      const myTickets = currentUser
+        ? res.data.filter((t) => t.assignedToId === currentUser.id)
+        : res.data;
+      setTickets(myTickets);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load tickets');
     } finally {
@@ -103,14 +104,14 @@ export default function AdminTicketsPage() {
   }, [statusFilter, priorityFilter]);
 
   const filteredTickets = useMemo(() => {
-    // Reset to first page when filters/search change
+    // Reset to first page whenever search or tickets change
     setPage(1);
 
     if (!search.trim()) return tickets;
     const q = search.trim().toLowerCase();
     return tickets.filter(
       (t) =>
-        t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q)
+        t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q),
     );
   }, [tickets, search]);
 
@@ -118,17 +119,11 @@ export default function AdminTicketsPage() {
   const paginatedTickets = filteredTickets.slice((page - 1) * pageSize, page * pageSize);
 
   return (
-    <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
-      <Layout title="Tickets" showSidebar={true}>
+    <ProtectedRoute allowedRoles={['technician']}>
+      <Layout title="My Tickets" showSidebar={true}>
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">All Tickets</h2>
-            <Button asChild className="w-fit gap-2">
-              <Link href="/dashboard/create-ticket">
-                <Plus className="h-4 w-4" />
-                Add ticket
-              </Link>
-            </Button>
+            <h2 className="text-xl font-semibold tracking-tight">Tickets assigned to me</h2>
           </div>
 
           <Card className="border-border/50 shadow-sm">
@@ -180,14 +175,9 @@ export default function AdminTicketsPage() {
                 <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
                   <p className="mb-2">
                     {tickets.length === 0
-                      ? 'No tickets yet.'
+                      ? 'No tickets assigned to you yet.'
                       : 'No tickets match your search or filters.'}
                   </p>
-                  {tickets.length === 0 && (
-                    <Button asChild variant="outline" className="mt-2">
-                      <Link href="/dashboard/create-ticket">Create first ticket</Link>
-                    </Button>
-                  )}
                 </div>
               ) : (
                 <>
@@ -200,7 +190,6 @@ export default function AdminTicketsPage() {
                           <TableHead>Priority</TableHead>
                           <TableHead>Category</TableHead>
                           <TableHead>Created</TableHead>
-                          <TableHead>Assigned to</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -228,9 +217,6 @@ export default function AdminTicketsPage() {
                             </TableCell>
                             <TableCell className="text-muted-foreground text-sm">
                               {new Date(ticket.createdAt).toLocaleString()}
-                            </TableCell>
-                            <TableCell className="text-muted-foreground text-sm">
-                              {ticket.assignedTo?.fullName || ticket.assignedTo?.email || '—'}
                             </TableCell>
                             <TableCell className="text-right">
                               <Button variant="ghost" size="sm" asChild>
@@ -276,3 +262,4 @@ export default function AdminTicketsPage() {
     </ProtectedRoute>
   );
 }
+

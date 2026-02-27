@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -86,6 +86,8 @@ export default function CreateTicketPage() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentCategory = CATEGORY_OPTIONS.find((c) => c.value === formData.category);
   const hasSubcategories = currentCategory && currentCategory.subcategories.length > 0;
@@ -96,6 +98,23 @@ export default function CreateTicketPage() {
     setFormData({ ...formData, category, subcategory: '' });
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const selected = Array.from(e.target.files);
+    setFiles((prev) => {
+      const existing = prev || [];
+      // Avoid duplicates by simple name+size key
+      const existingKeys = new Set(existing.map((f) => `${f.name}-${f.size}-${f.lastModified}`));
+      const merged = [
+        ...existing,
+        ...selected.filter((f) => !existingKeys.has(`${f.name}-${f.size}-${f.lastModified}`)),
+      ];
+      return merged;
+    });
+    // Allow selecting the same file again if removed later
+    e.target.value = '';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -103,7 +122,21 @@ export default function CreateTicketPage() {
 
     const toastId = toast.loading('Creating ticket...');
     try {
-      await api.post('/tickets', formData);
+      // First create the ticket
+      const createRes = await api.post('/tickets', formData);
+      const ticket = createRes.data;
+
+      // If files are selected, upload them as attachments (optional)
+      if (files.length > 0 && ticket?.id) {
+        const formDataFiles = new FormData();
+        files.forEach((file) => {
+          formDataFiles.append('files', file);
+        });
+        await api.post(`/tickets/${ticket.id}/attachments`, formDataFiles, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      }
+
       toast.success('Ticket created successfully!', { id: toastId });
       setTimeout(() => {
         router.push(getDashboardPath(user?.role || 'worker'));
@@ -117,7 +150,8 @@ export default function CreateTicketPage() {
     }
   };
 
-  const showSidebar = user?.role === 'admin' || user?.role === 'superadmin';
+  const showSidebar =
+    user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin', 'technician', 'worker']}>
@@ -234,6 +268,46 @@ export default function CreateTicketPage() {
                     />
                   </div>
                 )}
+
+                <div className="space-y-2">
+                  <Label>Attachments (optional)</Label>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      + Add files
+                    </Button>
+                    {files.length > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {files.length} file{files.length > 1 ? 's' : ''} selected
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    id="attachments"
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+                  {files.length > 0 && (
+                    <ul className="mt-2 space-y-1 rounded-md border border-dashed border-border/70 bg-muted/40 px-3 py-2 text-xs">
+                      {files.map((file, idx) => (
+                        <li key={`${file.name}-${file.size}-${idx}`} className="truncate">
+                          {file.name}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    You can attach screenshots, photos, or documents to help describe the issue.
+                  </p>
+                </div>
 
                 <div className="flex gap-4">
                   <Button

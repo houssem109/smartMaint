@@ -7,14 +7,19 @@ import {
   Param,
   Delete,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
   Request,
   Query,
+  Res,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiBearerAuth,
   ApiQuery,
+  ApiConsumes,
 } from '@nestjs/swagger';
 import { TicketsService } from './tickets.service';
 import { CreateTicketDto } from './dto/create-ticket.dto';
@@ -24,18 +29,72 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../users/entities/user.entity';
 import { TicketStatus } from './entities/ticket.entity';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Attachment } from './entities/attachment.entity';
+import { Response } from 'express';
 
 @ApiTags('Tickets')
 @Controller('tickets')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class TicketsController {
-  constructor(private readonly ticketsService: TicketsService) {}
+  constructor(
+    private readonly ticketsService: TicketsService,
+    @InjectRepository(Attachment)
+    private readonly attachmentsRepository: Repository<Attachment>,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new ticket' })
   create(@Body() createTicketDto: CreateTicketDto, @Request() req) {
     return this.ticketsService.create(createTicketDto, req.user.id);
+  }
+
+  @Post(':id/attachments')
+  @UseInterceptors(
+    FilesInterceptor('files', 5, {
+      storage: diskStorage({
+        destination: 'uploads/tickets',
+        filename: (_req, file, cb) => {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, `${uniqueSuffix}${extname(file.originalname)}`);
+        },
+      }),
+    }),
+  )
+  @ApiOperation({ summary: 'Upload attachments for a ticket' })
+  @ApiConsumes('multipart/form-data')
+  uploadAttachments(
+    @Param('id') ticketId: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Request() req,
+  ) {
+    return this.ticketsService.addAttachments(ticketId, files, req.user.id, req.user.role);
+  }
+
+  @Get('attachments/:attachmentId')
+  @ApiOperation({ summary: 'Download ticket attachment' })
+  async downloadAttachment(
+    @Param('attachmentId') attachmentId: string,
+    @Res() res: Response,
+  ) {
+    const attachment = await this.attachmentsRepository.findOne({
+      where: { id: attachmentId },
+    });
+    if (!attachment) {
+      throw new NotFoundException('Attachment not found');
+    }
+
+    res.setHeader('Content-Type', attachment.mimeType);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${encodeURIComponent(attachment.fileName)}"`,
+    );
+    return res.sendFile(attachment.filePath, { root: process.cwd() });
   }
 
   @Get()

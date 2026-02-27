@@ -1,16 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
-import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { TicketIcon, Users, ClipboardList, UserCheck, RefreshCw } from 'lucide-react';
+import { TicketIcon, Users, ClipboardList, UserCheck } from 'lucide-react';
 
 interface Ticket {
   id: string;
@@ -62,16 +59,36 @@ export default function AdminDashboard() {
   const stats = {
     totalTickets: tickets.length,
     openTickets: tickets.filter((t) => t.status === 'open').length,
+    inReviewTickets: tickets.filter((t) => t.status === 'in_review').length,
+    inProgressTickets: tickets.filter((t) => t.status === 'in_progress').length,
+    solvedTickets: tickets.filter((t) => t.status === 'solved').length,
+    closedTickets: tickets.filter((t) => t.status === 'closed').length,
     totalUsers: users.length,
     activeUsers: users.filter((u) => u.isActive).length,
   };
+
+  const priorityStats = useMemo(() => {
+    return {
+      low: tickets.filter((t) => t.priority === 'low').length,
+      medium: tickets.filter((t) => t.priority === 'medium').length,
+      high: tickets.filter((t) => t.priority === 'high').length,
+      critical: tickets.filter((t) => t.priority === 'critical').length,
+    };
+  }, [tickets]);
+
+  const statusTotalForBar =
+    stats.openTickets +
+      stats.inReviewTickets +
+      stats.inProgressTickets +
+      stats.solvedTickets +
+      stats.closedTickets || 1;
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
       <Layout title="Admin Dashboard" showSidebar={true}>
         <div className="space-y-8">
           {/* Stats */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -95,123 +112,143 @@ export default function AdminDashboard() {
               </CardContent>
             </Card>
             <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Total Users
+                  In Review
                 </CardTitle>
                 <Users className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <p className="text-2xl font-bold tracking-tight">{stats.totalUsers}</p>
+                <p className="text-2xl font-bold tracking-tight">
+                  {stats.inReviewTickets}
+                </p>
               </CardContent>
             </Card>
             <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Active Users
+                  In Progress
+                </CardTitle>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-bold tracking-tight">
+                  {stats.inProgressTickets}
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  Solved / Closed
                 </CardTitle>
                 <UserCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
               </CardHeader>
               <CardContent>
                 <p className="text-2xl font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-                  {stats.activeUsers}
+                  {stats.solvedTickets + stats.closedTickets}
                 </p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Recent Tickets */}
+          {/* Ticket status distribution (simple bar chart) */}
           <Card className="border-border/50 shadow-sm">
-            <CardHeader className="space-y-1">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle className="text-xl">Recent Tickets</CardTitle>
-                <Button variant="outline" size="sm" onClick={fetchData} className="gap-2 w-fit">
-                  <RefreshCw className="h-4 w-4" />
-                  Refresh
-                </Button>
-              </div>
+            <CardHeader>
+              <CardTitle className="text-lg">Ticket status distribution</CardTitle>
             </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
-                  Loading…
-                </div>
-              ) : tickets.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
-                  No tickets yet
-                </div>
+            <CardContent className="space-y-4">
+              {loading && tickets.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Loading status data…</p>
               ) : (
-                <div className="rounded-lg border border-border/50 overflow-hidden">
-                  {tickets.slice(0, 5).map((ticket) => (
-                    <div
-                      key={ticket.id}
-                      className="flex flex-col gap-2 border-b border-border/50 last:border-0 p-4 transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">{ticket.title}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {new Date(ticket.createdAt).toLocaleDateString()}
-                        </p>
+                <>
+                  {[
+                    { label: 'Open', value: stats.openTickets, color: 'bg-primary' },
+                    {
+                      label: 'In review',
+                      value: stats.inReviewTickets,
+                      color: 'bg-yellow-500 dark:bg-yellow-400',
+                    },
+                    {
+                      label: 'In progress',
+                      value: stats.inProgressTickets,
+                      color: 'bg-blue-500 dark:bg-blue-400',
+                    },
+                    {
+                      label: 'Solved',
+                      value: stats.solvedTickets,
+                      color: 'bg-emerald-500 dark:bg-emerald-400',
+                    },
+                    {
+                      label: 'Closed',
+                      value: stats.closedTickets,
+                      color: 'bg-muted-foreground',
+                    },
+                  ].map(({ label, value, color }) => {
+                    const pct = Math.round((value / statusTotalForBar) * 100);
+                    return (
+                      <div key={label} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>{label}</span>
+                          <span className="font-medium text-foreground">
+                            {value} {stats.totalTickets ? `(${pct}%)` : ''}
+                          </span>
+                        </div>
+                        <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={`${color} h-2 rounded-full transition-all`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant={ticket.status === 'open' ? 'default' : 'secondary'}>
-                          {ticket.status.replace('_', ' ')}
-                        </Badge>
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/dashboard/tickets/${ticket.id}`}>View</Link>
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    );
+                  })}
+                </>
               )}
             </CardContent>
           </Card>
 
-          {/* Users */}
+          {/* Priority breakdown */}
           <Card className="border-border/50 shadow-sm">
             <CardHeader>
-              <CardTitle className="text-xl">Users</CardTitle>
+              <CardTitle className="text-lg">Tickets by priority</CardTitle>
             </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-center py-8">
-                  <p className="text-muted-foreground">Loading...</p>
+            <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {[
+                {
+                  label: 'Low',
+                  value: priorityStats.low,
+                  badgeVariant: 'outline',
+                },
+                {
+                  label: 'Medium',
+                  value: priorityStats.medium,
+                  badgeVariant: 'secondary',
+                },
+                {
+                  label: 'High',
+                  value: priorityStats.high,
+                  badgeVariant: 'default',
+                },
+                {
+                  label: 'Critical',
+                  value: priorityStats.critical,
+                  badgeVariant: 'destructive',
+                },
+              ].map(({ label, value, badgeVariant }) => (
+                <div
+                  key={label}
+                  className="rounded-lg border border-border/60 bg-card/60 px-3 py-3 flex flex-col gap-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">{label}</span>
+                    <Badge variant={badgeVariant as any} className="text-[11px]">
+                      {value}
+                    </Badge>
+                  </div>
+                  <p className="text-lg font-semibold">{value}</p>
                 </div>
-              ) : (
-                <div className="rounded-lg border border-border/50 overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead>Name</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Status</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {users.map((user) => (
-                        <TableRow key={user.id} className="transition-colors">
-                          <TableCell className="font-medium">
-                            {user.fullName || user.username}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="capitalize">
-                              {user.role}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={user.isActive ? 'default' : 'destructive'}>
-                              {user.isActive ? 'Active' : 'Inactive'}
-                            </Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+              ))}
             </CardContent>
           </Card>
         </div>

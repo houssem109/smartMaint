@@ -23,12 +23,33 @@ const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const user_entity_1 = require("../users/entities/user.entity");
 const ticket_entity_1 = require("./entities/ticket.entity");
+const platform_express_1 = require("@nestjs/platform-express");
+const multer_1 = require("multer");
+const path_1 = require("path");
+const typeorm_1 = require("@nestjs/typeorm");
+const typeorm_2 = require("typeorm");
+const attachment_entity_1 = require("./entities/attachment.entity");
 let TicketsController = class TicketsController {
-    constructor(ticketsService) {
+    constructor(ticketsService, attachmentsRepository) {
         this.ticketsService = ticketsService;
+        this.attachmentsRepository = attachmentsRepository;
     }
     create(createTicketDto, req) {
         return this.ticketsService.create(createTicketDto, req.user.id);
+    }
+    uploadAttachments(ticketId, files, req) {
+        return this.ticketsService.addAttachments(ticketId, files, req.user.id, req.user.role);
+    }
+    async downloadAttachment(attachmentId, res) {
+        const attachment = await this.attachmentsRepository.findOne({
+            where: { id: attachmentId },
+        });
+        if (!attachment) {
+            throw new common_1.NotFoundException('Attachment not found');
+        }
+        res.setHeader('Content-Type', attachment.mimeType);
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.fileName)}"`);
+        return res.sendFile(attachment.filePath, { root: process.cwd() });
     }
     findAll(req, status, category, priority, assignedToId) {
         return this.ticketsService.findAll(req.user.id, req.user.role, {
@@ -61,6 +82,35 @@ __decorate([
     __metadata("design:paramtypes", [create_ticket_dto_1.CreateTicketDto, Object]),
     __metadata("design:returntype", void 0)
 ], TicketsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Post)(':id/attachments'),
+    (0, common_1.UseInterceptors)((0, platform_express_1.FilesInterceptor)('files', 5, {
+        storage: (0, multer_1.diskStorage)({
+            destination: 'uploads/tickets',
+            filename: (_req, file, cb) => {
+                const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+                cb(null, `${uniqueSuffix}${(0, path_1.extname)(file.originalname)}`);
+            },
+        }),
+    })),
+    (0, swagger_1.ApiOperation)({ summary: 'Upload attachments for a ticket' }),
+    (0, swagger_1.ApiConsumes)('multipart/form-data'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.UploadedFiles)()),
+    __param(2, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Array, Object]),
+    __metadata("design:returntype", void 0)
+], TicketsController.prototype, "uploadAttachments", null);
+__decorate([
+    (0, common_1.Get)('attachments/:attachmentId'),
+    (0, swagger_1.ApiOperation)({ summary: 'Download ticket attachment' }),
+    __param(0, (0, common_1.Param)('attachmentId')),
+    __param(1, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], TicketsController.prototype, "downloadAttachment", null);
 __decorate([
     (0, common_1.Get)(),
     (0, swagger_1.ApiOperation)({ summary: 'Get all tickets (filtered by role)' }),
@@ -122,6 +172,8 @@ exports.TicketsController = TicketsController = __decorate([
     (0, common_1.Controller)('tickets'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, swagger_1.ApiBearerAuth)(),
-    __metadata("design:paramtypes", [tickets_service_1.TicketsService])
+    __param(1, (0, typeorm_1.InjectRepository)(attachment_entity_1.Attachment)),
+    __metadata("design:paramtypes", [tickets_service_1.TicketsService,
+        typeorm_2.Repository])
 ], TicketsController);
 //# sourceMappingURL=tickets.controller.js.map
