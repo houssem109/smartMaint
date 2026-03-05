@@ -15,6 +15,7 @@ const ticket_entity_1 = require("../tickets/entities/ticket.entity");
 const conversation_entity_1 = require("../tickets/entities/conversation.entity");
 const attachment_entity_1 = require("../tickets/entities/attachment.entity");
 const audit_log_entity_1 = require("../common/entities/audit-log.entity");
+const knowledge_entry_entity_1 = require("../knowledge/entities/knowledge-entry.entity");
 let DatabaseModule = class DatabaseModule {
 };
 exports.DatabaseModule = DatabaseModule;
@@ -30,7 +31,7 @@ exports.DatabaseModule = DatabaseModule = __decorate([
                     username: configService.get('DATABASE_USER', 'smartmaint'),
                     password: configService.get('DATABASE_PASSWORD', 'smartmaint123'),
                     database: configService.get('DATABASE_NAME', 'smartmaint_db'),
-                    entities: [user_entity_1.User, ticket_entity_1.Ticket, conversation_entity_1.Conversation, attachment_entity_1.Attachment, audit_log_entity_1.AuditLog],
+                    entities: [user_entity_1.User, ticket_entity_1.Ticket, conversation_entity_1.Conversation, attachment_entity_1.Attachment, audit_log_entity_1.AuditLog, knowledge_entry_entity_1.KnowledgeEntry],
                     synchronize: configService.get('NODE_ENV') === 'development',
                     logging: configService.get('NODE_ENV') === 'development',
                     migrations: ['dist/database/migrations/*.js'],

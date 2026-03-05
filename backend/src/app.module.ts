@@ -7,6 +7,8 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { TicketsModule } from './tickets/tickets.module';
     AuthModule,
     UsersModule,
     TicketsModule,
+    KnowledgeModule,
+    AiModule,
   ],
   controllers: [AppController],
   providers: [AppService],

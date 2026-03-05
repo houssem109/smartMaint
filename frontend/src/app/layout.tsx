@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { useThemeStore } from '@/store/theme-store';
+import TechoChatWidget from '@/components/TechoChatWidget';
 import './globals.css';
 
 export default function RootLayout({
@@ -25,6 +26,7 @@ export default function RootLayout({
     <html lang="en" className={theme}>
       <body>
         {children}
+        <TechoChatWidget />
         <Toaster
           position="bottom-left"
           theme={theme}

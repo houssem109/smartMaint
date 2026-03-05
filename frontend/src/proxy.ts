@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // Role-based route protection
-// NOTE: superadmin should be treated like an admin for dashboard access.
+
 const roleRoutes: Record<string, string[]> = {
   '/dashboard/admin': ['admin', 'superadmin'],
   '/dashboard/technician': ['technician'],

@@ -116,6 +116,7 @@ SmartMaint AI is a full-stack application built with a microservices-oriented ar
 - **RAG Framework**: LangChain
 - **Embeddings**: Sentence Transformers (all-MiniLM-L6-v2)
 - **Vector Database**: ChromaDB / Qdrant
+ - **AI Module**: `backend/src/ai` (Techo assistant, chat API, future RAG integration)
 
 ### Integration Tools (Future Phases)
 - **Workflow Automation**: n8n
@@ -178,6 +179,7 @@ smartmaint/
 │   │   ├── auth/           # Authentication module
 │   │   ├── users/          # User management
 │   │   ├── tickets/        # Ticket management
+│   │   ├── knowledge/      # Knowledge base (problems & solutions)
 │   │   ├── ai/             # AI integration (Phase 2)
 │   │   ├── approvals/      # Approval system (Phase 4)
 │   │   └── common/         # Shared utilities
@@ -240,6 +242,16 @@ After running migrations and seeds:
   PATCH  /:id            # Update ticket
   DELETE /:id            # Delete ticket
   POST   /:id/assign     # Assign ticket to technician
+
+/api/knowledge/
+  GET    /               # List knowledge entries (admin/technician)
+  POST   /               # Create knowledge entry
+  PATCH  /:id            # Update knowledge entry
+  DELETE /:id            # Delete knowledge entry
+
+/api/chat/
+  POST   /message        # Send message to Techo (optionally linked to a ticket)
+  GET    /history/:id    # Get AI/user conversation for a ticket
 ```
 
 ### Authentication Flow

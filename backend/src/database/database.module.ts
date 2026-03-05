@@ -6,6 +6,7 @@ import { Ticket } from '../tickets/entities/ticket.entity';
 import { Conversation } from '../tickets/entities/conversation.entity';
 import { Attachment } from '../tickets/entities/attachment.entity';
 import { AuditLog } from '../common/entities/audit-log.entity';
+import { KnowledgeEntry } from '../knowledge/entities/knowledge-entry.entity';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { AuditLog } from '../common/entities/audit-log.entity';
         username: configService.get('DATABASE_USER', 'smartmaint'),
         password: configService.get('DATABASE_PASSWORD', 'smartmaint123'),
         database: configService.get('DATABASE_NAME', 'smartmaint_db'),
-        entities: [User, Ticket, Conversation, Attachment, AuditLog],
+        entities: [User, Ticket, Conversation, Attachment, AuditLog, KnowledgeEntry],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
         migrations: ['dist/database/migrations/*.js'],

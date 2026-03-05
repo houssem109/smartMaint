@@ -1,17 +1,6 @@
-import {
-  IsString,
-  IsNotEmpty,
-  IsEnum,
-  IsOptional,
-  IsUUID,
-  MaxLength,
-} from 'class-validator';
+import { IsString, IsNotEmpty, IsEnum, IsOptional, IsUUID, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  TicketCategory,
-  TicketPriority,
-  TicketSource,
-} from '../entities/ticket.entity';
+import { TicketCategory, TicketPriority, TicketSource } from '../entities/ticket.entity';
 
 export class CreateTicketDto {
   @ApiProperty({ example: 'Machine A not starting' })

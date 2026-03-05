@@ -166,7 +166,7 @@ export default function TechnicianDashboard() {
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground">
-                Priority queue (next up)
+                Priority queue 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
