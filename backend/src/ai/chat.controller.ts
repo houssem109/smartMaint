@@ -94,22 +94,20 @@ export class ChatController {
 
     const reply = await this.aiService.chat(messages);
 
-    // Persist conversation if linked to a ticket
-    if (ticketId) {
-      const userEntry = this.conversationRepository.create({
-        ticketId,
-        message,
-        senderType: SenderType.USER,
-        senderId: user.id,
-      });
-      const aiEntry = this.conversationRepository.create({
-        ticketId,
-        message: reply,
-        senderType: SenderType.AI,
-        senderId: null,
-      });
-      await this.conversationRepository.save([userEntry, aiEntry]);
-    }
+    // Persist conversation for this user (with or without ticket)
+    const userEntry = this.conversationRepository.create({
+      ticketId: ticketId ?? null,
+      message,
+      senderType: SenderType.USER,
+      senderId: user.id,
+    });
+    const aiEntry = this.conversationRepository.create({
+      ticketId: ticketId ?? null,
+      message: reply,
+      senderType: SenderType.AI,
+      senderId: null,
+    });
+    await this.conversationRepository.save([userEntry, aiEntry]);
 
     return { reply, ticketId };
   }
@@ -126,6 +124,18 @@ export class ChatController {
       order: { timestamp: 'ASC' },
     });
 
+    return history;
+  }
+
+  @Get('my-history')
+  @ApiOperation({ summary: 'Get all chat messages for current user (any ticket or general chat)' })
+  async myHistory(@Request() req) {
+    const user = req.user;
+    const history = await this.conversationRepository.find({
+      where: { senderId: user.id },
+      order: { timestamp: 'DESC' },
+      take: 200,
+    });
     return history;
   }
 }

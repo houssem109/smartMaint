@@ -21,5 +21,6 @@ export declare class ChatController {
         ticketId: string;
     }>;
     history(ticketId: string, req: any): Promise<Conversation[]>;
+    myHistory(req: any): Promise<Conversation[]>;
 }
 export {};

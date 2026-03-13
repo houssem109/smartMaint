@@ -6,7 +6,7 @@ export declare enum SenderType {
 }
 export declare class Conversation {
     id: string;
-    ticketId: string;
+    ticketId: string | null;
     ticket: Ticket;
     message: string;
     senderType: SenderType;

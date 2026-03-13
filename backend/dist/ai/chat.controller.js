@@ -80,21 +80,19 @@ let ChatController = class ChatController {
             },
         ];
         const reply = await this.aiService.chat(messages);
-        if (ticketId) {
-            const userEntry = this.conversationRepository.create({
-                ticketId,
-                message,
-                senderType: conversation_entity_1.SenderType.USER,
-                senderId: user.id,
-            });
-            const aiEntry = this.conversationRepository.create({
-                ticketId,
-                message: reply,
-                senderType: conversation_entity_1.SenderType.AI,
-                senderId: null,
-            });
-            await this.conversationRepository.save([userEntry, aiEntry]);
-        }
+        const userEntry = this.conversationRepository.create({
+            ticketId: ticketId ?? null,
+            message,
+            senderType: conversation_entity_1.SenderType.USER,
+            senderId: user.id,
+        });
+        const aiEntry = this.conversationRepository.create({
+            ticketId: ticketId ?? null,
+            message: reply,
+            senderType: conversation_entity_1.SenderType.AI,
+            senderId: null,
+        });
+        await this.conversationRepository.save([userEntry, aiEntry]);
         return { reply, ticketId };
     }
     async history(ticketId, req) {
@@ -103,6 +101,15 @@ let ChatController = class ChatController {
         const history = await this.conversationRepository.find({
             where: { ticketId },
             order: { timestamp: 'ASC' },
+        });
+        return history;
+    }
+    async myHistory(req) {
+        const user = req.user;
+        const history = await this.conversationRepository.find({
+            where: { senderId: user.id },
+            order: { timestamp: 'DESC' },
+            take: 200,
         });
         return history;
     }
@@ -128,6 +135,14 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], ChatController.prototype, "history", null);
+__decorate([
+    (0, common_1.Get)('my-history'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get all chat messages for current user (any ticket or general chat)' }),
+    __param(0, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ChatController.prototype, "myHistory", null);
 exports.ChatController = ChatController = __decorate([
     (0, swagger_1.ApiTags)('Chat'),
     (0, swagger_1.ApiBearerAuth)(),

@@ -19,8 +19,8 @@ export class Conversation {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
-  ticketId: string;
+  @Column({ nullable: true })
+  ticketId: string | null;
 
   @ManyToOne(() => Ticket, (ticket) => ticket.conversations)
   @JoinColumn({ name: 'ticketId' })
