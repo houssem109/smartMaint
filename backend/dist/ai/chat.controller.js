@@ -18,6 +18,8 @@ const swagger_1 = require("@nestjs/swagger");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const ai_service_1 = require("./ai.service");
 const tickets_service_1 = require("../tickets/tickets.service");
+const rag_service_1 = require("./rag.service");
+const knowledge_service_1 = require("../knowledge/knowledge.service");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const conversation_entity_1 = require("../tickets/entities/conversation.entity");
@@ -52,9 +54,11 @@ __decorate([
     __metadata("design:type", Array)
 ], ChatMessageDto.prototype, "history", void 0);
 let ChatController = class ChatController {
-    constructor(aiService, ticketsService, conversationRepository) {
+    constructor(aiService, ticketsService, ragService, knowledgeService, conversationRepository) {
         this.aiService = aiService;
         this.ticketsService = ticketsService;
+        this.ragService = ragService;
+        this.knowledgeService = knowledgeService;
         this.conversationRepository = conversationRepository;
     }
     async sendMessage(body, req) {
@@ -71,9 +75,43 @@ let ChatController = class ChatController {
             role: h.role === 'assistant' ? 'assistant' : 'user',
             content: h.content,
         })) ?? [];
+        const [ragResults, knowledgeEntries] = await Promise.all([
+            this.ragService.searchRelevantChunks(message, 6),
+            this.knowledgeService.searchRelevantEntries(message, 3),
+        ]);
+        const truncate = (s, max = 1200) => (s ?? '').length > max ? `${String(s).slice(0, max)}…` : String(s ?? '');
+        const ragContext = ragResults.length > 0
+            ? ragResults
+                .slice(0, 6)
+                .map((r, i) => `[${i + 1}] ${truncate(r.text, 1500)}`)
+                .join('\n\n')
+            : null;
+        const knowledgeContext = knowledgeEntries.length > 0
+            ? knowledgeEntries
+                .slice(0, 3)
+                .map((k, i) => {
+                const title = truncate(k.title, 140);
+                const problem = truncate(k.problemDescription, 1200);
+                const solution = truncate(k.solution, 1600);
+                return `[${i + 1}] ${title}\nProblem:\n${problem}\nSolution:\n${solution}`;
+            })
+                .join('\n\n')
+            : null;
+        const contextBlocks = [
+            ragContext
+                ? `Manual excerpts:\n${ragContext}`
+                : null,
+            knowledgeContext
+                ? `Approved knowledge entries:\n${knowledgeContext}`
+                : null,
+        ].filter(Boolean);
+        const ragSystemMessage = contextBlocks.length
+            ? `Use the following manual excerpts and/or approved knowledge entries to answer the user's question. If the provided context is not enough, say so.\n\n${contextBlocks.join('\n\n')}`
+            : null;
         const messages = [
             { role: 'system', content: systemPrompt },
             ...historyMessages,
+            ...(ragSystemMessage ? [{ role: 'system', content: ragSystemMessage }] : []),
             {
                 role: 'user',
                 content: message,
@@ -148,9 +186,11 @@ exports.ChatController = ChatController = __decorate([
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Controller)('chat'),
-    __param(2, (0, typeorm_1.InjectRepository)(conversation_entity_1.Conversation)),
+    __param(4, (0, typeorm_1.InjectRepository)(conversation_entity_1.Conversation)),
     __metadata("design:paramtypes", [ai_service_1.AiService,
         tickets_service_1.TicketsService,
+        rag_service_1.RagService,
+        knowledge_service_1.KnowledgeService,
         typeorm_2.Repository])
 ], ChatController);
 //# sourceMappingURL=chat.controller.js.map

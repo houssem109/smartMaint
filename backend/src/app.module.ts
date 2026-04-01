@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { AiModule } from './ai/ai.module';
+import { KnowledgeDocumentsModule } from './knowledge-documents/knowledge-documents.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AiModule } from './ai/ai.module';
     TicketsModule,
     KnowledgeModule,
     AiModule,
+    KnowledgeDocumentsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

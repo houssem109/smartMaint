@@ -11,6 +11,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AiService } from './ai.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { RagService } from './rag.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Conversation, SenderType } from '../tickets/entities/conversation.entity';
@@ -48,6 +50,8 @@ export class ChatController {
   constructor(
     private readonly aiService: AiService,
     private readonly ticketsService: TicketsService,
+    private readonly ragService: RagService,
+    private readonly knowledgeService: KnowledgeService,
     @InjectRepository(Conversation)
     private readonly conversationRepository: Repository<Conversation>,
   ) {}
@@ -83,9 +87,52 @@ export class ChatController {
         content: h.content,
       })) ?? [];
 
+    const [ragResults, knowledgeEntries] = await Promise.all([
+      this.ragService.searchRelevantChunks(message, 6),
+      this.knowledgeService.searchRelevantEntries(message, 3),
+    ]);
+
+    const truncate = (s: string, max = 1200) =>
+      (s ?? '').length > max ? `${String(s).slice(0, max)}…` : String(s ?? '');
+
+    const ragContext =
+      ragResults.length > 0
+        ? ragResults
+            .slice(0, 6)
+            .map((r, i) => `[${i + 1}] ${truncate(r.text, 1500)}`)
+            .join('\n\n')
+        : null;
+
+    const knowledgeContext =
+      knowledgeEntries.length > 0
+        ? knowledgeEntries
+            .slice(0, 3)
+            .map((k, i) => {
+              const title = truncate(k.title, 140);
+              const problem = truncate(k.problemDescription, 1200);
+              const solution = truncate(k.solution, 1600);
+              return `[${i + 1}] ${title}\nProblem:\n${problem}\nSolution:\n${solution}`;
+            })
+            .join('\n\n')
+        : null;
+
+    const contextBlocks = [
+      ragContext
+        ? `Manual excerpts:\n${ragContext}`
+        : null,
+      knowledgeContext
+        ? `Approved knowledge entries:\n${knowledgeContext}`
+        : null,
+    ].filter(Boolean) as string[];
+
+    const ragSystemMessage = contextBlocks.length
+      ? `Use the following manual excerpts and/or approved knowledge entries to answer the user's question. If the provided context is not enough, say so.\n\n${contextBlocks.join('\n\n')}`
+      : null;
+
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...historyMessages,
+      ...(ragSystemMessage ? [{ role: 'system' as ChatRole, content: ragSystemMessage }] : []),
       {
         role: 'user',
         content: message,

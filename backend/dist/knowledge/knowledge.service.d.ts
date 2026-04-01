@@ -8,6 +8,7 @@ export declare class KnowledgeService {
     constructor(knowledgeRepository: Repository<KnowledgeEntry>);
     create(dto: CreateKnowledgeEntryDto, userId: string): Promise<KnowledgeEntry>;
     findAll(): Promise<KnowledgeEntry[]>;
+    searchRelevantEntries(query: string, limit?: number): Promise<KnowledgeEntry[]>;
     findOne(id: string): Promise<KnowledgeEntry>;
     update(id: string, dto: UpdateKnowledgeEntryDto, userId: string, role: UserRole): Promise<KnowledgeEntry>;
     remove(id: string, userId: string, role: UserRole): Promise<void>;

@@ -6,12 +6,14 @@ import { AiController } from './ai.controller';
 import { ChatController } from './chat.controller';
 import { Conversation } from '../tickets/entities/conversation.entity';
 import { TicketsModule } from '../tickets/tickets.module';
+import { RagService } from './rag.service';
+import { KnowledgeModule } from '../knowledge/knowledge.module';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([Conversation]), TicketsModule],
+  imports: [ConfigModule, TypeOrmModule.forFeature([Conversation]), TicketsModule, KnowledgeModule],
   controllers: [AiController, ChatController],
-  providers: [AiService],
-  exports: [AiService],
+  providers: [AiService, RagService],
+  exports: [AiService, RagService],
 })
 export class AiModule {}
 

@@ -45,6 +45,8 @@ export default function AdminKnowledgePage() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -66,6 +68,10 @@ export default function AdminKnowledgePage() {
     fetchEntries();
   }, []);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
   const filteredEntries = useMemo(() => {
     if (!search.trim()) return entries;
     const q = search.toLowerCase();
@@ -78,6 +84,19 @@ export default function AdminKnowledgePage() {
       );
     });
   }, [entries, search]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredEntries.length / pageSize)),
+    [filteredEntries.length],
+  );
+
+  const paginatedEntries = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredEntries.slice(start, start + pageSize);
+  }, [filteredEntries, currentPage]);
+
+  const startIndex = filteredEntries.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endIndex = Math.min(currentPage * pageSize, filteredEntries.length);
 
   const openCreate = () => {
     setEditingId(null);
@@ -193,7 +212,7 @@ export default function AdminKnowledgePage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredEntries.map((entry) => (
+                      {paginatedEntries.map((entry) => (
                         <TableRow key={entry.id} className="align-top">
                           <TableCell className="py-3">
                             <div className="font-medium">{entry.title}</div>
@@ -245,6 +264,33 @@ export default function AdminKnowledgePage() {
                       ))}
                     </TableBody>
                   </Table>
+                  {filteredEntries.length > 0 && (
+                    <div className="flex items-center justify-between border-t border-border/40 px-4 py-2">
+                      <span className="text-xs text-muted-foreground">
+                        Showing {startIndex}-{endIndex} of {filteredEntries.length} entries
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                        >
+                          Previous
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setCurrentPage((p) => Math.min(totalPages, p + 1))
+                          }
+                          disabled={currentPage === totalPages}
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>

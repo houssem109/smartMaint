@@ -1,5 +1,7 @@
 import { AiService } from './ai.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { RagService } from './rag.service';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 import { Repository } from 'typeorm';
 import { Conversation } from '../tickets/entities/conversation.entity';
 declare class ChatHistoryItemDto {
@@ -14,8 +16,10 @@ declare class ChatMessageDto {
 export declare class ChatController {
     private readonly aiService;
     private readonly ticketsService;
+    private readonly ragService;
+    private readonly knowledgeService;
     private readonly conversationRepository;
-    constructor(aiService: AiService, ticketsService: TicketsService, conversationRepository: Repository<Conversation>);
+    constructor(aiService: AiService, ticketsService: TicketsService, ragService: RagService, knowledgeService: KnowledgeService, conversationRepository: Repository<Conversation>);
     sendMessage(body: ChatMessageDto, req: any): Promise<{
         reply: string;
         ticketId: string;

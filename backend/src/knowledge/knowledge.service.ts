@@ -28,6 +28,24 @@ export class KnowledgeService {
     });
   }
 
+  async searchRelevantEntries(query: string, limit = 3): Promise<KnowledgeEntry[]> {
+    const q = (query ?? '').trim().toLowerCase();
+    if (!q) return [];
+
+    const safe = q.slice(0, 200);
+
+    return this.knowledgeRepository
+      .createQueryBuilder('k')
+      .leftJoinAndSelect('k.createdBy', 'createdBy')
+      .where(
+        'LOWER(k.title) LIKE :q OR LOWER(k.problemDescription) LIKE :q OR LOWER(k.solution) LIKE :q',
+        { q: `%${safe}%` },
+      )
+      .orderBy('k.createdAt', 'DESC')
+      .take(limit)
+      .getMany();
+  }
+
   async findOne(id: string): Promise<KnowledgeEntry> {
     const entry = await this.knowledgeRepository.findOne({
       where: { id },

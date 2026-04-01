@@ -14,6 +14,7 @@ import {
   Settings,
   Clock,
   BookOpenText,
+  FileText,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -28,6 +29,7 @@ const navItems = [
   { href: '/dashboard/admin/tickets', label: 'Tickets', icon: Ticket },
   { href: '/dashboard/admin/history', label: 'History', icon: Clock },
   { href: '/dashboard/admin/knowledge', label: 'Knowledge base', icon: BookOpenText },
+  { href: '/dashboard/admin/knowledge-docs', label: 'PDF Library', icon: FileText },
 ];
 
 export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
