@@ -26,6 +26,7 @@ const path_1 = require("path");
 const fs_1 = require("fs");
 const uuid_1 = require("uuid");
 const class_validator_1 = require("class-validator");
+const machine_name_dto_1 = require("./dto/machine-name.dto");
 class ApproveExtractionDto {
 }
 __decorate([
@@ -69,8 +70,7 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
         });
         void this.knowledgeDocumentsService
             .processDocumentExtraction(doc.id)
-            .catch(() => {
-        });
+            .catch(() => undefined);
         return {
             document: doc,
             resume: {
@@ -82,8 +82,43 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
             },
         };
     }
+    async approveMachineNameSuggestion(suggestionId, body, req) {
+        return this.knowledgeDocumentsService.approveMachineNameSuggestion(suggestionId, req.user.id, body.rejectOthersReason);
+    }
+    async rejectMachineNameSuggestion(suggestionId, body, req) {
+        return this.knowledgeDocumentsService.rejectMachineNameSuggestion(suggestionId, req.user.id, body.reason);
+    }
+    async approveExtraction(candidateId, body, req) {
+        return this.knowledgeDocumentsService.approveExtractionCandidate(candidateId, req.user.id, body);
+    }
+    async rejectExtraction(candidateId, req) {
+        return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id);
+    }
     async list() {
         return this.knowledgeDocumentsService.findAll();
+    }
+    async machineNameSuggestions(id) {
+        return this.knowledgeDocumentsService.listMachineNameSuggestions(id);
+    }
+    async patchMachineName(id, body, req) {
+        return this.knowledgeDocumentsService.updateMachineName(id, body.machineName, req.user.id);
+    }
+    async suggestMachineName(id, body, req) {
+        return this.knowledgeDocumentsService.suggestMachineName(id, body.proposedName, req.user.id);
+    }
+    async extractions(id) {
+        return this.knowledgeDocumentsService.getExtractionsForDocument(id);
+    }
+    async download(id, res) {
+        const doc = await this.knowledgeDocumentsService.findOne(id);
+        if (!doc.filePath) {
+            throw new common_1.HttpException('File path missing', common_1.HttpStatus.NOT_FOUND);
+        }
+        return res.download(doc.filePath, doc.originalName || doc.fileName, (err) => {
+            if (err) {
+                throw new common_1.HttpException('Failed to download file', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+        });
     }
     async details(id) {
         const doc = await this.knowledgeDocumentsService.findOne(id);
@@ -112,30 +147,11 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
         await this.knowledgeDocumentsService.deleteDocument(id, req.user.id);
         return { ok: true };
     }
-    async extractions(id) {
-        return this.knowledgeDocumentsService.getExtractionsForDocument(id);
-    }
-    async download(id, res) {
-        const doc = await this.knowledgeDocumentsService.findOne(id);
-        if (!doc.filePath) {
-            throw new common_1.HttpException('File path missing', common_1.HttpStatus.NOT_FOUND);
-        }
-        return res.download(doc.filePath, doc.originalName || doc.fileName, (err) => {
-            if (err) {
-                throw new common_1.HttpException('Failed to download file', common_1.HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-        });
-    }
-    async approveExtraction(candidateId, body, req) {
-        return this.knowledgeDocumentsService.approveExtractionCandidate(candidateId, req.user.id, body);
-    }
-    async rejectExtraction(candidateId, req) {
-        return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id);
-    }
 };
 exports.KnowledgeDocumentsController = KnowledgeDocumentsController;
 __decorate([
     (0, common_1.Post)(),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiConsumes)('multipart/form-data'),
     (0, swagger_1.ApiOperation)({ summary: 'Upload a PDF to the knowledge documents library' }),
     (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file', {
@@ -162,48 +178,30 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "upload", null);
 __decorate([
-    (0, common_1.Get)(),
-    (0, swagger_1.ApiOperation)({ summary: 'List all uploaded knowledge documents (admin)' }),
+    (0, common_1.Post)('machine-name-suggestions/:suggestionId/approve'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Approve a machine name suggestion (rejects other pending for same PDF)' }),
+    __param(0, (0, common_1.Param)('suggestionId')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, machine_name_dto_1.ApproveMachineNameSuggestionDto, Object]),
     __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "list", null);
+], KnowledgeDocumentsController.prototype, "approveMachineNameSuggestion", null);
 __decorate([
-    (0, common_1.Get)(':id'),
-    (0, swagger_1.ApiOperation)({ summary: 'Get document details + resume (admin)' }),
-    __param(0, (0, common_1.Param)('id')),
+    (0, common_1.Post)('machine-name-suggestions/:suggestionId/reject'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Reject a single pending machine name suggestion' }),
+    __param(0, (0, common_1.Param)('suggestionId')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, machine_name_dto_1.RejectMachineNameSuggestionDto, Object]),
     __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "details", null);
-__decorate([
-    (0, common_1.Delete)(':id'),
-    (0, swagger_1.ApiOperation)({ summary: 'Delete a PDF document (admin only)' }),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Request)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "remove", null);
-__decorate([
-    (0, common_1.Get)(':id/extractions'),
-    (0, swagger_1.ApiOperation)({ summary: 'Get extracted Problem→Solution candidates for a document' }),
-    __param(0, (0, common_1.Param)('id')),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "extractions", null);
-__decorate([
-    (0, common_1.Get)(':id/download'),
-    (0, swagger_1.ApiOperation)({ summary: 'Download uploaded PDF (admin/superadmin)' }),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Res)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "download", null);
+], KnowledgeDocumentsController.prototype, "rejectMachineNameSuggestion", null);
 __decorate([
     (0, common_1.Post)('extractions/:candidateId/approve'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiOperation)({ summary: 'Approve an extracted candidate and create a KnowledgeEntry' }),
     __param(0, (0, common_1.Param)('candidateId')),
     __param(1, (0, common_1.Body)()),
@@ -214,6 +212,7 @@ __decorate([
 ], KnowledgeDocumentsController.prototype, "approveExtraction", null);
 __decorate([
     (0, common_1.Post)('extractions/:candidateId/reject'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiOperation)({ summary: 'Reject an extracted candidate' }),
     __param(0, (0, common_1.Param)('candidateId')),
     __param(1, (0, common_1.Request)()),
@@ -221,11 +220,87 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "rejectExtraction", null);
+__decorate([
+    (0, common_1.Get)(),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({ summary: 'List uploaded knowledge documents' }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "list", null);
+__decorate([
+    (0, common_1.Get)(':id/machine-name/suggestions'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'List machine name suggestions for a document' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "machineNameSuggestions", null);
+__decorate([
+    (0, common_1.Patch)(':id/machine-name'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Set official machine name (admin)' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, machine_name_dto_1.UpdateMachineNameDto, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "patchMachineName", null);
+__decorate([
+    (0, common_1.Post)(':id/machine-name/suggest'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({ summary: 'Suggest a machine name for a PDF (pending admin review)' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, machine_name_dto_1.SuggestMachineNameDto, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "suggestMachineName", null);
+__decorate([
+    (0, common_1.Get)(':id/extractions'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Get extracted Problem→Solution candidates for a document' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "extractions", null);
+__decorate([
+    (0, common_1.Get)(':id/download'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({ summary: 'Download uploaded PDF' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "download", null);
+__decorate([
+    (0, common_1.Get)(':id'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({ summary: 'Get document details + resume' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "details", null);
+__decorate([
+    (0, common_1.Delete)(':id'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Delete a PDF document' }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "remove", null);
 exports.KnowledgeDocumentsController = KnowledgeDocumentsController = __decorate([
     (0, swagger_1.ApiTags)('Knowledge Documents'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, common_1.Controller)('knowledge-documents'),
     __metadata("design:paramtypes", [knowledge_documents_service_1.KnowledgeDocumentsService])
 ], KnowledgeDocumentsController);

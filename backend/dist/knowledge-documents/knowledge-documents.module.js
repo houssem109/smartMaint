@@ -11,6 +11,8 @@ const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const knowledge_document_entity_1 = require("./entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("./entities/knowledge-extraction-candidate.entity");
+const machine_name_suggestion_entity_1 = require("./entities/machine-name-suggestion.entity");
+const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const knowledge_documents_service_1 = require("./knowledge-documents.service");
 const knowledge_documents_controller_1 = require("./knowledge-documents.controller");
 const knowledge_module_1 = require("../knowledge/knowledge.module");
@@ -21,7 +23,12 @@ exports.KnowledgeDocumentsModule = KnowledgeDocumentsModule;
 exports.KnowledgeDocumentsModule = KnowledgeDocumentsModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            typeorm_1.TypeOrmModule.forFeature([knowledge_document_entity_1.KnowledgeDocument, knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate]),
+            typeorm_1.TypeOrmModule.forFeature([
+                knowledge_document_entity_1.KnowledgeDocument,
+                knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate,
+                machine_name_suggestion_entity_1.MachineNameSuggestion,
+                audit_log_entity_1.AuditLog,
+            ]),
             knowledge_module_1.KnowledgeModule,
             ai_module_1.AiModule,
         ],

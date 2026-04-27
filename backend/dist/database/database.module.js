@@ -18,6 +18,7 @@ const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const knowledge_entry_entity_1 = require("../knowledge/entities/knowledge-entry.entity");
 const knowledge_document_entity_1 = require("../knowledge-documents/entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("../knowledge-documents/entities/knowledge-extraction-candidate.entity");
+const machine_name_suggestion_entity_1 = require("../knowledge-documents/entities/machine-name-suggestion.entity");
 let DatabaseModule = class DatabaseModule {
 };
 exports.DatabaseModule = DatabaseModule;
@@ -42,6 +43,7 @@ exports.DatabaseModule = DatabaseModule = __decorate([
                         knowledge_entry_entity_1.KnowledgeEntry,
                         knowledge_document_entity_1.KnowledgeDocument,
                         knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate,
+                        machine_name_suggestion_entity_1.MachineNameSuggestion,
                     ],
                     synchronize: configService.get('NODE_ENV') === 'development',
                     logging: configService.get('NODE_ENV') === 'development',

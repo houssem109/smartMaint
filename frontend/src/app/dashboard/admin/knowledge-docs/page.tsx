@@ -19,9 +19,15 @@ interface KnowledgeDocument {
   mimeType: string;
   fileSize: number;
   status: string;
+  machineName?: string | null;
   uploadedBy?: { fullName?: string | null; email: string };
   createdAt: string;
   error?: string | null;
+}
+
+function machineLabel(doc: KnowledgeDocument) {
+  const m = doc.machineName?.trim();
+  return m && m.length > 0 ? m : 'Machine name not detected — open PDF';
 }
 
 export default function KnowledgeDocsPage() {
@@ -156,6 +162,7 @@ export default function KnowledgeDocsPage() {
                     >
                       <div className="min-w-0">
                         <div className="font-medium truncate">{d.originalName || d.fileName}</div>
+                        <div className="text-sm text-muted-foreground mt-1">{machineLabel(d)}</div>
                         <div className="text-xs text-muted-foreground mt-1">
                           Uploaded by {d.uploadedBy?.fullName || d.uploadedBy?.email || '—'} •{' '}
                           {new Date(d.createdAt).toLocaleString()}

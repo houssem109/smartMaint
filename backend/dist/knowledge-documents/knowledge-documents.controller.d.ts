@@ -1,4 +1,5 @@
 import { KnowledgeDocumentsService } from './knowledge-documents.service';
+import { ApproveMachineNameSuggestionDto, RejectMachineNameSuggestionDto, SuggestMachineNameDto, UpdateMachineNameDto } from './dto/machine-name.dto';
 declare class ApproveExtractionDto {
     title?: string;
     problemDescription?: string;
@@ -18,7 +19,19 @@ export declare class KnowledgeDocumentsController {
             message: string;
         };
     }>;
+    approveMachineNameSuggestion(suggestionId: string, body: ApproveMachineNameSuggestionDto, req: any): Promise<{
+        document: import("./entities/knowledge-document.entity").KnowledgeDocument;
+        approved: import("./entities/machine-name-suggestion.entity").MachineNameSuggestion;
+    }>;
+    rejectMachineNameSuggestion(suggestionId: string, body: RejectMachineNameSuggestionDto, req: any): Promise<import("./entities/machine-name-suggestion.entity").MachineNameSuggestion>;
+    approveExtraction(candidateId: string, body: ApproveExtractionDto, req: any): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate>;
+    rejectExtraction(candidateId: string, req: any): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate>;
     list(): Promise<import("./entities/knowledge-document.entity").KnowledgeDocument[]>;
+    machineNameSuggestions(id: string): Promise<import("./entities/machine-name-suggestion.entity").MachineNameSuggestion[]>;
+    patchMachineName(id: string, body: UpdateMachineNameDto, req: any): Promise<import("./entities/knowledge-document.entity").KnowledgeDocument>;
+    suggestMachineName(id: string, body: SuggestMachineNameDto, req: any): Promise<import("./entities/machine-name-suggestion.entity").MachineNameSuggestion>;
+    extractions(id: string): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate[]>;
+    download(id: string, res: any): Promise<any>;
     details(id: string): Promise<{
         document: import("./entities/knowledge-document.entity").KnowledgeDocument;
         resume: {
@@ -32,9 +45,5 @@ export declare class KnowledgeDocumentsController {
     remove(id: string, req: any): Promise<{
         ok: boolean;
     }>;
-    extractions(id: string): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate[]>;
-    download(id: string, res: any): Promise<any>;
-    approveExtraction(candidateId: string, body: ApproveExtractionDto, req: any): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate>;
-    rejectExtraction(candidateId: string, req: any): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate>;
 }
 export {};

@@ -11,6 +11,7 @@ import {
   Settings,
   Bell,
   BookOpenText,
+  FileText,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -23,6 +24,7 @@ const navItems = [
   { href: '/dashboard/technician', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/technician/tickets', label: 'My Tickets', icon: Ticket },
   { href: '/dashboard/technician/knowledge', label: 'Knowledge base', icon: BookOpenText },
+  { href: '/dashboard/technician/knowledge-pdfs', label: 'PDF manuals', icon: FileText },
   { href: '/dashboard/technician/notifications', label: 'Notifications', icon: Bell },
 ];
 

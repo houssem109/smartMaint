@@ -359,8 +359,9 @@ export class TicketsService {
         { ticketId },
       );
     } else {
-      // Global history: show both ticket and user logs
-      qb.where('log.entityType IN (:...types)', { types: ['ticket', 'user'] });
+      qb.where('log.entityType IN (:...types)', {
+        types: ['ticket', 'user', 'knowledge_document'],
+      });
     }
 
     return qb.getMany();
@@ -389,7 +390,7 @@ export class TicketsService {
       return [];
     }
 
-    if (tickets.length === 0) {
+    if (tickets.length === 0 && userRole !== UserRole.TECHNICIAN) {
       return [];
     }
 
@@ -399,18 +400,50 @@ export class TicketsService {
       return t.id;
     });
 
-    const logs = await this.auditLogRepository
+    let ticketMapped: (AuditLog & { ticketTitle?: string })[] = [];
+    if (ticketIds.length > 0) {
+      const ticketLogs = await this.auditLogRepository
+        .createQueryBuilder('log')
+        .where('log.entityType = :type', { type: 'ticket' })
+        .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+        .orderBy('log.timestamp', 'DESC')
+        .take(limit)
+        .getMany();
+
+      ticketMapped = ticketLogs.map((log) => ({
+        ...log,
+        ticketTitle: idToTitle.get(log.entityId),
+      }));
+    }
+
+    if (userRole !== UserRole.TECHNICIAN) {
+      return ticketMapped;
+    }
+
+    const machineNameLogs = await this.auditLogRepository
       .createQueryBuilder('log')
-      .where('log.entityType = :type', { type: 'ticket' })
-      .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+      .where('log.entityType = :t', { t: 'machine_name_suggestion' })
+      .andWhere("log.changes->>'forUserId' = :userId", { userId })
       .orderBy('log.timestamp', 'DESC')
       .take(limit)
       .getMany();
 
-    return logs.map((log) => ({
-      ...log,
-      ticketTitle: idToTitle.get(log.entityId),
-    }));
+    const withMachineTitles = machineNameLogs.map((log) => {
+      const ch = log.changes as Record<string, unknown> | null;
+      const docName =
+        ch && typeof ch.documentOriginalName === 'string'
+          ? ch.documentOriginalName
+          : undefined;
+      return {
+        ...log,
+        ticketTitle: docName,
+      };
+    });
+
+    const merged = [...ticketMapped, ...withMachineTitles].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+    return merged.slice(0, limit);
   }
 
   private async logTicketAction(

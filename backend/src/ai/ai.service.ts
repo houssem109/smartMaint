@@ -27,7 +27,7 @@ export class AiService {
     } catch (e) {
       this.logger.warn('Could not load Techo system prompt file, using fallback prompt.');
       prompt =
-        'You are Techo, the SmartMaint maintenance assistant. Only answer about maintenance and SmartMaint. Refuse other topics.';
+        'You are Techo for factories: machines, plant maintenance, SmartMaint. Prefer retrieved manuals/knowledge. Plant/line questions with no retrieval: very short common sense only. Home/kitchen/personal framing with no matching retrieval: do not answer—brief decline.';
     }
     this.systemPrompt = prompt;
   }

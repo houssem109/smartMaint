@@ -22,6 +22,22 @@
   },
   "dynamicRoutes": [
     {
+      "page": "/dashboard/admin/knowledge-docs/[id]",
+      "regex": "^/dashboard/admin/knowledge\\-docs/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/dashboard/admin/knowledge\\-docs/(?<nxtPid>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/dashboard/technician/knowledge-pdfs/[id]",
+      "regex": "^/dashboard/technician/knowledge\\-pdfs/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/dashboard/technician/knowledge\\-pdfs/(?<nxtPid>[^/]+?)(?:/)?$"
+    },
+    {
       "page": "/dashboard/tickets/[id]",
       "regex": "^/dashboard/tickets/([^/]+?)(?:/)?$",
       "routeKeys": {
@@ -56,10 +72,76 @@
       "namedRegex": "^/dashboard/admin(?:/)?$"
     },
     {
+      "page": "/dashboard/admin/history",
+      "regex": "^/dashboard/admin/history(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/admin/history(?:/)?$"
+    },
+    {
+      "page": "/dashboard/admin/knowledge",
+      "regex": "^/dashboard/admin/knowledge(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/admin/knowledge(?:/)?$"
+    },
+    {
+      "page": "/dashboard/admin/knowledge-docs",
+      "regex": "^/dashboard/admin/knowledge\\-docs(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/admin/knowledge\\-docs(?:/)?$"
+    },
+    {
+      "page": "/dashboard/admin/tickets",
+      "regex": "^/dashboard/admin/tickets(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/admin/tickets(?:/)?$"
+    },
+    {
+      "page": "/dashboard/admin/users",
+      "regex": "^/dashboard/admin/users(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/admin/users(?:/)?$"
+    },
+    {
+      "page": "/dashboard/create-ticket",
+      "regex": "^/dashboard/create\\-ticket(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/create\\-ticket(?:/)?$"
+    },
+    {
+      "page": "/dashboard/settings",
+      "regex": "^/dashboard/settings(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/settings(?:/)?$"
+    },
+    {
       "page": "/dashboard/technician",
       "regex": "^/dashboard/technician(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/dashboard/technician(?:/)?$"
+    },
+    {
+      "page": "/dashboard/technician/knowledge",
+      "regex": "^/dashboard/technician/knowledge(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/technician/knowledge(?:/)?$"
+    },
+    {
+      "page": "/dashboard/technician/knowledge-pdfs",
+      "regex": "^/dashboard/technician/knowledge\\-pdfs(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/technician/knowledge\\-pdfs(?:/)?$"
+    },
+    {
+      "page": "/dashboard/technician/notifications",
+      "regex": "^/dashboard/technician/notifications(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/technician/notifications(?:/)?$"
+    },
+    {
+      "page": "/dashboard/technician/tickets",
+      "regex": "^/dashboard/technician/tickets(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/technician/tickets(?:/)?$"
     },
     {
       "page": "/dashboard/worker",
@@ -72,6 +154,12 @@
       "regex": "^/dashboard/worker/create\\-ticket(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/dashboard/worker/create\\-ticket(?:/)?$"
+    },
+    {
+      "page": "/dashboard/worker/notifications",
+      "regex": "^/dashboard/worker/notifications(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/dashboard/worker/notifications(?:/)?$"
     },
     {
       "page": "/login",

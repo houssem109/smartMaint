@@ -1,12 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { existsSync, unlinkSync } from 'fs';
 import { KnowledgeDocument } from './entities/knowledge-document.entity';
 import { KnowledgeExtractionCandidate } from './entities/knowledge-extraction-candidate.entity';
+import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AiService } from '../ai/ai.service';
 import { RagService } from '../ai/rag.service';
+import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 // pdf-parse v1 exports a function via module.exports (CommonJS).
@@ -20,6 +22,10 @@ export class KnowledgeDocumentsService {
     private readonly knowledgeDocumentsRepository: Repository<KnowledgeDocument>,
     @InjectRepository(KnowledgeExtractionCandidate)
     private readonly extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>,
+    @InjectRepository(MachineNameSuggestion)
+    private readonly machineNameSuggestionsRepository: Repository<MachineNameSuggestion>,
+    @InjectRepository(AuditLog)
+    private readonly auditLogRepository: Repository<AuditLog>,
     private readonly knowledgeService: KnowledgeService,
     private readonly aiService: AiService,
     private readonly ragService: RagService,
@@ -89,9 +95,9 @@ export class KnowledgeDocumentsService {
 
     // Admin/superadmin are allowed to delete any document.
     // We keep auth logic in the controller; here we only do the work.
-    // Delete candidates first to avoid FK constraint errors
-    // (some DBs may not have ON DELETE CASCADE applied on existing tables).
+    // Delete candidates and name suggestions first to avoid FK issues on older DBs.
     await this.extractionCandidatesRepository.delete({ documentId: doc.id });
+    await this.machineNameSuggestionsRepository.delete({ documentId: doc.id });
 
     await this.knowledgeDocumentsRepository.delete({ id: doc.id });
 
@@ -157,6 +163,191 @@ export class KnowledgeDocumentsService {
     return this.extractionCandidatesRepository.save(candidate);
   }
 
+  async updateMachineName(documentId: string, machineName: string, _adminId: string): Promise<KnowledgeDocument> {
+    const doc = await this.findOne(documentId);
+    const trimmed = machineName.trim();
+    if (!trimmed) throw new BadRequestException('Machine name cannot be empty');
+    doc.machineName = trimmed;
+    return this.knowledgeDocumentsRepository.save(doc);
+  }
+
+  async listMachineNameSuggestions(documentId: string): Promise<MachineNameSuggestion[]> {
+    const doc = await this.findOne(documentId);
+    if (doc.machineName != null && String(doc.machineName).trim() !== '') {
+      return [];
+    }
+    return this.machineNameSuggestionsRepository.find({
+      where: { documentId },
+      relations: ['suggestedBy', 'reviewedBy'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async suggestMachineName(
+    documentId: string,
+    proposedName: string,
+    technicianId: string,
+  ): Promise<MachineNameSuggestion> {
+    const doc = await this.findOne(documentId);
+    if (doc.machineName != null && String(doc.machineName).trim() !== '') {
+      throw new BadRequestException('Machine name is already set; suggestions are not needed');
+    }
+    const trimmed = proposedName.trim();
+    if (!trimmed) throw new BadRequestException('Proposed name cannot be empty');
+
+    const row = this.machineNameSuggestionsRepository.create({
+      documentId: doc.id,
+      suggestedById: technicianId,
+      proposedName: trimmed,
+      status: 'pending',
+      rejectReason: null,
+      reviewedById: null,
+      reviewedAt: null,
+    });
+    const saved = await this.machineNameSuggestionsRepository.save(row);
+
+    await this.auditLogRepository.save(
+      this.auditLogRepository.create({
+        actionType: ActionType.CREATE,
+        entityType: 'knowledge_document',
+        entityId: doc.id,
+        userId: technicianId,
+        changes: {
+          event: 'machine_name_suggestion',
+          suggestionId: saved.id,
+          proposedName: saved.proposedName,
+          documentOriginalName: doc.originalName,
+        },
+        reason: null,
+      }),
+    );
+
+    return saved;
+  }
+
+  async approveMachineNameSuggestion(
+    suggestionId: string,
+    adminId: string,
+    rejectOthersReason?: string,
+  ): Promise<{ document: KnowledgeDocument; approved: MachineNameSuggestion }> {
+    const suggestion = await this.machineNameSuggestionsRepository.findOne({
+      where: { id: suggestionId },
+    });
+    if (!suggestion) throw new NotFoundException('Suggestion not found');
+    if (suggestion.status !== 'pending') {
+      throw new BadRequestException('Only pending suggestions can be approved');
+    }
+
+    const doc = await this.findOne(suggestion.documentId);
+    const sharedReason =
+      rejectOthersReason?.trim() || 'Another suggestion was approved for this document.';
+    const now = new Date();
+
+    const pendingOthers = await this.machineNameSuggestionsRepository.find({
+      where: { documentId: doc.id, status: 'pending' },
+    });
+
+    doc.machineName = suggestion.proposedName.trim();
+    await this.knowledgeDocumentsRepository.save(doc);
+
+    suggestion.status = 'approved';
+    suggestion.reviewedById = adminId;
+    suggestion.reviewedAt = now;
+    suggestion.rejectReason = null;
+    await this.machineNameSuggestionsRepository.save(suggestion);
+
+    for (const o of pendingOthers) {
+      if (o.id === suggestion.id) continue;
+      o.status = 'rejected';
+      o.rejectReason = sharedReason;
+      o.reviewedById = adminId;
+      o.reviewedAt = now;
+      await this.machineNameSuggestionsRepository.save(o);
+
+      await this.auditLogRepository.save(
+        this.auditLogRepository.create({
+          actionType: ActionType.REJECT,
+          entityType: 'machine_name_suggestion',
+          entityId: o.id,
+          userId: o.suggestedById,
+          changes: {
+            forUserId: o.suggestedById,
+            documentId: doc.id,
+            documentOriginalName: doc.originalName,
+            proposedName: o.proposedName,
+            rejectReason: sharedReason,
+            event: 'machine_name_suggestion_superseded',
+          },
+          reason: sharedReason,
+        }),
+      );
+    }
+
+    await this.auditLogRepository.save(
+      this.auditLogRepository.create({
+        actionType: ActionType.APPROVE,
+        entityType: 'machine_name_suggestion',
+        entityId: suggestion.id,
+        userId: suggestion.suggestedById,
+        changes: {
+          forUserId: suggestion.suggestedById,
+          documentId: doc.id,
+          documentOriginalName: doc.originalName,
+          proposedName: suggestion.proposedName,
+          adoptedName: suggestion.proposedName,
+          event: 'machine_name_suggestion_approved',
+        },
+        reason: null,
+      }),
+    );
+
+    return { document: doc, approved: suggestion };
+  }
+
+  async rejectMachineNameSuggestion(
+    suggestionId: string,
+    adminId: string,
+    reason?: string,
+  ): Promise<MachineNameSuggestion> {
+    const suggestion = await this.machineNameSuggestionsRepository.findOne({
+      where: { id: suggestionId },
+    });
+    if (!suggestion) throw new NotFoundException('Suggestion not found');
+    if (suggestion.status !== 'pending') {
+      throw new BadRequestException('Only pending suggestions can be rejected');
+    }
+
+    const doc = await this.findOne(suggestion.documentId);
+    const now = new Date();
+    const r = reason?.trim() || null;
+
+    suggestion.status = 'rejected';
+    suggestion.rejectReason = r;
+    suggestion.reviewedById = adminId;
+    suggestion.reviewedAt = now;
+    await this.machineNameSuggestionsRepository.save(suggestion);
+
+    await this.auditLogRepository.save(
+      this.auditLogRepository.create({
+        actionType: ActionType.REJECT,
+        entityType: 'machine_name_suggestion',
+        entityId: suggestion.id,
+        userId: suggestion.suggestedById,
+        changes: {
+          forUserId: suggestion.suggestedById,
+          documentId: doc.id,
+          documentOriginalName: doc.originalName,
+          proposedName: suggestion.proposedName,
+          rejectReason: r,
+          event: 'machine_name_suggestion_rejected',
+        },
+        reason: r,
+      }),
+    );
+
+    return suggestion;
+  }
+
   async processDocumentExtraction(documentId: string): Promise<void> {
     const doc = await this.findOne(documentId);
     // Update to processing
@@ -185,6 +376,19 @@ export class KnowledgeDocumentsService {
       const fileBuffer = readFileSync(doc.filePath);
       const parsed: any = await (pdfParse as any)(fileBuffer);
       const fullText = parsed?.text || '';
+
+      if (doc.machineName == null || String(doc.machineName).trim() === '') {
+        let extractedName: string | null = null;
+        try {
+          extractedName = await this.extractMachineNameFromManual(fullText);
+        } catch {
+          extractedName = null;
+        }
+        if (extractedName) {
+          doc.machineName = extractedName;
+          await this.knowledgeDocumentsRepository.save(doc);
+        }
+      }
 
       // Prefer the troubleshooting-related part if present.
       const lower = fullText.toLowerCase();
@@ -283,6 +487,56 @@ export class KnowledgeDocumentsService {
       doc.error = e?.message ? String(e.message) : 'PDF extraction failed';
       await this.knowledgeDocumentsRepository.save(doc);
     }
+  }
+
+  private extractMachineNameHeuristic(text: string): string | null {
+    const head = text.slice(0, 12000);
+    const linePatterns = [
+      /(?:^|\n)\s*(?:machine|equipment|device|model)\s*[:#]\s*([^\n]+)/i,
+      /(?:^|\n)\s*model\s*(?:no\.?|number|#)?\s*[:#]?\s*([^\n]+)/i,
+    ];
+    for (const re of linePatterns) {
+      const m = head.match(re);
+      if (m?.[1]) {
+        const name = m[1].replace(/\s+/g, ' ').trim();
+        if (name.length >= 2 && name.length <= 500) return name;
+      }
+    }
+    return null;
+  }
+
+  private async extractMachineNameWithLlm(excerpt: string): Promise<string | null> {
+    const trimmed = excerpt.slice(0, 8000);
+    if (!trimmed.trim()) return null;
+
+    const messages = [
+      {
+        role: 'system' as const,
+        content:
+          'You read a technical manual excerpt. Return JSON only: {"machineName": string|null}. ' +
+          'machineName is the primary equipment or machine model name as printed on the cover or title area (e.g. product line + model). ' +
+          'Use null if you cannot identify it confidently.',
+      },
+      { role: 'user' as const, content: trimmed },
+    ];
+
+    try {
+      const raw = await this.aiService.chat(messages);
+      const parsed = this.tryParseJson(raw);
+      const n = parsed?.machineName;
+      if (n == null) return null;
+      const s = String(n).replace(/\s+/g, ' ').trim();
+      if (s.length < 2 || s.length > 500) return null;
+      return s;
+    } catch {
+      return null;
+    }
+  }
+
+  private async extractMachineNameFromManual(fullText: string): Promise<string | null> {
+    const llmFirst = await this.extractMachineNameWithLlm(fullText);
+    if (llmFirst) return llmFirst;
+    return this.extractMachineNameHeuristic(fullText);
   }
 
   private tryParseJson(raw: string): any | null {

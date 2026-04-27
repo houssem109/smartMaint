@@ -10,6 +10,7 @@ export declare class KnowledgeDocument {
     status: KnowledgeDocumentStatus;
     error: string | null;
     chunksIndexed: number;
+    machineName: string | null;
     uploadedById: string;
     uploadedBy: User;
     createdAt: Date;

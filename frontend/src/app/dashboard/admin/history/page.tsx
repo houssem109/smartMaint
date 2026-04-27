@@ -86,6 +86,7 @@ export default function TicketHistoryPage() {
 
   const isTicket = (entry: TicketHistoryEntry) => entry.entityType === 'ticket';
   const isUser = (entry: TicketHistoryEntry) => entry.entityType === 'user';
+  const isKnowledgeDoc = (entry: TicketHistoryEntry) => entry.entityType === 'knowledge_document';
 
   const handleRestore = async (entry: TicketHistoryEntry) => {
     if (entry.actionType !== 'delete') return;
@@ -169,6 +170,13 @@ export default function TicketHistoryPage() {
                               </Button>
                             ) : isUser(entry) ? (
                               <span className="text-xs">User {entry.entityId.slice(0, 8)}…</span>
+                            ) : isKnowledgeDoc(entry) ? (
+                              <Button variant="link" size="sm" asChild className="px-0">
+                                <Link href={`/dashboard/admin/knowledge-docs/${entry.entityId}`}>
+                                  {(entry.changes as any)?.documentOriginalName ||
+                                    `PDF ${entry.entityId.slice(0, 8)}…`}
+                                </Link>
+                              </Button>
                             ) : (
                               <span className="text-xs">
                                 {entry.entityType} {entry.entityId.slice(0, 8)}…

@@ -265,7 +265,9 @@ let TicketsService = class TicketsService {
             qb.where('log.entityType = :type', { type: 'ticket' }).andWhere('log.entityId = :ticketId', { ticketId });
         }
         else {
-            qb.where('log.entityType IN (:...types)', { types: ['ticket', 'user'] });
+            qb.where('log.entityType IN (:...types)', {
+                types: ['ticket', 'user', 'knowledge_document'],
+            });
         }
         return qb.getMany();
     }
@@ -286,7 +288,7 @@ let TicketsService = class TicketsService {
         else {
             return [];
         }
-        if (tickets.length === 0) {
+        if (tickets.length === 0 && userRole !== user_entity_1.UserRole.TECHNICIAN) {
             return [];
         }
         const idToTitle = new Map();
@@ -294,17 +296,42 @@ let TicketsService = class TicketsService {
             idToTitle.set(t.id, t.title);
             return t.id;
         });
-        const logs = await this.auditLogRepository
+        let ticketMapped = [];
+        if (ticketIds.length > 0) {
+            const ticketLogs = await this.auditLogRepository
+                .createQueryBuilder('log')
+                .where('log.entityType = :type', { type: 'ticket' })
+                .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+                .orderBy('log.timestamp', 'DESC')
+                .take(limit)
+                .getMany();
+            ticketMapped = ticketLogs.map((log) => ({
+                ...log,
+                ticketTitle: idToTitle.get(log.entityId),
+            }));
+        }
+        if (userRole !== user_entity_1.UserRole.TECHNICIAN) {
+            return ticketMapped;
+        }
+        const machineNameLogs = await this.auditLogRepository
             .createQueryBuilder('log')
-            .where('log.entityType = :type', { type: 'ticket' })
-            .andWhere('log.entityId IN (:...ids)', { ids: ticketIds })
+            .where('log.entityType = :t', { t: 'machine_name_suggestion' })
+            .andWhere("log.changes->>'forUserId' = :userId", { userId })
             .orderBy('log.timestamp', 'DESC')
             .take(limit)
             .getMany();
-        return logs.map((log) => ({
-            ...log,
-            ticketTitle: idToTitle.get(log.entityId),
-        }));
+        const withMachineTitles = machineNameLogs.map((log) => {
+            const ch = log.changes;
+            const docName = ch && typeof ch.documentOriginalName === 'string'
+                ? ch.documentOriginalName
+                : undefined;
+            return {
+                ...log,
+                ticketTitle: docName,
+            };
+        });
+        const merged = [...ticketMapped, ...withMachineTitles].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        return merged.slice(0, limit);
     }
     async logTicketAction(ticketId, actionType, userId, changes) {
         const log = this.auditLogRepository.create({

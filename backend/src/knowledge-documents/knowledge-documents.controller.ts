@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Delete,
   Param,
+  Patch,
   Post,
   Res,
   Request,
@@ -26,6 +27,12 @@ import { existsSync, mkdirSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { Express } from 'express';
 import { IsOptional, IsString } from 'class-validator';
+import {
+  ApproveMachineNameSuggestionDto,
+  RejectMachineNameSuggestionDto,
+  SuggestMachineNameDto,
+  UpdateMachineNameDto,
+} from './dto/machine-name.dto';
 
 class ApproveExtractionDto {
   @IsOptional()
@@ -48,12 +55,12 @@ class ApproveExtractionDto {
 @ApiTags('Knowledge Documents')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
 @Controller('knowledge-documents')
 export class KnowledgeDocumentsController {
   constructor(private readonly knowledgeDocumentsService: KnowledgeDocumentsService) {}
 
   @Post()
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a PDF to the knowledge documents library' })
   @UseInterceptors(
@@ -72,7 +79,7 @@ export class KnowledgeDocumentsController {
           cb(null, `${unique}${extension}`);
         },
       }),
-      limits: { fileSize: 30 * 1024 * 1024 }, // 30MB
+      limits: { fileSize: 30 * 1024 * 1024 },
     }),
   )
   async upload(
@@ -95,12 +102,9 @@ export class KnowledgeDocumentsController {
       uploadedById: req.user.id,
     });
 
-    // Start extraction in the background (so upload returns quickly).
     void this.knowledgeDocumentsService
       .processDocumentExtraction(doc.id)
-      .catch(() => {
-        // Errors are stored on the document itself by the service.
-      });
+      .catch(() => undefined);
 
     return {
       document: doc,
@@ -114,14 +118,116 @@ export class KnowledgeDocumentsController {
     };
   }
 
+  @Post('machine-name-suggestions/:suggestionId/approve')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Approve a machine name suggestion (rejects other pending for same PDF)' })
+  async approveMachineNameSuggestion(
+    @Param('suggestionId') suggestionId: string,
+    @Body() body: ApproveMachineNameSuggestionDto,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.approveMachineNameSuggestion(
+      suggestionId,
+      req.user.id,
+      body.rejectOthersReason,
+    );
+  }
+
+  @Post('machine-name-suggestions/:suggestionId/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Reject a single pending machine name suggestion' })
+  async rejectMachineNameSuggestion(
+    @Param('suggestionId') suggestionId: string,
+    @Body() body: RejectMachineNameSuggestionDto,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.rejectMachineNameSuggestion(
+      suggestionId,
+      req.user.id,
+      body.reason,
+    );
+  }
+
+  @Post('extractions/:candidateId/approve')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Approve an extracted candidate and create a KnowledgeEntry' })
+  async approveExtraction(
+    @Param('candidateId') candidateId: string,
+    @Body() body: ApproveExtractionDto,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.approveExtractionCandidate(candidateId, req.user.id, body);
+  }
+
+  @Post('extractions/:candidateId/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Reject an extracted candidate' })
+  async rejectExtraction(
+    @Param('candidateId') candidateId: string,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id);
+  }
+
   @Get()
-  @ApiOperation({ summary: 'List all uploaded knowledge documents (admin)' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'List uploaded knowledge documents' })
   async list() {
     return this.knowledgeDocumentsService.findAll();
   }
 
+  @Get(':id/machine-name/suggestions')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'List machine name suggestions for a document' })
+  async machineNameSuggestions(@Param('id') id: string) {
+    return this.knowledgeDocumentsService.listMachineNameSuggestions(id);
+  }
+
+  @Patch(':id/machine-name')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Set official machine name (admin)' })
+  async patchMachineName(
+    @Param('id') id: string,
+    @Body() body: UpdateMachineNameDto,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.updateMachineName(id, body.machineName, req.user.id);
+  }
+
+  @Post(':id/machine-name/suggest')
+  @Roles(UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Suggest a machine name for a PDF (pending admin review)' })
+  async suggestMachineName(@Param('id') id: string, @Body() body: SuggestMachineNameDto, @Request() req) {
+    return this.knowledgeDocumentsService.suggestMachineName(id, body.proposedName, req.user.id);
+  }
+
+  @Get(':id/extractions')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Get extracted Problem→Solution candidates for a document' })
+  async extractions(@Param('id') id: string) {
+    return this.knowledgeDocumentsService.getExtractionsForDocument(id);
+  }
+
+  @Get(':id/download')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Download uploaded PDF' })
+  async download(@Param('id') id: string, @Res() res: any) {
+    const doc = await this.knowledgeDocumentsService.findOne(id);
+
+    if (!doc.filePath) {
+      throw new HttpException('File path missing', HttpStatus.NOT_FOUND);
+    }
+
+    return res.download(doc.filePath, doc.originalName || doc.fileName, (err: any) => {
+      if (err) {
+        throw new HttpException('Failed to download file', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+    });
+  }
+
   @Get(':id')
-  @ApiOperation({ summary: 'Get document details + resume (admin)' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get document details + resume' })
   async details(@Param('id') id: string) {
     const doc = await this.knowledgeDocumentsService.findOne(id);
     const stats = await this.knowledgeDocumentsService.getExtractionStats(id);
@@ -150,52 +256,10 @@ export class KnowledgeDocumentsController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete a PDF document (admin only)' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Delete a PDF document' })
   async remove(@Param('id') id: string, @Request() req) {
     await this.knowledgeDocumentsService.deleteDocument(id, req.user.id);
     return { ok: true };
   }
-
-  @Get(':id/extractions')
-  @ApiOperation({ summary: 'Get extracted Problem→Solution candidates for a document' })
-  async extractions(@Param('id') id: string) {
-    return this.knowledgeDocumentsService.getExtractionsForDocument(id);
-  }
-
-  @Get(':id/download')
-  @ApiOperation({ summary: 'Download uploaded PDF (admin/superadmin)' })
-  async download(@Param('id') id: string, @Res() res: any) {
-    const doc = await this.knowledgeDocumentsService.findOne(id);
-
-    if (!doc.filePath) {
-      throw new HttpException('File path missing', HttpStatus.NOT_FOUND);
-    }
-
-    // `res.download` sets Content-Disposition and streams the file.
-    return res.download(doc.filePath, doc.originalName || doc.fileName, (err: any) => {
-      if (err) {
-        throw new HttpException('Failed to download file', HttpStatus.INTERNAL_SERVER_ERROR);
-      }
-    });
-  }
-
-  @Post('extractions/:candidateId/approve')
-  @ApiOperation({ summary: 'Approve an extracted candidate and create a KnowledgeEntry' })
-  async approveExtraction(
-    @Param('candidateId') candidateId: string,
-    @Body() body: ApproveExtractionDto,
-    @Request() req,
-  ) {
-    return this.knowledgeDocumentsService.approveExtractionCandidate(candidateId, req.user.id, body);
-  }
-
-  @Post('extractions/:candidateId/reject')
-  @ApiOperation({ summary: 'Reject an extracted candidate' })
-  async rejectExtraction(
-    @Param('candidateId') candidateId: string,
-    @Request() req,
-  ) {
-    return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id);
-  }
 }
-

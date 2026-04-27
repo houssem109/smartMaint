@@ -126,13 +126,18 @@ export class ChatController {
     ].filter(Boolean) as string[];
 
     const ragSystemMessage = contextBlocks.length
-      ? `Use the following manual excerpts and/or approved knowledge entries to answer the user's question. If the provided context is not enough, say so.\n\n${contextBlocks.join('\n\n')}`
-      : null;
+      ? `Retrieved manual excerpts and/or approved knowledge entries follow. Prefer them over guessing; do not invent machine-specific procedures or specs not supported by this text.\n` +
+        `If the question is on-topic (plant equipment, maintenance, simple shop-floor PC basics) but this text does not cover it, you may give only short, common-sense reminders—what a technician might say in one breath—not long improvised diagnostics.\n\n` +
+        `${contextBlocks.join('\n\n')}`
+      : `No manual excerpts or knowledge entries were retrieved.\n` +
+        `If the question is clearly about plant machines, maintenance, or simple shop-floor equipment/PC basics, you may answer very briefly with common sense only—no long improvised answers.\n` +
+        `If the user frames the question as home, kitchen, cooking, or other non-plant life topics, or anything not grounded in industrial maintenance, decline in one or two neutral sentences (production equipment and SmartMaint only)—do not answer “anyway.”\n` +
+        `If the question mixes plant and home: only address it if retrieved context would apply; otherwise decline.`;
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...historyMessages,
-      ...(ragSystemMessage ? [{ role: 'system' as ChatRole, content: ragSystemMessage }] : []),
+      { role: 'system' as ChatRole, content: ragSystemMessage },
       {
         role: 'user',
         content: message,

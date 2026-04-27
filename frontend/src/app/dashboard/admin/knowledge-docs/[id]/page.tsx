@@ -23,10 +23,21 @@ interface KnowledgeDocument {
   mimeType: string;
   fileSize: number;
   status: string;
+  machineName?: string | null;
   uploadedBy?: { fullName?: string | null; email: string };
   error?: string | null;
   chunksIndexed?: number;
   createdAt: string;
+}
+
+interface MachineNameSuggestion {
+  id: string;
+  documentId: string;
+  proposedName: string;
+  status: string;
+  rejectReason: string | null;
+  createdAt: string;
+  suggestedBy?: { email: string; fullName?: string | null };
 }
 
 interface KnowledgeExtractionCandidate {
@@ -51,6 +62,11 @@ export default function KnowledgeDocDetailsPage() {
   const pageSize = 8;
   const [saving, setSaving] = useState(false);
 
+  const [officialName, setOfficialName] = useState('');
+  const [savingOfficial, setSavingOfficial] = useState(false);
+  const [suggestions, setSuggestions] = useState<MachineNameSuggestion[]>([]);
+  const [rejectOthersReason, setRejectOthersReason] = useState('');
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<KnowledgeExtractionCandidate | null>(null);
   const [form, setForm] = useState({
@@ -66,6 +82,19 @@ export default function KnowledgeDocDetailsPage() {
     try {
       const res = await api.get<{ document: KnowledgeDocument; resume: any }>(`/knowledge-documents/${id}`);
       setDoc(res.data.document);
+      setOfficialName(res.data.document.machineName?.trim() || '');
+      if (res.data.document.machineName?.trim()) {
+        setSuggestions([]);
+      } else {
+        try {
+          const sres = await api.get<MachineNameSuggestion[]>(
+            `/knowledge-documents/${id}/machine-name/suggestions`,
+          );
+          setSuggestions(sres.data);
+        } catch (err: any) {
+          toast.error(err.response?.data?.message || 'Failed to load name suggestions');
+        }
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load document');
     } finally {
@@ -84,7 +113,37 @@ export default function KnowledgeDocDetailsPage() {
   };
 
   const fetchAll = async () => {
-    await Promise.all([fetchDetails(), fetchExtractions()]);
+    if (!id) return;
+    setLoading(true);
+    try {
+      const detailRes = await api.get<{ document: KnowledgeDocument; resume: any }>(`/knowledge-documents/${id}`);
+      setDoc(detailRes.data.document);
+      setOfficialName(detailRes.data.document.machineName?.trim() || '');
+      const hasMachineName = !!detailRes.data.document.machineName?.trim();
+
+      await Promise.all([
+        (async () => {
+          const res = await api.get<KnowledgeExtractionCandidate[]>(`/knowledge-documents/${id}/extractions`);
+          setExtractions(res.data);
+        })(),
+        hasMachineName
+          ? Promise.resolve().then(() => setSuggestions([]))
+          : (async () => {
+              try {
+                const res = await api.get<MachineNameSuggestion[]>(
+                  `/knowledge-documents/${id}/machine-name/suggestions`,
+                );
+                setSuggestions(res.data);
+              } catch (err: any) {
+                toast.error(err.response?.data?.message || 'Failed to load name suggestions');
+              }
+            })(),
+      ]);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to load document');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -200,6 +259,57 @@ export default function KnowledgeDocDetailsPage() {
     }
   };
 
+  const handleSaveOfficialName = async () => {
+    if (!id) return;
+    const trimmed = officialName.trim();
+    if (!trimmed) {
+      toast.error('Machine name cannot be empty');
+      return;
+    }
+    setSavingOfficial(true);
+    try {
+      await api.patch(`/knowledge-documents/${id}/machine-name`, { machineName: trimmed });
+      toast.success('Machine name updated');
+      fetchDetails();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to update');
+    } finally {
+      setSavingOfficial(false);
+    }
+  };
+
+  const handleApproveSuggestion = async (suggestionId: string) => {
+    setSaving(true);
+    try {
+      await api.post(`/knowledge-documents/machine-name-suggestions/${suggestionId}/approve`, {
+        rejectOthersReason: rejectOthersReason.trim() || undefined,
+      });
+      toast.success('Suggestion approved');
+      setRejectOthersReason('');
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to approve');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectSuggestion = async (suggestionId: string) => {
+    const reason = window.prompt('Optional reason (shown to technician):') || undefined;
+    setSaving(true);
+    try {
+      await api.post(`/knowledge-documents/machine-name-suggestions/${suggestionId}/reject`, {
+        reason: reason?.trim() || undefined,
+      });
+      toast.success('Suggestion rejected');
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to reject');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDownload = async () => {
     if (!doc) return;
     try {
@@ -257,6 +367,93 @@ export default function KnowledgeDocDetailsPage() {
               <div className="font-medium">PDF warning</div>
               <div className="mt-1 whitespace-pre-wrap">{doc.error}</div>
             </div>
+          )}
+
+          <Card className="border-border/50 shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg">Official machine name</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Shown under the filename for admins and technicians. Leave accurate for search and support.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+                <Input
+                  value={officialName}
+                  onChange={(e) => setOfficialName(e.target.value)}
+                  placeholder="e.g. Trepak Capper 50C-0100"
+                />
+                <Button onClick={handleSaveOfficialName} disabled={savingOfficial}>
+                  {savingOfficial ? 'Saving…' : 'Save'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {!doc?.machineName?.trim() && (
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg">Machine name suggestions</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Note when approving (optional)</Label>
+                  <Textarea
+                    rows={2}
+                    value={rejectOthersReason}
+                    onChange={(e) => setRejectOthersReason(e.target.value)}
+                    placeholder="If you approve one suggestion, other pending suggestions are rejected with this message (or a default)."
+                  />
+                </div>
+                {suggestions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No suggestions yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {suggestions.map((s) => (
+                      <div
+                        key={s.id}
+                        className="rounded-lg border border-border/50 bg-card/60 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-medium">{s.proposedName}</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            By {s.suggestedBy?.fullName || s.suggestedBy?.email || '—'} •{' '}
+                            {new Date(s.createdAt).toLocaleString()}
+                          </div>
+                          {s.rejectReason && (
+                            <div className="text-xs text-muted-foreground mt-1">Reason: {s.rejectReason}</div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary" className="text-xs capitalize">
+                            {s.status}
+                          </Badge>
+                          {s.status === 'pending' && (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => handleApproveSuggestion(s.id)}
+                                disabled={saving}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleRejectSuggestion(s.id)}
+                                disabled={saving}
+                              >
+                                Reject
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           <Card className="border-border/50 shadow-sm">

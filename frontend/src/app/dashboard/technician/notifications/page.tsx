@@ -45,6 +45,12 @@ export default function TechnicianNotificationsPage() {
   }, []);
 
   const formatAction = (entry: NotificationEntry) => {
+    if (entry.entityType === 'machine_name_suggestion') {
+      const ev = (entry.changes as any)?.event;
+      if (ev === 'machine_name_suggestion_approved') return 'Machine name approved';
+      if (ev === 'machine_name_suggestion_rejected') return 'Machine name rejected';
+      if (ev === 'machine_name_suggestion_superseded') return 'Suggestion closed (another approved)';
+    }
     switch (entry.actionType) {
       case 'create':
         return 'New ticket created';
@@ -54,6 +60,10 @@ export default function TechnicianNotificationsPage() {
         return 'Ticket moved to trash';
       case 'rollback':
         return 'Ticket restored';
+      case 'approve':
+        return 'Approved';
+      case 'reject':
+        return 'Rejected';
       default:
         return entry.actionType;
     }
@@ -66,8 +76,16 @@ export default function TechnicianNotificationsPage() {
     if (changes.deletedSnapshot) return 'Ticket soft-deleted (can be restored by admin).';
     if (changes.restoredFromDelete) return 'Ticket restored from trash.';
 
+    if (changes.proposedName && typeof changes.proposedName === 'string') {
+      const bits = [`Suggested: ${changes.proposedName}`];
+      if (changes.rejectReason) bits.push(`Reason: ${changes.rejectReason}`);
+      if (changes.adoptedName) bits.push(`Now: ${changes.adoptedName}`);
+      return bits.join(' · ');
+    }
+
     const parts: string[] = [];
     for (const [key, value] of Object.entries(changes)) {
+      if (key === 'forUserId' || key === 'event' || key === 'documentId') continue;
       if (key === 'attachmentsAdded' && Array.isArray(value)) {
         parts.push(`Attachments added: ${(value as string[]).join(', ')}`);
       } else if (value && typeof value === 'object' && 'from' in (value as any) && 'to' in (value as any)) {
@@ -120,7 +138,14 @@ export default function TechnicianNotificationsPage() {
                           </TableCell>
                           <TableCell className="text-sm">
                             <Button variant="link" size="sm" asChild className="px-0">
-                              <Link href={`/dashboard/tickets/${n.entityId}`}>
+                              <Link
+                                href={
+                                  n.entityType === 'machine_name_suggestion' &&
+                                  typeof (n.changes as any)?.documentId === 'string'
+                                    ? `/dashboard/technician/knowledge-pdfs/${(n.changes as any).documentId}`
+                                    : `/dashboard/tickets/${n.entityId}`
+                                }
+                              >
                                 {(() => {
                                   if (n.ticketTitle) return n.ticketTitle;
                                   const changes: any = n.changes;
@@ -130,6 +155,9 @@ export default function TechnicianNotificationsPage() {
                                   if (changes?.title && typeof changes.title === 'object') {
                                     if ('to' in changes.title) return String(changes.title.to);
                                     if ('from' in changes.title) return String(changes.title.from);
+                                  }
+                                  if (n.entityType === 'machine_name_suggestion' && changes?.documentOriginalName) {
+                                    return String(changes.documentOriginalName);
                                   }
                                   return `Ticket ${n.entityId.slice(0, 8)}…`;
                                 })()}

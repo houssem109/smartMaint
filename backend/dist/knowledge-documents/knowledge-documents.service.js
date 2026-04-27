@@ -19,16 +19,20 @@ const typeorm_2 = require("typeorm");
 const fs_1 = require("fs");
 const knowledge_document_entity_1 = require("./entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("./entities/knowledge-extraction-candidate.entity");
+const machine_name_suggestion_entity_1 = require("./entities/machine-name-suggestion.entity");
 const knowledge_service_1 = require("../knowledge/knowledge.service");
 const ai_service_1 = require("../ai/ai.service");
 const rag_service_1 = require("../ai/rag.service");
+const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const path_1 = require("path");
 const fs_2 = require("fs");
 const pdfParse = require("pdf-parse");
 let KnowledgeDocumentsService = class KnowledgeDocumentsService {
-    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, knowledgeService, aiService, ragService) {
+    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, machineNameSuggestionsRepository, auditLogRepository, knowledgeService, aiService, ragService) {
         this.knowledgeDocumentsRepository = knowledgeDocumentsRepository;
         this.extractionCandidatesRepository = extractionCandidatesRepository;
+        this.machineNameSuggestionsRepository = machineNameSuggestionsRepository;
+        this.auditLogRepository = auditLogRepository;
         this.knowledgeService = knowledgeService;
         this.aiService = aiService;
         this.ragService = ragService;
@@ -77,6 +81,7 @@ let KnowledgeDocumentsService = class KnowledgeDocumentsService {
     async deleteDocument(documentId, adminId) {
         const doc = await this.findOne(documentId);
         await this.extractionCandidatesRepository.delete({ documentId: doc.id });
+        await this.machineNameSuggestionsRepository.delete({ documentId: doc.id });
         await this.knowledgeDocumentsRepository.delete({ id: doc.id });
         try {
             if (doc.filePath && (0, fs_1.existsSync)(doc.filePath)) {
@@ -117,6 +122,155 @@ let KnowledgeDocumentsService = class KnowledgeDocumentsService {
         candidate.reviewedById = adminId;
         return this.extractionCandidatesRepository.save(candidate);
     }
+    async updateMachineName(documentId, machineName, _adminId) {
+        const doc = await this.findOne(documentId);
+        const trimmed = machineName.trim();
+        if (!trimmed)
+            throw new common_1.BadRequestException('Machine name cannot be empty');
+        doc.machineName = trimmed;
+        return this.knowledgeDocumentsRepository.save(doc);
+    }
+    async listMachineNameSuggestions(documentId) {
+        const doc = await this.findOne(documentId);
+        if (doc.machineName != null && String(doc.machineName).trim() !== '') {
+            return [];
+        }
+        return this.machineNameSuggestionsRepository.find({
+            where: { documentId },
+            relations: ['suggestedBy', 'reviewedBy'],
+            order: { createdAt: 'DESC' },
+        });
+    }
+    async suggestMachineName(documentId, proposedName, technicianId) {
+        const doc = await this.findOne(documentId);
+        if (doc.machineName != null && String(doc.machineName).trim() !== '') {
+            throw new common_1.BadRequestException('Machine name is already set; suggestions are not needed');
+        }
+        const trimmed = proposedName.trim();
+        if (!trimmed)
+            throw new common_1.BadRequestException('Proposed name cannot be empty');
+        const row = this.machineNameSuggestionsRepository.create({
+            documentId: doc.id,
+            suggestedById: technicianId,
+            proposedName: trimmed,
+            status: 'pending',
+            rejectReason: null,
+            reviewedById: null,
+            reviewedAt: null,
+        });
+        const saved = await this.machineNameSuggestionsRepository.save(row);
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.CREATE,
+            entityType: 'knowledge_document',
+            entityId: doc.id,
+            userId: technicianId,
+            changes: {
+                event: 'machine_name_suggestion',
+                suggestionId: saved.id,
+                proposedName: saved.proposedName,
+                documentOriginalName: doc.originalName,
+            },
+            reason: null,
+        }));
+        return saved;
+    }
+    async approveMachineNameSuggestion(suggestionId, adminId, rejectOthersReason) {
+        const suggestion = await this.machineNameSuggestionsRepository.findOne({
+            where: { id: suggestionId },
+        });
+        if (!suggestion)
+            throw new common_1.NotFoundException('Suggestion not found');
+        if (suggestion.status !== 'pending') {
+            throw new common_1.BadRequestException('Only pending suggestions can be approved');
+        }
+        const doc = await this.findOne(suggestion.documentId);
+        const sharedReason = rejectOthersReason?.trim() || 'Another suggestion was approved for this document.';
+        const now = new Date();
+        const pendingOthers = await this.machineNameSuggestionsRepository.find({
+            where: { documentId: doc.id, status: 'pending' },
+        });
+        doc.machineName = suggestion.proposedName.trim();
+        await this.knowledgeDocumentsRepository.save(doc);
+        suggestion.status = 'approved';
+        suggestion.reviewedById = adminId;
+        suggestion.reviewedAt = now;
+        suggestion.rejectReason = null;
+        await this.machineNameSuggestionsRepository.save(suggestion);
+        for (const o of pendingOthers) {
+            if (o.id === suggestion.id)
+                continue;
+            o.status = 'rejected';
+            o.rejectReason = sharedReason;
+            o.reviewedById = adminId;
+            o.reviewedAt = now;
+            await this.machineNameSuggestionsRepository.save(o);
+            await this.auditLogRepository.save(this.auditLogRepository.create({
+                actionType: audit_log_entity_1.ActionType.REJECT,
+                entityType: 'machine_name_suggestion',
+                entityId: o.id,
+                userId: o.suggestedById,
+                changes: {
+                    forUserId: o.suggestedById,
+                    documentId: doc.id,
+                    documentOriginalName: doc.originalName,
+                    proposedName: o.proposedName,
+                    rejectReason: sharedReason,
+                    event: 'machine_name_suggestion_superseded',
+                },
+                reason: sharedReason,
+            }));
+        }
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.APPROVE,
+            entityType: 'machine_name_suggestion',
+            entityId: suggestion.id,
+            userId: suggestion.suggestedById,
+            changes: {
+                forUserId: suggestion.suggestedById,
+                documentId: doc.id,
+                documentOriginalName: doc.originalName,
+                proposedName: suggestion.proposedName,
+                adoptedName: suggestion.proposedName,
+                event: 'machine_name_suggestion_approved',
+            },
+            reason: null,
+        }));
+        return { document: doc, approved: suggestion };
+    }
+    async rejectMachineNameSuggestion(suggestionId, adminId, reason) {
+        const suggestion = await this.machineNameSuggestionsRepository.findOne({
+            where: { id: suggestionId },
+        });
+        if (!suggestion)
+            throw new common_1.NotFoundException('Suggestion not found');
+        if (suggestion.status !== 'pending') {
+            throw new common_1.BadRequestException('Only pending suggestions can be rejected');
+        }
+        const doc = await this.findOne(suggestion.documentId);
+        const now = new Date();
+        const r = reason?.trim() || null;
+        suggestion.status = 'rejected';
+        suggestion.rejectReason = r;
+        suggestion.reviewedById = adminId;
+        suggestion.reviewedAt = now;
+        await this.machineNameSuggestionsRepository.save(suggestion);
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.REJECT,
+            entityType: 'machine_name_suggestion',
+            entityId: suggestion.id,
+            userId: suggestion.suggestedById,
+            changes: {
+                forUserId: suggestion.suggestedById,
+                documentId: doc.id,
+                documentOriginalName: doc.originalName,
+                proposedName: suggestion.proposedName,
+                rejectReason: r,
+                event: 'machine_name_suggestion_rejected',
+            },
+            reason: r,
+        }));
+        return suggestion;
+    }
     async processDocumentExtraction(documentId) {
         const doc = await this.findOne(documentId);
         doc.status = 'processing';
@@ -141,6 +295,19 @@ let KnowledgeDocumentsService = class KnowledgeDocumentsService {
             const fileBuffer = (0, fs_2.readFileSync)(doc.filePath);
             const parsed = await pdfParse(fileBuffer);
             const fullText = parsed?.text || '';
+            if (doc.machineName == null || String(doc.machineName).trim() === '') {
+                let extractedName = null;
+                try {
+                    extractedName = await this.extractMachineNameFromManual(fullText);
+                }
+                catch {
+                    extractedName = null;
+                }
+                if (extractedName) {
+                    doc.machineName = extractedName;
+                    await this.knowledgeDocumentsRepository.save(doc);
+                }
+            }
             const lower = fullText.toLowerCase();
             const idx = lower.indexOf('troubleshooting');
             const relevantText = idx >= 0 ? fullText.slice(idx) : fullText;
@@ -218,6 +385,56 @@ let KnowledgeDocumentsService = class KnowledgeDocumentsService {
             await this.knowledgeDocumentsRepository.save(doc);
         }
     }
+    extractMachineNameHeuristic(text) {
+        const head = text.slice(0, 12000);
+        const linePatterns = [
+            /(?:^|\n)\s*(?:machine|equipment|device|model)\s*[:#]\s*([^\n]+)/i,
+            /(?:^|\n)\s*model\s*(?:no\.?|number|#)?\s*[:#]?\s*([^\n]+)/i,
+        ];
+        for (const re of linePatterns) {
+            const m = head.match(re);
+            if (m?.[1]) {
+                const name = m[1].replace(/\s+/g, ' ').trim();
+                if (name.length >= 2 && name.length <= 500)
+                    return name;
+            }
+        }
+        return null;
+    }
+    async extractMachineNameWithLlm(excerpt) {
+        const trimmed = excerpt.slice(0, 8000);
+        if (!trimmed.trim())
+            return null;
+        const messages = [
+            {
+                role: 'system',
+                content: 'You read a technical manual excerpt. Return JSON only: {"machineName": string|null}. ' +
+                    'machineName is the primary equipment or machine model name as printed on the cover or title area (e.g. product line + model). ' +
+                    'Use null if you cannot identify it confidently.',
+            },
+            { role: 'user', content: trimmed },
+        ];
+        try {
+            const raw = await this.aiService.chat(messages);
+            const parsed = this.tryParseJson(raw);
+            const n = parsed?.machineName;
+            if (n == null)
+                return null;
+            const s = String(n).replace(/\s+/g, ' ').trim();
+            if (s.length < 2 || s.length > 500)
+                return null;
+            return s;
+        }
+        catch {
+            return null;
+        }
+    }
+    async extractMachineNameFromManual(fullText) {
+        const llmFirst = await this.extractMachineNameWithLlm(fullText);
+        if (llmFirst)
+            return llmFirst;
+        return this.extractMachineNameHeuristic(fullText);
+    }
     tryParseJson(raw) {
         if (!raw)
             return null;
@@ -249,7 +466,11 @@ exports.KnowledgeDocumentsService = KnowledgeDocumentsService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(knowledge_document_entity_1.KnowledgeDocument)),
     __param(1, (0, typeorm_1.InjectRepository)(knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate)),
+    __param(2, (0, typeorm_1.InjectRepository)(machine_name_suggestion_entity_1.MachineNameSuggestion)),
+    __param(3, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         knowledge_service_1.KnowledgeService,
         ai_service_1.AiService,

@@ -178,33 +178,57 @@ export default function Layout({ children, title }: LayoutProps) {
                         previewNotifications.map((n) => {
                           const isAdminRole = user?.role === 'admin' || user?.role === 'superadmin';
                           const isUserEntity = n.entityType === 'user' && isAdminRole;
+                          const isKnowledgeDoc =
+                            n.entityType === 'knowledge_document' && isAdminRole;
+                          const isMachineNameSuggestion = n.entityType === 'machine_name_suggestion';
+                          const ch = n.changes as Record<string, unknown> | null | undefined;
 
                           let title = n.ticketTitle;
-                          if (!title && n.changes) {
-                            const changes = n.changes as any;
-                            if (changes.deletedSnapshot?.ticket?.title) {
-                              title = changes.deletedSnapshot.ticket.title;
-                            } else if (changes.title && typeof changes.title === 'object') {
-                              if ('to' in changes.title) {
-                                title = String(changes.title.to);
-                              } else if ('from' in changes.title) {
-                                title = String(changes.title.from);
-                              }
+                          if (!title && ch) {
+                            if (ch.deletedSnapshot && typeof ch.deletedSnapshot === 'object') {
+                              const snap = ch.deletedSnapshot as { ticket?: { title?: string } };
+                              if (snap.ticket?.title) title = snap.ticket.title;
+                            } else if (ch.title && typeof ch.title === 'object') {
+                              const t = ch.title as { to?: unknown; from?: unknown };
+                              if ('to' in t) title = String(t.to);
+                              else if ('from' in t) title = String(t.from);
+                            } else if (ch.event === 'machine_name_suggestion' && ch.documentOriginalName) {
+                              title = String(ch.documentOriginalName);
+                            } else if (isMachineNameSuggestion && ch.documentOriginalName) {
+                              title = String(ch.documentOriginalName);
                             }
                           }
-                          const displayTitle =
+                          let displayTitle =
                             isUserEntity
                               ? 'User updated'
-                              : title || `Ticket ${n.entityId.slice(0, 8)}…`;
+                              : isKnowledgeDoc && ch?.event === 'machine_name_suggestion'
+                                ? `Machine name suggestion`
+                                : title || `Ticket ${n.entityId.slice(0, 8)}…`;
+                          if (isMachineNameSuggestion && ch?.event === 'machine_name_suggestion_approved') {
+                            displayTitle = 'Machine name approved';
+                          }
+                          if (isMachineNameSuggestion && ch?.event === 'machine_name_suggestion_rejected') {
+                            displayTitle = 'Machine name rejected';
+                          }
+                          if (isMachineNameSuggestion && ch?.event === 'machine_name_suggestion_superseded') {
+                            displayTitle = 'Machine name suggestion closed';
+                          }
+
+                          const href = (() => {
+                            if (isUserEntity) return '/dashboard/admin/users';
+                            if (isKnowledgeDoc && ch?.event === 'machine_name_suggestion') {
+                              return `/dashboard/admin/knowledge-docs/${n.entityId}`;
+                            }
+                            if (isMachineNameSuggestion && typeof ch?.documentId === 'string') {
+                              return `/dashboard/technician/knowledge-pdfs/${ch.documentId}`;
+                            }
+                            return `/dashboard/tickets/${n.entityId}`;
+                          })();
 
                           return (
                             <a
                               key={n.id}
-                              href={
-                                isUserEntity
-                                  ? '/dashboard/admin/users'
-                                  : `/dashboard/tickets/${n.entityId}`
-                              }
+                              href={href}
                               className="block px-3 py-2 text-xs hover:bg-accent/60"
                               onClick={() => setNotificationsOpen(false)}
                             >

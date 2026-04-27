@@ -9,6 +9,7 @@ import { AuditLog } from '../common/entities/audit-log.entity';
 import { KnowledgeEntry } from '../knowledge/entities/knowledge-entry.entity';
 import { KnowledgeDocument } from '../knowledge-documents/entities/knowledge-document.entity';
 import { KnowledgeExtractionCandidate } from '../knowledge-documents/entities/knowledge-extraction-candidate.entity';
+import { MachineNameSuggestion } from '../knowledge-documents/entities/machine-name-suggestion.entity';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { KnowledgeExtractionCandidate } from '../knowledge-documents/entities/kn
           KnowledgeEntry,
           KnowledgeDocument,
           KnowledgeExtractionCandidate,
+          MachineNameSuggestion,
         ],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',

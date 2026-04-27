@@ -40,6 +40,10 @@ export class KnowledgeDocument {
   @Column({ type: 'int', default: 0 })
   chunksIndexed: number;
 
+  /** Official display name (from extraction, admin edit, or approved suggestion). */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  machineName: string | null;
+
   @Column()
   uploadedById: string;
 
