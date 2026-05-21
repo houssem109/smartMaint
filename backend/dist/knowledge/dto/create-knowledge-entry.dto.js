@@ -36,4 +36,43 @@ __decorate([
     (0, class_validator_1.MaxLength)(500),
     __metadata("design:type", String)
 ], CreateKnowledgeEntryDto.prototype, "tags", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.MaxLength)(255),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "machineName", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "symptom", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "rootCause", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.MaxLength)(32),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "severity", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.MaxLength)(32),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "entryType", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.MaxLength)(64),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "source", void 0);
+__decorate([
+    (0, class_validator_1.IsUUID)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateKnowledgeEntryDto.prototype, "knowledgeDocumentId", void 0);
 //# sourceMappingURL=create-knowledge-entry.dto.js.map

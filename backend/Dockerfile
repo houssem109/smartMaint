@@ -3,7 +3,16 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install build tools for native modules (e.g., bcrypt)
-RUN apk add --no-cache python3 make g++
+# Install Tesseract OCR + language packs and Poppler utils (pdftoppm, pdfinfo, etc.)
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    tesseract-ocr-data-fra \
+    tesseract-ocr-data-ara \
+    poppler-utils
 
 # Copy package files
 COPY package*.json ./

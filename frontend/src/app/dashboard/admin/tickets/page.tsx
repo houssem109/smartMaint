@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Search, Plus, RefreshCw } from 'lucide-react';
+import { Search, Plus, RefreshCw, Download } from 'lucide-react';
 
 interface Ticket {
   id: string;
@@ -123,12 +123,20 @@ export default function AdminTicketsPage() {
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-xl font-semibold tracking-tight">All Tickets</h2>
-            <Button asChild className="w-fit gap-2">
-              <Link href="/dashboard/create-ticket">
-                <Plus className="h-4 w-4" />
-                Add ticket
-              </Link>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" asChild className="w-fit gap-2">
+                <Link href="/dashboard/admin/tickets-export">
+                  <Download className="h-4 w-4" />
+                  Export
+                </Link>
+              </Button>
+              <Button asChild className="w-fit gap-2">
+                <Link href="/dashboard/create-ticket">
+                  <Plus className="h-4 w-4" />
+                  Add ticket
+                </Link>
+              </Button>
+            </div>
           </div>
 
           <Card className="border-border/50 shadow-sm">

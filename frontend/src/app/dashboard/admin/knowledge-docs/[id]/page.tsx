@@ -24,10 +24,17 @@ interface KnowledgeDocument {
   fileSize: number;
   status: string;
   machineName?: string | null;
+  docType?: string | null;
+  gateConfidence?: number | null;
+  needsReview?: boolean;
+  isWorkRelated?: boolean | null;
+  deepMode?: boolean;
   uploadedBy?: { fullName?: string | null; email: string };
   error?: string | null;
   chunksIndexed?: number;
   createdAt: string;
+  supersedesDocumentId?: string | null;
+  supersededByDocumentId?: string | null;
 }
 
 interface MachineNameSuggestion {
@@ -42,12 +49,33 @@ interface MachineNameSuggestion {
 
 interface KnowledgeExtractionCandidate {
   id: string;
+  entryType?: string | null;
   title: string;
   problemDescription: string;
   solution: string;
+  symptom?: string | null;
+  rootCause?: string | null;
   tags: string | null;
+  sourcePages?: string | null;
+  confidence?: number | null;
+  sectionType?: string | null;
   status: string;
   createdById: string;
+}
+
+interface PageAnalysisRow {
+  id: string;
+  pageNumber: number;
+  quality: 'good' | 'degraded' | 'poor' | 'unreadable';
+  ocrConfidence: number | null;
+  qualityWarnings: string[] | null;
+}
+
+interface PipelineConfigLite {
+  vision?: {
+    docBatchPages?: number;
+    maxPagesPerBatch?: number;
+  };
 }
 
 export default function KnowledgeDocDetailsPage() {
@@ -58,8 +86,13 @@ export default function KnowledgeDocDetailsPage() {
   const [doc, setDoc] = useState<KnowledgeDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [extractions, setExtractions] = useState<KnowledgeExtractionCandidate[]>([]);
+  const [pageAnalysis, setPageAnalysis] = useState<PageAnalysisRow[]>([]);
+  const [docBatchPages, setDocBatchPages] = useState(20);
+  const [visionMaxPerBatch, setVisionMaxPerBatch] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
+  const [currentQualityPage, setCurrentQualityPage] = useState(1);
   const pageSize = 8;
+  const qualityPageSize = 10;
   const [saving, setSaving] = useState(false);
 
   const [officialName, setOfficialName] = useState('');
@@ -126,6 +159,26 @@ export default function KnowledgeDocDetailsPage() {
           const res = await api.get<KnowledgeExtractionCandidate[]>(`/knowledge-documents/${id}/extractions`);
           setExtractions(res.data);
         })(),
+        (async () => {
+          try {
+            const res = await api.get<PageAnalysisRow[]>(`/knowledge-documents/${id}/page-analysis`);
+            setPageAnalysis(res.data);
+          } catch {
+            setPageAnalysis([]);
+          }
+        })(),
+        (async () => {
+          try {
+            const res = await api.get<PipelineConfigLite>('/knowledge-documents/pipeline-config');
+            const b = Number(res.data?.vision?.docBatchPages ?? 20);
+            const v = Number(res.data?.vision?.maxPagesPerBatch ?? 20);
+            setDocBatchPages(Number.isFinite(b) && b > 0 ? Math.floor(b) : 20);
+            setVisionMaxPerBatch(Number.isFinite(v) && v > 0 ? Math.floor(v) : 20);
+          } catch {
+            setDocBatchPages(20);
+            setVisionMaxPerBatch(20);
+          }
+        })(),
         hasMachineName
           ? Promise.resolve().then(() => setSuggestions([]))
           : (async () => {
@@ -154,6 +207,10 @@ export default function KnowledgeDocDetailsPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [extractions.length]);
+
+  useEffect(() => {
+    setCurrentQualityPage(1);
+  }, [pageAnalysis.length]);
 
   // Keep polling while extraction is running, so the table fills automatically.
   useEffect(() => {
@@ -186,11 +243,32 @@ export default function KnowledgeDocDetailsPage() {
 
   const startIndex = extractions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const endIndex = Math.min(currentPage * pageSize, extractions.length);
+  const nonGoodPageRows = useMemo(
+    () => pageAnalysis.filter((p) => p.quality !== 'good'),
+    [pageAnalysis],
+  );
+  const totalQualityPages = useMemo(
+    () => Math.max(1, Math.ceil(nonGoodPageRows.length / qualityPageSize)),
+    [nonGoodPageRows.length],
+  );
+  const paginatedQualityRows = useMemo(() => {
+    const start = (currentQualityPage - 1) * qualityPageSize;
+    return nonGoodPageRows.slice(start, start + qualityPageSize);
+  }, [nonGoodPageRows, currentQualityPage]);
+  const qualityStartIndex =
+    nonGoodPageRows.length === 0 ? 0 : (currentQualityPage - 1) * qualityPageSize + 1;
+  const qualityEndIndex = Math.min(currentQualityPage * qualityPageSize, nonGoodPageRows.length);
+  const totalPagesForBatching =
+    (typeof doc?.totalPages === 'number' && doc.totalPages > 0 ? doc.totalPages : pageAnalysis.length) || 0;
+  const estimatedBatchCount =
+    totalPagesForBatching > 0 ? Math.max(1, Math.ceil(totalPagesForBatching / Math.max(1, docBatchPages))) : 0;
 
   const statusVariant = (status: string) => {
     if (status === 'done') return 'default';
     if (status === 'failed') return 'destructive';
     if (status === 'processing') return 'secondary';
+    if (status === 'needs_review') return 'secondary';
+    if (status === 'superseded') return 'outline';
     return 'outline';
   };
 
@@ -328,6 +406,79 @@ export default function KnowledgeDocDetailsPage() {
     }
   };
 
+  const handleRunOcr = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      const res = await api.post<{ ok: true; processedPages: number }>(`/knowledge-documents/${id}/run-ocr`);
+      toast.success(`OCR started/finished. Pages processed: ${res.data.processedPages}`);
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to run OCR');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRunVision = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      const res = await api.post<{ ok: true; processedPages: number }>(`/knowledge-documents/${id}/run-vision`);
+      toast.success(`Vision pass finished. Pages processed: ${res.data.processedPages}`);
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to run vision');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReindexManual = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      const res = await api.post<{ ok: true; chunksIndexed: number }>(
+        `/knowledge-documents/${id}/reindex-manual-chunks`,
+      );
+      toast.success(`Manual RAG re-indexed: ${res.data.chunksIndexed} chunk(s)`);
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Re-index failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleApproveGate = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      await api.post(`/knowledge-documents/${id}/gate/approve`);
+      toast.success('Gate approved — extraction queued');
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Approve failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectGate = async () => {
+    if (!id) return;
+    const reason = window.prompt('Reject reason (optional):') || undefined;
+    setSaving(true);
+    try {
+      await api.post(`/knowledge-documents/${id}/gate/reject`, { reason });
+      toast.success('Document rejected at gate');
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Reject failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
       <Layout title="Document Details" showSidebar={true}>
@@ -340,6 +491,16 @@ export default function KnowledgeDocDetailsPage() {
               <p className="text-sm text-muted-foreground mt-1">
                 {doc ? `Uploaded by ${doc.uploadedBy?.fullName || doc.uploadedBy?.email || '—'} • ${new Date(doc.createdAt).toLocaleString()}` : ''}
               </p>
+              {doc && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Type: {doc.docType || '—'} • Gate:{' '}
+                  {typeof doc.gateConfidence === 'number'
+                    ? `${Math.round(doc.gateConfidence * 100)}%`
+                    : '—'}
+                  {doc.needsReview ? ' • needs review' : ''} • Mode:{' '}
+                  {doc.deepMode === false ? 'fast' : 'deep'}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Badge variant={statusVariant(doc?.status || 'uploaded') as any} className="text-xs capitalize">
@@ -367,6 +528,67 @@ export default function KnowledgeDocDetailsPage() {
               <div className="font-medium">PDF warning</div>
               <div className="mt-1 whitespace-pre-wrap">{doc.error}</div>
             </div>
+          )}
+
+          {doc?.status === 'needs_review' && (
+            <Card className="border-amber-500/40 bg-amber-500/5 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg">Gate review</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2 items-center">
+                <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
+                  Relevance gate marked this upload for admin review before extraction continues.
+                </p>
+                <Button size="sm" onClick={handleApproveGate} disabled={saving}>
+                  Approve & continue
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleRejectGate} disabled={saving}>
+                  Reject
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {(doc?.supersedesDocumentId || doc?.supersededByDocumentId) && (
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg">Document version chain</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-2 text-muted-foreground">
+                {doc.supersedesDocumentId && (
+                  <div>
+                    Supersedes:{' '}
+                    <Link
+                      href={`/dashboard/admin/knowledge-docs/${doc.supersedesDocumentId}`}
+                      className="text-primary font-mono text-xs hover:underline"
+                    >
+                      {doc.supersedesDocumentId}
+                    </Link>
+                  </div>
+                )}
+                {doc.supersededByDocumentId && (
+                  <div>
+                    Replaced by newer upload:{' '}
+                    <Link
+                      href={`/dashboard/admin/knowledge-docs/${doc.supersededByDocumentId}`}
+                      className="text-primary font-mono text-xs hover:underline"
+                    >
+                      {doc.supersededByDocumentId}
+                    </Link>
+                  </div>
+                )}
+                {!doc.supersededByDocumentId && (
+                  <div>
+                    <Link
+                      href={`/dashboard/admin/knowledge-docs?supersedes=${encodeURIComponent(doc.id)}`}
+                      className="text-primary hover:underline"
+                    >
+                      Upload replacement PDF (same fingerprint allowed for this id)
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           <Card className="border-border/50 shadow-sm">
@@ -482,6 +704,94 @@ export default function KnowledgeDocDetailsPage() {
               <div className="rounded-md bg-muted/30 border border-border/40 p-3 text-sm text-muted-foreground">
                 Extraction should populate the candidates list shortly. If nothing appears, try Refresh.
               </div>
+              <div className="rounded-md border border-border/40 p-3 text-sm">
+                <div className="font-medium">Batch execution estimate</div>
+                <div className="mt-1 text-muted-foreground">
+                  {totalPagesForBatching > 0 ? (
+                    <>
+                      This manual is expected to run in <span className="font-semibold text-foreground">{estimatedBatchCount}</span>{' '}
+                      batch(es): {totalPagesForBatching} page(s) / {docBatchPages} pages per batch.
+                    </>
+                  ) : (
+                    <>Batch estimate will appear after page analysis is available.</>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Vision cap per batch: {visionMaxPerBatch} page(s).
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={handleReindexManual} disabled={saving}>
+                  Re-index manual RAG (Qdrant)
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Uses current page text (including admin fixes). Bounded like extraction.
+                </span>
+              </div>
+              {pageAnalysis.length > 0 && (
+                <div className="rounded-md border border-border/40 p-3">
+                  <div className="text-sm font-medium">Page quality (OCR scaffold)</div>
+                  <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                    <div>
+                      Good:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'good').length} • Degraded:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'degraded').length} • Poor:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'poor').length} • Unreadable:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'unreadable').length}
+                    </div>
+                    {paginatedQualityRows.map((p) => (
+                        <div key={p.id}>
+                          Page {p.pageNumber}: {p.quality}
+                          {typeof p.ocrConfidence === 'number'
+                            ? ` (${Math.round(p.ocrConfidence * 100)}%)`
+                            : ''}
+                        </div>
+                      ))}
+                  </div>
+                  {nonGoodPageRows.length > 0 && (
+                    <div className="mt-2 flex items-center justify-between border-t border-border/30 pt-2">
+                      <span className="text-xs text-muted-foreground">
+                        Showing {qualityStartIndex}-{qualityEndIndex} of {nonGoodPageRows.length} pages
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={currentQualityPage <= 1}
+                          onClick={() => setCurrentQualityPage((p) => Math.max(1, p - 1))}
+                        >
+                          Previous
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          {currentQualityPage}/{totalQualityPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={currentQualityPage >= totalQualityPages}
+                          onClick={() =>
+                            setCurrentQualityPage((p) => Math.min(totalQualityPages, p + 1))
+                          }
+                        >
+                          Next
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="my-3 h-px bg-border" />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={handleRunOcr} disabled={saving}>
+                      Run OCR (low-quality pages)
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleRunVision} disabled={saving}>
+                      Run vision (Ollama)
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      OCR: Poppler + Tesseract. Vision: ENABLE_PDF_VISION + llava:latest (or OLLAMA_VISION_MODEL).
+                    </span>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -513,6 +823,17 @@ export default function KnowledgeDocDetailsPage() {
                       <TableRow key={c.id} className="align-top">
                         <TableCell className="min-w-[220px]">
                           <div className="font-medium">{c.title}</div>
+                          <div className="text-[11px] text-muted-foreground mt-1">
+                            Type: {c.entryType || '—'} • Section: {c.sectionType || '—'} • Confidence:{' '}
+                            {typeof c.confidence === 'number'
+                              ? `${Math.round(c.confidence * 100)}%`
+                              : '—'}
+                          </div>
+                          {c.sourcePages && (
+                            <div className="text-[11px] text-muted-foreground">
+                              Source pages: {c.sourcePages}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="max-w-[320px]">
                           <div className="text-xs text-muted-foreground whitespace-pre-wrap overflow-hidden" style={{ maxHeight: 90 }}>

@@ -1,5 +1,5 @@
 import { User } from '../../users/entities/user.entity';
-export type KnowledgeDocumentStatus = 'uploaded' | 'processing' | 'done' | 'failed';
+export type KnowledgeDocumentStatus = 'uploaded' | 'gated' | 'needs_review' | 'rejected' | 'processing' | 'partially_indexed' | 'done' | 'failed' | 'superseded';
 export declare class KnowledgeDocument {
     id: string;
     fileName: string;
@@ -11,6 +11,21 @@ export declare class KnowledgeDocument {
     error: string | null;
     chunksIndexed: number;
     machineName: string | null;
+    docType: string | null;
+    isWorkRelated: boolean | null;
+    gateConfidence: number | null;
+    deepMode: boolean;
+    needsReview: boolean;
+    totalPages: number;
+    pagesProcessed: number;
+    lastProcessedPage: number;
+    progressPercent: number;
+    currentStage: string | null;
+    fingerprint: string | null;
+    machineProfileId: string | null;
+    supersedesDocumentId: string | null;
+    supersededByDocumentId: string | null;
+    machineUnknown: boolean;
     uploadedById: string;
     uploadedBy: User;
     createdAt: Date;

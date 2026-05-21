@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.KnowledgeEntry = void 0;
 const typeorm_1 = require("typeorm");
 const user_entity_1 = require("../../users/entities/user.entity");
+const knowledge_document_entity_1 = require("../../knowledge-documents/entities/knowledge-document.entity");
 let KnowledgeEntry = class KnowledgeEntry {
 };
 exports.KnowledgeEntry = KnowledgeEntry;
@@ -35,6 +36,59 @@ __decorate([
     (0, typeorm_1.Column)({ type: 'text', nullable: true }),
     __metadata("design:type", String)
 ], KnowledgeEntry.prototype, "tags", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 32, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "entryType", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 32, default: 'approved' }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "reviewStatus", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 255, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "machineName", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "symptom", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "rootCause", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 32, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "severity", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "source", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "reviewedById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamptz', nullable: true }),
+    __metadata("design:type", Date)
+], KnowledgeEntry.prototype, "reviewedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "rejectReason", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 1024, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "photoPath", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => knowledge_document_entity_1.KnowledgeDocument, { nullable: true, onDelete: 'SET NULL' }),
+    (0, typeorm_1.JoinColumn)({ name: 'knowledgeDocumentId' }),
+    __metadata("design:type", knowledge_document_entity_1.KnowledgeDocument)
+], KnowledgeEntry.prototype, "knowledgeDocument", void 0);
+__decorate([
+    (0, typeorm_1.RelationId)((e) => e.knowledgeDocument),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "knowledgeDocumentId", void 0);
 __decorate([
     (0, typeorm_1.Column)(),
     __metadata("design:type", String)

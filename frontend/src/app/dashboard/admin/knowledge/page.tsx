@@ -41,8 +41,14 @@ const emptyForm: Omit<KnowledgeEntry, 'id' | 'createdAt' | 'createdBy'> = {
   tags: '',
 };
 
+interface PendingEntry extends KnowledgeEntry {
+  reviewStatus?: string;
+  createdById?: string;
+}
+
 export default function AdminKnowledgePage() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [pending, setPending] = useState<PendingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -55,12 +61,65 @@ export default function AdminKnowledgePage() {
   const fetchEntries = async () => {
     setLoading(true);
     try {
-      const res = await api.get<KnowledgeEntry[]>('/knowledge');
-      setEntries(res.data);
+      const [all, pend] = await Promise.all([
+        api.get<KnowledgeEntry[]>('/knowledge'),
+        api.get<PendingEntry[]>('/knowledge/pending-review'),
+      ]);
+      setEntries(all.data);
+      setPending(pend.data);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load knowledge base');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const approvePending = async (id: string) => {
+    try {
+      await api.post(`/knowledge/${id}/approve`);
+      toast.success('Approved and indexed');
+      fetchEntries();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Approve failed');
+    }
+  };
+
+  const rejectPending = async (id: string) => {
+    const reason = window.prompt('Reject reason (optional)') || undefined;
+    try {
+      await api.post(`/knowledge/${id}/reject`, { reason });
+      toast.success('Rejected');
+      fetchEntries();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Reject failed');
+    }
+  };
+
+  const exportCsv = async () => {
+    try {
+      const res = await api.get('/knowledge/export/csv', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'knowledge-entries.csv';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Export failed');
+    }
+  };
+
+  const exportXlsx = async () => {
+    try {
+      const res = await api.get('/knowledge/export/xlsx', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'knowledge-entries.xlsx';
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Excel export failed');
     }
   };
 
@@ -174,11 +233,51 @@ export default function AdminKnowledgePage() {
                 Centralize known issues and their fixes to help technicians and AI.
               </p>
             </div>
-            <Button onClick={openCreate} className="gap-2 w-fit">
-              <Plus className="h-4 w-4" />
-              Add problem & solution
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={exportCsv} className="gap-2 w-fit">
+                Export CSV
+              </Button>
+              <Button variant="outline" onClick={exportXlsx} className="gap-2 w-fit">
+                Export Excel
+              </Button>
+              <Button onClick={openCreate} className="gap-2 w-fit">
+                <Plus className="h-4 w-4" />
+                Add problem & solution
+              </Button>
+            </div>
           </div>
+
+          {pending.length > 0 && (
+            <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-lg">Pending technician submissions ({pending.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {pending.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex flex-col gap-2 rounded-md border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <div className="font-medium">{p.title}</div>
+                      <div className="text-xs text-muted-foreground line-clamp-2">{p.problemDescription}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        By {p.createdBy?.fullName || p.createdBy?.email || p.createdById}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => approvePending(p.id)}>
+                        Approve
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => rejectPending(p.id)}>
+                        Reject
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

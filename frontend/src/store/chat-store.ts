@@ -3,11 +3,22 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 
 type ChatMessageRole = 'user' | 'assistant' | 'system';
 
+export interface ChatSource {
+  kind: 'pdf_chunk' | 'knowledge_entry';
+  caption: string;
+  score?: number;
+  documentId?: string;
+  chunkIndex?: number;
+  knowledgeEntryId?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
   content: string;
   createdAt: number;
+  /** RAG / knowledge citations for this assistant turn (from POST /chat/message). */
+  sources?: ChatSource[];
 }
 
 export interface ChatThread {
@@ -29,7 +40,12 @@ interface ChatState {
   setActiveThread: (id: string) => void;
   addMessage: (threadId: string, msg: Omit<ChatMessage, 'id' | 'createdAt'>) => void;
   updateMessage: (threadId: string, messageId: string, content: string) => void;
-  updateNextAssistantMessage: (threadId: string, afterMessageId: string, content: string) => void;
+  updateNextAssistantMessage: (
+    threadId: string,
+    afterMessageId: string,
+    content: string,
+    sources?: ChatSource[],
+  ) => void;
   setSending: (sending: boolean) => void;
   resetThread: (threadId: string) => void;
   deleteThread: (id: string) => void;
@@ -96,7 +112,7 @@ export const useChatStore = create<ChatState>()(
             },
           };
         }),
-      updateNextAssistantMessage: (threadId, afterMessageId, content) =>
+      updateNextAssistantMessage: (threadId, afterMessageId, content, sources) =>
         set((state) => {
           const existing = state.messagesByThread[threadId] || [];
           const startIndex = existing.findIndex((m) => m.id === afterMessageId);
@@ -107,7 +123,9 @@ export const useChatStore = create<ChatState>()(
           if (relativeIndex === -1) return state;
           const targetIndex = startIndex + 1 + relativeIndex;
           const updated = existing.map((m, idx) =>
-            idx === targetIndex ? { ...m, content } : m,
+            idx === targetIndex
+              ? { ...m, content, ...(sources !== undefined ? { sources } : {}) }
+              : m,
           );
           return {
             messagesByThread: {

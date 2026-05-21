@@ -15,17 +15,17 @@ const ai_controller_1 = require("./ai.controller");
 const chat_controller_1 = require("./chat.controller");
 const conversation_entity_1 = require("../tickets/entities/conversation.entity");
 const tickets_module_1 = require("../tickets/tickets.module");
-const rag_service_1 = require("./rag.service");
 const knowledge_module_1 = require("../knowledge/knowledge.module");
+const rag_module_1 = require("./rag.module");
 let AiModule = class AiModule {
 };
 exports.AiModule = AiModule;
 exports.AiModule = AiModule = __decorate([
     (0, common_1.Module)({
-        imports: [config_1.ConfigModule, typeorm_1.TypeOrmModule.forFeature([conversation_entity_1.Conversation]), tickets_module_1.TicketsModule, knowledge_module_1.KnowledgeModule],
+        imports: [config_1.ConfigModule, typeorm_1.TypeOrmModule.forFeature([conversation_entity_1.Conversation]), tickets_module_1.TicketsModule, knowledge_module_1.KnowledgeModule, rag_module_1.RagModule],
         controllers: [ai_controller_1.AiController, chat_controller_1.ChatController],
-        providers: [ai_service_1.AiService, rag_service_1.RagService],
-        exports: [ai_service_1.AiService, rag_service_1.RagService],
+        providers: [ai_service_1.AiService],
+        exports: [ai_service_1.AiService, rag_module_1.RagModule],
     })
 ], AiModule);
 //# sourceMappingURL=ai.module.js.map

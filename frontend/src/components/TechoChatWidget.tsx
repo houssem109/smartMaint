@@ -1,9 +1,9 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { MessageCircle, X, Send, Plus, XCircle, Edit2 } from 'lucide-react';
-import { useChatStore } from '@/store/chat-store';
+import { MessageCircle, X, Send, Plus, XCircle, Edit2, ImagePlus } from 'lucide-react';
+import { useChatStore, type ChatSource } from '@/store/chat-store';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,9 @@ export default function TechoChatWidget() {
   } = useChatStore();
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  /** Data URL or raw base64 for next send (10 Type 2). */
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Only show for authenticated users inside dashboard
@@ -74,6 +77,26 @@ export default function TechoChatWidget() {
     return match ? match[1] : undefined;
   })();
 
+  const onPickImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type)) {
+      window.alert('Use JPEG, PNG, or WebP.');
+      return;
+    }
+    if (file.size > 4.2 * 1024 * 1024) {
+      window.alert('Image must be under 4.2 MB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = reader.result;
+      if (typeof r === 'string') setPendingImage(r);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isSending) return;
@@ -98,32 +121,47 @@ export default function TechoChatWidget() {
         role: m.role === 'assistant' ? 'assistant' : ('user' as const),
         content: m.content,
       }));
-      addMessage(activeThreadId, { role: 'user', content: text });
+      addMessage(activeThreadId, {
+        role: 'user',
+        content: pendingImage ? `${text}\n[photo attached]` : text,
+      });
     }
 
+    const imagePayload = !isEditing ? pendingImage : null;
     setInput('');
+    setPendingImage(null);
     setSending(true);
 
     try {
-      const res = await api.post<{ reply: string }>('/chat/message', {
+      const res = await api.post<{
+        reply: string;
+        ticketId?: string | null;
+        sources?: ChatSource[];
+      }>('/chat/message', {
         message: text,
         ticketId: currentTicketId,
         history: historyPayload,
+        ...(imagePayload ? { imageBase64: imagePayload } : {}),
       });
       const replyText = res.data.reply || '…';
+      const sources = Array.isArray(res.data.sources) ? res.data.sources : undefined;
 
       if (isEditing && editingMessageId) {
         // Replace Techo's answer after this user message
-        updateNextAssistantMessage(activeThreadId, editingMessageId, replyText);
+        updateNextAssistantMessage(activeThreadId, editingMessageId, replyText, sources);
       } else {
-        addMessage(activeThreadId, { role: 'assistant', content: replyText });
+        addMessage(activeThreadId, { role: 'assistant', content: replyText, sources });
       }
     } catch (err: any) {
       console.error('Techo chat error', err);
       if (activeThreadId) {
+        const msg =
+          err.response?.data?.message ||
+          (Array.isArray(err.response?.data?.message) ? err.response.data.message.join(', ') : null) ||
+          'Sorry, I could not contact the AI service right now. Please try again later.';
         addMessage(activeThreadId, {
           role: 'assistant',
-          content: 'Sorry, I could not contact the AI service right now. Please try again later.',
+          content: typeof msg === 'string' ? msg : 'Sorry, something went wrong. Please try again.',
         });
       }
     } finally {
@@ -291,6 +329,18 @@ export default function TechoChatWidget() {
                     }
                   >
                     {m.content}
+                    {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
+                      <details className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                        <summary className="cursor-pointer select-none font-medium text-foreground/80">
+                          Sources used ({m.sources.length})
+                        </summary>
+                        <ul className="mt-1.5 list-disc pl-4 space-y-0.5">
+                          {m.sources.map((s, i) => (
+                            <li key={`${s.kind}-${i}`}>{s.caption}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                   {m.role === 'user' && (
                     <button
@@ -321,7 +371,37 @@ export default function TechoChatWidget() {
           </div>
 
           <div className="border-t border-border/60 px-2 py-2 bg-card/90">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={onPickImage}
+            />
+            {pendingImage && (
+              <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-1.5">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={pendingImage} alt="" className="h-12 w-12 rounded object-cover shrink-0" />
+                <span className="text-[11px] text-muted-foreground flex-1">Photo will be sent with your message.</span>
+                <button
+                  type="button"
+                  className="text-[11px] text-destructive hover:underline shrink-0"
+                  onClick={() => setPendingImage(null)}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
             <div className="flex items-end gap-2">
+              <button
+                type="button"
+                className="h-9 w-9 shrink-0 rounded-md border border-input flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-40"
+                disabled={isSending || isArchived}
+                title="Attach photo"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <ImagePlus className="h-4 w-4" />
+              </button>
               <textarea
                 placeholder={isArchived ? 'Conversation is closed.' : 'Ask Techo anything about your work…'}
                 value={input}

@@ -1,0 +1,10 @@
+export declare const GATE_QUEUE = "knowledge-documents-gate";
+export declare const EXTRACTION_QUEUE = "knowledge-documents-extraction";
+export declare const OCR_QUEUE = "knowledge-documents-ocr";
+export declare const VISION_QUEUE = "knowledge-documents-vision";
+export declare const INDEXING_QUEUE = "knowledge-documents-indexing";
+export declare const GATE_JOB = "gate";
+export declare const EXTRACTION_JOB = "extraction";
+export declare const OCR_JOB = "ocr";
+export declare const VISION_JOB = "vision";
+export declare const INDEXING_JOB = "indexing";

@@ -49,6 +49,12 @@ __decorate([
 ], ChatMessageDto.prototype, "ticketId", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(6_500_000),
+    __metadata("design:type", String)
+], ChatMessageDto.prototype, "imageBase64", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.ValidateNested)({ each: true }),
     (0, class_transformer_1.Type)(() => ChatHistoryItemDto),
     __metadata("design:type", Array)
@@ -62,10 +68,31 @@ let ChatController = class ChatController {
         this.conversationRepository = conversationRepository;
     }
     async sendMessage(body, req) {
-        const { message, ticketId, history } = body;
+        const { message, ticketId, history, imageBase64 } = body;
         const user = req.user;
         if (!message || !message.trim()) {
-            return { reply: "Please enter a message so I can help you.", ticketId };
+            return { reply: "Please enter a message so I can help you.", ticketId, sources: [] };
+        }
+        const visionOn = String(process.env.ENABLE_CHAT_IMAGE_VISION ?? 'true').toLowerCase() !== 'false';
+        let userMessageContent = message.trim();
+        if (imageBase64?.trim() && visionOn) {
+            const normalized = this.normalizeChatImageBase64(imageBase64);
+            const visionPrompt = 'A technician sent this photo from the plant floor or machine area. ' +
+                'Describe what you see in plain text: equipment, labels, fault codes, damage, wiring, fluids, safety issues. ' +
+                'If unreadable, say so briefly.';
+            try {
+                const visual = await this.aiService.describeImageBase64ForPdf(normalized, visionPrompt);
+                userMessageContent =
+                    `[User attached a photo]\nVisual description (for the assistant):\n${visual}\n\nUser message:\n${message.trim()}`;
+            }
+            catch {
+                userMessageContent =
+                    `[User attached a photo — automatic description failed]\n\nUser message:\n${message.trim()}`;
+            }
+        }
+        else if (imageBase64?.trim() && !visionOn) {
+            userMessageContent =
+                `[User attached a photo — image vision is disabled on the server]\n\nUser message:\n${message.trim()}`;
         }
         if (ticketId) {
             await this.ticketsService.findOne(ticketId, user.id, user.role);
@@ -83,7 +110,10 @@ let ChatController = class ChatController {
         const ragContext = ragResults.length > 0
             ? ragResults
                 .slice(0, 6)
-                .map((r, i) => `[${i + 1}] ${truncate(r.text, 1500)}`)
+                .map((r, i) => {
+                const cap = r.sourceCaption ? `${r.sourceCaption}\n` : '';
+                return `[${i + 1}] ${cap}${truncate(r.text, 1500)}`;
+            })
                 .join('\n\n')
             : null;
         const knowledgeContext = knowledgeEntries.length > 0
@@ -93,7 +123,12 @@ let ChatController = class ChatController {
                 const title = truncate(k.title, 140);
                 const problem = truncate(k.problemDescription, 1200);
                 const solution = truncate(k.solution, 1600);
-                return `[${i + 1}] ${title}\nProblem:\n${problem}\nSolution:\n${solution}`;
+                const ph = k.photoPath?.trim();
+                const photoNote = ph ? `Field photo (reference path): ${ph}` : null;
+                const parts = [`[${i + 1}] ${title}`, `Problem:\n${problem}`, `Solution:\n${solution}`];
+                if (photoNote)
+                    parts.push(photoNote);
+                return parts.join('\n');
             })
                 .join('\n\n')
             : null;
@@ -119,7 +154,7 @@ let ChatController = class ChatController {
             { role: 'system', content: ragSystemMessage },
             {
                 role: 'user',
-                content: message,
+                content: userMessageContent,
             },
         ];
         const reply = await this.aiService.chat(messages);
@@ -136,7 +171,21 @@ let ChatController = class ChatController {
             senderId: null,
         });
         await this.conversationRepository.save([userEntry, aiEntry]);
-        return { reply, ticketId };
+        const sources = [
+            ...ragResults.map((r) => ({
+                kind: 'pdf_chunk',
+                caption: r.sourceCaption || 'PDF excerpt',
+                score: r.score,
+                documentId: r.documentId,
+                chunkIndex: r.chunkIndex,
+            })),
+            ...knowledgeEntries.map((k) => ({
+                kind: 'knowledge_entry',
+                caption: k.title || 'Knowledge entry',
+                knowledgeEntryId: k.id,
+            })),
+        ];
+        return { reply, ticketId, sources };
     }
     async history(ticketId, req) {
         const user = req.user;
@@ -146,6 +195,30 @@ let ChatController = class ChatController {
             order: { timestamp: 'ASC' },
         });
         return history;
+    }
+    normalizeChatImageBase64(raw) {
+        const trimmed = raw.trim();
+        const dataUrl = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i.exec(trimmed);
+        const b64 = (dataUrl ? dataUrl[2] : trimmed).replace(/\s/g, '');
+        let buf;
+        try {
+            buf = Buffer.from(b64, 'base64');
+        }
+        catch {
+            throw new common_1.BadRequestException('Invalid base64 image');
+        }
+        const max = Math.floor(4.5 * 1024 * 1024);
+        if (!buf.length || buf.length > max) {
+            throw new common_1.BadRequestException(`Image must decode to at most ${max} bytes`);
+        }
+        const sig = buf.subarray(0, 12);
+        const isPng = sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47;
+        const isJpeg = sig[0] === 0xff && sig[1] === 0xd8 && sig[2] === 0xff;
+        const isWebp = sig[0] === 0x52 && sig[1] === 0x49 && sig[2] === 0x46 && sig[8] === 0x57 && sig[9] === 0x45 && sig[10] === 0x42 && sig[11] === 0x50;
+        if (!isPng && !isJpeg && !isWebp) {
+            throw new common_1.BadRequestException('Only JPEG, PNG, or WebP images are allowed');
+        }
+        return b64;
     }
     async myHistory(req) {
         const user = req.user;
@@ -161,7 +234,8 @@ exports.ChatController = ChatController;
 __decorate([
     (0, common_1.Post)('message'),
     (0, swagger_1.ApiOperation)({
-        summary: 'Send a message to Techo (optionally linked to a ticket)',
+        summary: 'Send a message to Techo (optional ticketId, history, imageBase64 for 10 field photo in chat)',
+        description: 'Returns { reply, ticketId, sources } where sources lists RAG pdf_chunk and knowledge_entry captions used for this turn (12).',
     }),
     __param(0, (0, common_1.Body)()),
     __param(1, (0, common_1.Request)()),

@@ -12,12 +12,13 @@ const typeorm_1 = require("@nestjs/typeorm");
 const knowledge_entry_entity_1 = require("./entities/knowledge-entry.entity");
 const knowledge_service_1 = require("./knowledge.service");
 const knowledge_controller_1 = require("./knowledge.controller");
+const rag_module_1 = require("../ai/rag.module");
 let KnowledgeModule = class KnowledgeModule {
 };
 exports.KnowledgeModule = KnowledgeModule;
 exports.KnowledgeModule = KnowledgeModule = __decorate([
     (0, common_1.Module)({
-        imports: [typeorm_1.TypeOrmModule.forFeature([knowledge_entry_entity_1.KnowledgeEntry])],
+        imports: [typeorm_1.TypeOrmModule.forFeature([knowledge_entry_entity_1.KnowledgeEntry]), rag_module_1.RagModule],
         controllers: [knowledge_controller_1.KnowledgeController],
         providers: [knowledge_service_1.KnowledgeService],
         exports: [knowledge_service_1.KnowledgeService],

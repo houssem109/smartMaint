@@ -56,6 +56,7 @@ services:
       retries: 5
 
   # NestJS Backend API
+  # Tesseract + Poppler are installed inside the image via backend/Dockerfile (Alpine apk)
   backend:
     build:
       context: ./backend
@@ -70,6 +71,9 @@ services:
       DATABASE_USER: ${POSTGRES_USER:-smartmaint}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-smartmaint123}
       DATABASE_NAME: ${POSTGRES_DB:-smartmaint_db}
+      # Schema via migrations only — never auto-sync (drops migration FKs/indexes on boot)
+      DATABASE_SYNCHRONIZE: "false"
+      DATABASE_RUN_MIGRATIONS: ${DATABASE_RUN_MIGRATIONS:-false}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -81,12 +85,18 @@ services:
       SMTP_USER: ${SMTP_USER}
       SMTP_PASS: ${SMTP_PASS}
       SMTP_FROM: ${SMTP_FROM}
-      # AI / Ollama configuration inside Docker
+      # AI / Ollama — reaches the host machine's Ollama instance
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       # Qdrant (vector DB) for manual chunks
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
+      # PDF OCR — binaries installed inside the container via apk, PATH is enough
+      ENABLE_PDF_OCR: ${ENABLE_PDF_OCR:-true}
+      PDFTOPPM_PATH: ${PDFTOPPM_PATH:-}
+      TESSERACT_PATH: ${TESSERACT_PATH:-}
+      TESSERACT_LANG: ${TESSERACT_LANG:-eng+fra}
+      PDF_OCR_MAX_PAGES: ${PDF_OCR_MAX_PAGES:-10}
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     volumes:

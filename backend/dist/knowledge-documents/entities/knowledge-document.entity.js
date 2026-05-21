@@ -56,6 +56,66 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeDocument.prototype, "machineName", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "docType", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'boolean', nullable: true }),
+    __metadata("design:type", Boolean)
+], KnowledgeDocument.prototype, "isWorkRelated", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'float', nullable: true }),
+    __metadata("design:type", Number)
+], KnowledgeDocument.prototype, "gateConfidence", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'boolean', default: true }),
+    __metadata("design:type", Boolean)
+], KnowledgeDocument.prototype, "deepMode", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'boolean', default: false }),
+    __metadata("design:type", Boolean)
+], KnowledgeDocument.prototype, "needsReview", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], KnowledgeDocument.prototype, "totalPages", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], KnowledgeDocument.prototype, "pagesProcessed", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], KnowledgeDocument.prototype, "lastProcessedPage", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'int', default: 0 }),
+    __metadata("design:type", Number)
+], KnowledgeDocument.prototype, "progressPercent", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "currentStage", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 128, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "fingerprint", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "machineProfileId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "supersedesDocumentId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeDocument.prototype, "supersededByDocumentId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'boolean', default: false }),
+    __metadata("design:type", Boolean)
+], KnowledgeDocument.prototype, "machineUnknown", void 0);
+__decorate([
     (0, typeorm_1.Column)(),
     __metadata("design:type", String)
 ], KnowledgeDocument.prototype, "uploadedById", void 0);

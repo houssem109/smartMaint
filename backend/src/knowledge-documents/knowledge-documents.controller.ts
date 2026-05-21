@@ -1,15 +1,19 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpException,
   HttpStatus,
   Delete,
   Param,
   Patch,
   Post,
-  Res,
+  Query,
   Request,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -22,9 +26,10 @@ import { UserRole } from '../users/entities/user.entity';
 import { KnowledgeDocumentsService } from './knowledge-documents.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { extname, join } from 'path';
+import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { getKnowledgePdfMaxBytes, getKnowledgePdfUploadDir, getPageFixImageMaxBytes, getPageFixImageUploadDir, ensurePageFixImageUploadDir } from './pdf-ingestion.config';
 import type { Express } from 'express';
 import { IsOptional, IsString } from 'class-validator';
 import {
@@ -33,6 +38,7 @@ import {
   SuggestMachineNameDto,
   UpdateMachineNameDto,
 } from './dto/machine-name.dto';
+import { SetPdfVisionPreferenceDto } from './dto/set-pdf-vision-preference.dto';
 
 class ApproveExtractionDto {
   @IsOptional()
@@ -52,6 +58,23 @@ class ApproveExtractionDto {
   tags?: string;
 }
 
+class RejectExtractionDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+class GateDecisionDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+class AdminFixTextDto {
+  @IsString()
+  text: string;
+}
+
 @ApiTags('Knowledge Documents')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -59,15 +82,67 @@ class ApproveExtractionDto {
 export class KnowledgeDocumentsController {
   constructor(private readonly knowledgeDocumentsService: KnowledgeDocumentsService) {}
 
-  @Post()
+  private async acceptPdfUpload(
+    file: Express.Multer.File,
+    req: any,
+    supersedesDocumentId?: string,
+  ) {
+    if (!file) {
+      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
+    }
+    const mt = (file.mimetype || '').toLowerCase();
+    if (!mt.includes('pdf') && mt !== 'application/octet-stream') {
+      try {
+        if (file.path && existsSync(file.path)) unlinkSync(file.path);
+      } catch {
+        // ignore
+      }
+      throw new HttpException('Only PDF files are allowed', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const { document, jobId } = await this.knowledgeDocumentsService.ingestAndQueue({
+        fileName: file.filename,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        fileSize: file.size,
+        filePath: file.path,
+        uploadedById: req.user.id,
+        supersedesDocumentId: supersedesDocumentId?.trim() || undefined,
+      });
+
+      return {
+        documentId: document.id,
+        jobId,
+        document,
+        resume: {
+          extractedCandidates: 0,
+          approvedCandidates: 0,
+          rejectedCandidates: 0,
+          chunksIndexed: 0,
+          message: 'Upload accepted and queued for background processing.',
+        },
+      };
+    } catch (err) {
+      try {
+        if (file?.path && existsSync(file.path)) unlinkSync(file.path);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+  }
+
+  @Post('upload')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @HttpCode(HttpStatus.ACCEPTED)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a PDF to the knowledge documents library' })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
         destination: (_req, _file, cb) => {
-          const baseDir = 'uploads/knowledge-documents';
+          const baseDir = getKnowledgePdfUploadDir();
           if (!existsSync(baseDir)) {
             mkdirSync(baseDir, { recursive: true });
           }
@@ -79,43 +154,47 @@ export class KnowledgeDocumentsController {
           cb(null, `${unique}${extension}`);
         },
       }),
-      limits: { fileSize: 30 * 1024 * 1024 },
+      limits: { fileSize: getKnowledgePdfMaxBytes() },
     }),
   )
   async upload(
     @UploadedFile() file: Express.Multer.File,
     @Request() req,
+    @Query('supersedesDocumentId') supersedesDocumentId?: string,
   ) {
-    if (!file) {
-      throw new HttpException('No file uploaded', HttpStatus.BAD_REQUEST);
-    }
-    if (!file.mimetype.includes('pdf')) {
-      throw new HttpException('Only PDF files are allowed', HttpStatus.BAD_REQUEST);
-    }
+    return this.acceptPdfUpload(file, req, supersedesDocumentId);
+  }
 
-    const doc = await this.knowledgeDocumentsService.createFromUpload({
-      fileName: file.filename,
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      fileSize: file.size,
-      filePath: file.path,
-      uploadedById: req.user.id,
-    });
-
-    void this.knowledgeDocumentsService
-      .processDocumentExtraction(doc.id)
-      .catch(() => undefined);
-
-    return {
-      document: doc,
-      resume: {
-        extractedCandidates: 0,
-        approvedCandidates: 0,
-        rejectedCandidates: 0,
-        chunksIndexed: 0,
-        message: 'Extraction started. Please refresh the document details to see extracted candidates.',
-      },
-    };
+  @Post()
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload alias (same behavior as /upload)' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          const baseDir = getKnowledgePdfUploadDir();
+          if (!existsSync(baseDir)) {
+            mkdirSync(baseDir, { recursive: true });
+          }
+          cb(null, baseDir);
+        },
+        filename: (_req, file, cb) => {
+          const unique = uuidv4();
+          const extension = extname(file.originalname || '') || '.pdf';
+          cb(null, `${unique}${extension}`);
+        },
+      }),
+      limits: { fileSize: getKnowledgePdfMaxBytes() },
+    }),
+  )
+  async uploadAlias(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+    @Query('supersedesDocumentId') supersedesDocumentId?: string,
+  ) {
+    return this.acceptPdfUpload(file, req, supersedesDocumentId);
   }
 
   @Post('machine-name-suggestions/:suggestionId/approve')
@@ -131,6 +210,20 @@ export class KnowledgeDocumentsController {
       req.user.id,
       body.rejectOthersReason,
     );
+  }
+
+  @Post(':id/gate/approve')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Approve gate-review document and continue pipeline' })
+  async approveGate(@Param('id') id: string, @Request() req) {
+    return this.knowledgeDocumentsService.approveGateAndContinue(id, req.user.id);
+  }
+
+  @Post(':id/gate/reject')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Reject document at gate-review stage' })
+  async rejectGate(@Param('id') id: string, @Body() body: GateDecisionDto, @Request() req) {
+    return this.knowledgeDocumentsService.rejectGate(id, req.user.id, body.reason);
   }
 
   @Post('machine-name-suggestions/:suggestionId/reject')
@@ -156,7 +249,12 @@ export class KnowledgeDocumentsController {
     @Body() body: ApproveExtractionDto,
     @Request() req,
   ) {
-    return this.knowledgeDocumentsService.approveExtractionCandidate(candidateId, req.user.id, body);
+    return this.knowledgeDocumentsService.approveExtractionCandidate(
+      candidateId,
+      req.user.id,
+      req.user.role,
+      body,
+    );
   }
 
   @Post('extractions/:candidateId/reject')
@@ -164,16 +262,27 @@ export class KnowledgeDocumentsController {
   @ApiOperation({ summary: 'Reject an extracted candidate' })
   async rejectExtraction(
     @Param('candidateId') candidateId: string,
+    @Body() body: RejectExtractionDto,
     @Request() req,
   ) {
-    return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id);
+    return this.knowledgeDocumentsService.rejectExtractionCandidate(candidateId, req.user.id, body.reason);
   }
 
   @Get()
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
-  @ApiOperation({ summary: 'List uploaded knowledge documents' })
-  async list() {
-    return this.knowledgeDocumentsService.findAll();
+  @ApiOperation({
+    summary: 'List uploaded knowledge documents',
+    description:
+      'Query includeSuperseded=true (admin/superadmin only) to list superseded revisions for 11 history.',
+  })
+  async list(
+    @Request() req: { user: { role: UserRole } },
+    @Query('includeSuperseded') includeSuperseded?: string,
+  ) {
+    const wants =
+      includeSuperseded === 'true' || includeSuperseded === '1' || includeSuperseded === 'yes';
+    const isAdmin = req.user.role === UserRole.ADMIN || req.user.role === UserRole.SUPERADMIN;
+    return this.knowledgeDocumentsService.findAll({ includeSuperseded: wants && isAdmin });
   }
 
   @Get(':id/machine-name/suggestions')
@@ -208,6 +317,220 @@ export class KnowledgeDocumentsController {
     return this.knowledgeDocumentsService.getExtractionsForDocument(id);
   }
 
+  @Get(':id/page-analysis')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Get OCR/quality page analysis for a document' })
+  async pageAnalysis(@Param('id') id: string) {
+    return this.knowledgeDocumentsService.getPageAnalysis(id);
+  }
+
+  @Get(':id/rag-stored-data')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Get RAG chunks currently stored for this PDF in vector DB' })
+  async ragStoredData(@Param('id') id: string, @Query('limit') limitRaw?: string) {
+    const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 120;
+    const limit = Number.isFinite(parsed) ? parsed : 120;
+    return this.knowledgeDocumentsService.getRagStoredData(id, limit);
+  }
+
+  @Get('rag-stored-data-global')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Get RAG chunks across all PDFs for admin inspection' })
+  async ragStoredDataGlobal(@Query('limit') limitRaw?: string, @Query('documentId') documentId?: string) {
+    const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 400;
+    const limit = Number.isFinite(parsed) ? parsed : 400;
+    return this.knowledgeDocumentsService.getRagStoredDataGlobal(limit, documentId);
+  }
+
+  @Get(':id/status')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Get document processing status/progress' })
+  async status(@Param('id') id: string) {
+    return this.knowledgeDocumentsService.getDocumentStatus(id);
+  }
+
+  @Get('page-fix-queue')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'List unreadable pages waiting for admin fix' })
+  async pageFixQueue() {
+    return this.knowledgeDocumentsService.listPageFixQueue();
+  }
+
+  @Get('page-fix-queue/:itemId/replacement-image')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Serve replacement page image for admin preview (JPEG/PNG/WebP)' })
+  async pageFixReplacementImage(@Param('itemId') itemId: string) {
+    const { data, contentType } = await this.knowledgeDocumentsService.getPageFixReplacementImage(itemId);
+    return new StreamableFile(data, { type: contentType });
+  }
+
+  @Get('admin-pipeline-counts')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Counts for admin nav: open page-fix items + pending extraction candidates',
+  })
+  adminPipelineCounts() {
+    return this.knowledgeDocumentsService.getAdminPipelineSummary();
+  }
+
+  @Get('queues/health')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Bull/Redis health: PING + job counts per knowledge-documents queue',
+  })
+  queuesHealth() {
+    return this.knowledgeDocumentsService.getBullQueuesHealth();
+  }
+
+  @Get('pipeline-config')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Read-only effective PDF pipeline env (16): gate, OCR, vision, extraction caps, Ollama/Qdrant URLs',
+  })
+  pipelineConfig() {
+    return this.knowledgeDocumentsService.getPipelineConfigSnapshot();
+  }
+
+  @Get('database-inventory')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'PostgreSQL tables touched by the PDF knowledge pipeline (19); curated list aligned with architecture doc',
+  })
+  databaseInventory() {
+    return this.knowledgeDocumentsService.getDatabaseInventory();
+  }
+
+  @Get('qa-success-criteria')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Section 20 QA matrix: original success criteria vs shipped/partial/gap (curated; read-only)',
+  })
+  qaSuccessCriteria() {
+    return this.knowledgeDocumentsService.getQaSuccessCriteria();
+  }
+
+  @Get('troubleshooting-extraction-reference')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Section 22 read-only: troubleshooting extraction (service, queue, schema, endpoints)',
+  })
+  troubleshootingExtractionReference() {
+    return this.knowledgeDocumentsService.getTroubleshootingExtractionReference();
+  }
+
+  @Get('pipeline-preferences/pdf-vision')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'PDF vision admin toggle vs env (ENABLE_PDF_VISION); effective = both true',
+  })
+  getPdfVisionPreference() {
+    return this.knowledgeDocumentsService.getPdfVisionPreferenceReadModel();
+  }
+
+  @Patch('pipeline-preferences/pdf-vision')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary:
+      'Turn PDF pipeline vision on/off without restarting the API. Enabling still requires ENABLE_PDF_VISION=true in environment.',
+  })
+  patchPdfVisionPreference(@Body() body: SetPdfVisionPreferenceDto, @Request() req) {
+    return this.knowledgeDocumentsService.setPdfVisionAdminEnabled(body.enabled, req.user.id);
+  }
+
+  @Get('extraction-feedback/recent')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Recent extraction approve/reject feedback events (analytics)' })
+  async extractionFeedbackRecent(@Query('limit') limitRaw?: string) {
+    const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 200;
+    const limit = Number.isFinite(parsed) ? parsed : 200;
+    return this.knowledgeDocumentsService.listRecentExtractionFeedback(limit);
+  }
+
+  @Post('page-fix-queue/:itemId/fix-text')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Admin manually fixes unreadable page by typing text' })
+  async fixUnreadableText(@Param('itemId') itemId: string, @Body() body: AdminFixTextDto, @Request() req) {
+    return this.knowledgeDocumentsService.fixPageWithText(itemId, body.text, req.user.id);
+  }
+
+  @Post('page-fix-queue/:itemId/fix-image')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Upload a replacement page image; runs PDF vision on it (requires ENABLE_PDF_VISION)',
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: getPageFixImageMaxBytes() },
+      fileFilter: (_req, file, cb) => {
+        const ok = /^image\/(jpeg|png|webp)$/i.test(file.mimetype);
+        cb(ok ? null : new BadRequestException('Only JPEG, PNG, or WebP images are allowed'), ok);
+      },
+      storage: diskStorage({
+        destination: (_req, _file, cb) => {
+          cb(null, ensurePageFixImageUploadDir());
+        },
+        filename: (_req, file, cb) => {
+          cb(null, `${uuidv4()}${extname(file.originalname).toLowerCase() || '.jpg'}`);
+        },
+      }),
+    }),
+  )
+  async fixUnreadableImage(
+    @Param('itemId') itemId: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Request() req,
+  ) {
+    if (!file?.path) throw new BadRequestException('file is required');
+    const rel = join(getPageFixImageUploadDir(), file.filename).replace(/\\/g, '/');
+    try {
+      return await this.knowledgeDocumentsService.fixPageWithReplacementImage(
+        itemId,
+        file.path,
+        rel,
+        req.user.id,
+      );
+    } catch (err) {
+      try {
+        if (file.path && existsSync(file.path)) unlinkSync(file.path);
+      } catch {
+        // ignore
+      }
+      throw err;
+    }
+  }
+
+  @Post('page-fix-queue/:itemId/dismiss')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Dismiss unreadable page (not useful)' })
+  async dismissFixQueueItem(@Param('itemId') itemId: string, @Request() req) {
+    return this.knowledgeDocumentsService.dismissFixQueueItem(itemId, req.user.id);
+  }
+
+  @Post(':id/run-ocr')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Run OCR on low-quality pages (best-effort)' })
+  async runOcr(@Param('id') id: string, @Request() req) {
+    return this.knowledgeDocumentsService.runOcrForDocument(id, req.user.id);
+  }
+
+  @Post(':id/run-vision')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Run vision LLM on low-quality / low-confidence pages (requires ENABLE_PDF_VISION)' })
+  async runVision(@Param('id') id: string, @Request() req) {
+    return this.knowledgeDocumentsService.runVisionForDocument(id, req.user.id);
+  }
+
+  @Post(':id/reindex-manual-chunks')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary:
+      'Rebuild Qdrant manual chunks from current page_analysis (ocrText) — use after fixes or if vectors drifted',
+  })
+  async reindexManualChunks(@Param('id') id: string) {
+    return this.knowledgeDocumentsService.reindexManualChunksForDocument(id);
+  }
+
   @Get(':id/download')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
   @ApiOperation({ summary: 'Download uploaded PDF' })
@@ -235,6 +558,14 @@ export class KnowledgeDocumentsController {
     const message =
       doc.status === 'failed'
         ? `Extraction failed${doc.error ? `: ${doc.error}` : ''}`
+        : doc.status === 'rejected'
+          ? `Upload rejected${doc.error ? `: ${doc.error}` : ''}`
+          : doc.status === 'needs_review'
+            ? 'Document needs admin review before trusting extracted results.'
+            : doc.status === 'gated'
+              ? 'Document passed relevance gate.'
+              : doc.status === 'partially_indexed'
+                ? `Extraction done, but indexing had issues${doc.error ? `: ${doc.error}` : ''}`
         : doc.status === 'processing'
           ? 'Extraction is running...'
           : doc.status === 'done'
@@ -250,6 +581,10 @@ export class KnowledgeDocumentsController {
         approvedCandidates: stats.approvedCandidates,
         rejectedCandidates: stats.rejectedCandidates,
         chunksIndexed: doc.chunksIndexed ?? 0,
+        docType: doc.docType ?? null,
+        isWorkRelated: doc.isWorkRelated,
+        gateConfidence: doc.gateConfidence ?? null,
+        needsReview: doc.needsReview ?? false,
         message,
       },
     };

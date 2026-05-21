@@ -45,6 +45,30 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeExtractionCandidate.prototype, "tags", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "entryType", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "symptom", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "rootCause", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "sourcePages", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'float', nullable: true }),
+    __metadata("design:type", Number)
+], KnowledgeExtractionCandidate.prototype, "confidence", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 64, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "sectionType", void 0);
+__decorate([
     (0, typeorm_1.Column)({ type: 'varchar', default: 'candidate' }),
     __metadata("design:type", String)
 ], KnowledgeExtractionCandidate.prototype, "status", void 0);

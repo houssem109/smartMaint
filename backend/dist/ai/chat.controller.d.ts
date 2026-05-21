@@ -11,6 +11,7 @@ declare class ChatHistoryItemDto {
 declare class ChatMessageDto {
     message: string;
     ticketId?: string;
+    imageBase64?: string;
     history?: ChatHistoryItemDto[];
 }
 export declare class ChatController {
@@ -23,8 +24,20 @@ export declare class ChatController {
     sendMessage(body: ChatMessageDto, req: any): Promise<{
         reply: string;
         ticketId: string;
+        sources: ({
+            kind: "pdf_chunk";
+            caption: string;
+            score: number;
+            documentId: string;
+            chunkIndex: number;
+        } | {
+            kind: "knowledge_entry";
+            caption: string;
+            knowledgeEntryId: string;
+        })[];
     }>;
     history(ticketId: string, req: any): Promise<Conversation[]>;
+    private normalizeChatImageBase64;
     myHistory(req: any): Promise<Conversation[]>;
 }
 export {};

@@ -8,6 +8,12 @@ export declare class KnowledgeExtractionCandidate {
     problemDescription: string;
     solution: string;
     tags: string | null;
+    entryType: string | null;
+    symptom: string | null;
+    rootCause: string | null;
+    sourcePages: string | null;
+    confidence: number | null;
+    sectionType: string | null;
     status: KnowledgeExtractionStatus;
     createdById: string;
     reviewedById: string | null;

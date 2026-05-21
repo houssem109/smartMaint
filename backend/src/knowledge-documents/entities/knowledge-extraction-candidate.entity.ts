@@ -35,6 +35,24 @@ export class KnowledgeExtractionCandidate {
   @Column({ type: 'text', nullable: true })
   tags: string | null;
 
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  entryType: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  symptom: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  rootCause: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  sourcePages: string | null;
+
+  @Column({ type: 'float', nullable: true })
+  confidence: number | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  sectionType: string | null;
+
   @Column({ type: 'varchar', default: 'candidate' })
   status: KnowledgeExtractionStatus;
 

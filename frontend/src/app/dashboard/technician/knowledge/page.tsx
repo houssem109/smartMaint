@@ -28,6 +28,12 @@ interface KnowledgeEntry {
   problemDescription: string;
   solution: string;
   tags?: string | null;
+  machineName?: string | null;
+  symptom?: string | null;
+  rootCause?: string | null;
+  severity?: string | null;
+  reviewStatus?: string;
+  photoPath?: string | null;
   createdById: string;
   createdBy?: {
     fullName?: string | null;
@@ -36,11 +42,15 @@ interface KnowledgeEntry {
   createdAt: string;
 }
 
-const emptyForm: Omit<KnowledgeEntry, 'id' | 'createdAt' | 'createdBy' | 'createdById'> = {
+const emptyForm = {
   title: '',
   problemDescription: '',
   solution: '',
   tags: '',
+  machineName: '',
+  symptom: '',
+  rootCause: '',
+  severity: '',
 };
 
 export default function TechnicianKnowledgePage() {
@@ -54,6 +64,7 @@ export default function TechnicianKnowledgePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
 
   const fetchEntries = async () => {
     setLoading(true);
@@ -104,6 +115,7 @@ export default function TechnicianKnowledgePage() {
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
+    setPhotoFile(null);
     setModalOpen(true);
   };
 
@@ -114,7 +126,12 @@ export default function TechnicianKnowledgePage() {
       problemDescription: entry.problemDescription,
       solution: entry.solution,
       tags: entry.tags || '',
+      machineName: entry.machineName || '',
+      symptom: entry.symptom || '',
+      rootCause: entry.rootCause || '',
+      severity: entry.severity || '',
     });
+    setPhotoFile(null);
     setModalOpen(true);
   };
 
@@ -122,6 +139,7 @@ export default function TechnicianKnowledgePage() {
     setModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
+    setPhotoFile(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -133,13 +151,27 @@ export default function TechnicianKnowledgePage() {
         problemDescription: form.problemDescription,
         solution: form.solution,
         tags: form.tags?.trim() || undefined,
+        machineName: form.machineName?.trim() || undefined,
+        symptom: form.symptom?.trim() || undefined,
+        rootCause: form.rootCause?.trim() || undefined,
+        severity: form.severity?.trim() || undefined,
       };
+      let entryId = editingId;
       if (editingId) {
         await api.patch(`/knowledge/${editingId}`, payload);
-        toast.success('Knowledge entry updated');
+        toast.success('Updated — pending admin review again if you changed content.');
       } else {
-        await api.post('/knowledge', payload);
-        toast.success('Knowledge entry created');
+        const res = await api.post<KnowledgeEntry>('/knowledge', payload);
+        entryId = res.data.id;
+        toast.success('Submitted for admin review.');
+      }
+      if (photoFile && entryId) {
+        const fd = new FormData();
+        fd.append('file', photoFile);
+        await api.post(`/knowledge/${entryId}/photo`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        toast.success('Photo attached.');
       }
       closeModal();
       fetchEntries();
@@ -168,7 +200,8 @@ export default function TechnicianKnowledgePage() {
 
   const canModify = (entry: KnowledgeEntry) => {
     if (!currentUser) return false;
-    return entry.createdById === currentUser.id;
+    if (entry.createdById !== currentUser.id) return false;
+    return entry.reviewStatus !== 'approved';
   };
 
   return (
@@ -361,6 +394,51 @@ export default function TechnicianKnowledgePage() {
                       value={form.tags || ''}
                       onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
                       placeholder="machine-x, overheating, error-e42"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="machineName">Machine name (optional)</Label>
+                    <Input
+                      id="machineName"
+                      value={form.machineName}
+                      onChange={(e) => setForm((f) => ({ ...f, machineName: e.target.value }))}
+                      placeholder="e.g. Danao line 3"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="symptom">Symptom (optional)</Label>
+                    <Textarea
+                      id="symptom"
+                      value={form.symptom}
+                      onChange={(e) => setForm((f) => ({ ...f, symptom: e.target.value }))}
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rootCause">Root cause (optional)</Label>
+                    <Textarea
+                      id="rootCause"
+                      value={form.rootCause}
+                      onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))}
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="severity">Severity (optional)</Label>
+                    <Input
+                      id="severity"
+                      value={form.severity}
+                      onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}
+                      placeholder="low / medium / high"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="photo">Field photo (optional, JPEG/PNG/WebP)</Label>
+                    <Input
+                      id="photo"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
                     />
                   </div>
                   <div className="flex gap-2 pt-2">

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -16,7 +17,7 @@ import { KnowledgeService } from '../knowledge/knowledge.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Conversation, SenderType } from '../tickets/entities/conversation.entity';
-import { IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class ChatHistoryItemDto {
@@ -35,6 +36,12 @@ class ChatMessageDto {
   @IsString()
   @IsOptional()
   ticketId?: string;
+
+  /** Optional base64 image (raw or `data:image/...;base64,...`). JPEG/PNG/WebP. Max ~4.5 MiB decoded. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(6_500_000)
+  imageBase64?: string;
 
   @IsOptional()
   @ValidateNested({ each: true })
@@ -58,14 +65,38 @@ export class ChatController {
 
   @Post('message')
   @ApiOperation({
-    summary: 'Send a message to Techo (optionally linked to a ticket)',
+    summary:
+      'Send a message to Techo (optional ticketId, history, imageBase64 for 10 field photo in chat)',
+    description:
+      'Returns { reply, ticketId, sources } where sources lists RAG pdf_chunk and knowledge_entry captions used for this turn (12).',
   })
   async sendMessage(@Body() body: ChatMessageDto, @Request() req) {
-    const { message, ticketId, history } = body;
+    const { message, ticketId, history, imageBase64 } = body;
     const user = req.user;
 
     if (!message || !message.trim()) {
-      return { reply: "Please enter a message so I can help you.", ticketId };
+      return { reply: "Please enter a message so I can help you.", ticketId, sources: [] };
+    }
+
+    const visionOn = String(process.env.ENABLE_CHAT_IMAGE_VISION ?? 'true').toLowerCase() !== 'false';
+    let userMessageContent = message.trim();
+    if (imageBase64?.trim() && visionOn) {
+      const normalized = this.normalizeChatImageBase64(imageBase64);
+      const visionPrompt =
+        'A technician sent this photo from the plant floor or machine area. ' +
+        'Describe what you see in plain text: equipment, labels, fault codes, damage, wiring, fluids, safety issues. ' +
+        'If unreadable, say so briefly.';
+      try {
+        const visual = await this.aiService.describeImageBase64ForPdf(normalized, visionPrompt);
+        userMessageContent =
+          `[User attached a photo]\nVisual description (for the assistant):\n${visual}\n\nUser message:\n${message.trim()}`;
+      } catch {
+        userMessageContent =
+          `[User attached a photo — automatic description failed]\n\nUser message:\n${message.trim()}`;
+      }
+    } else if (imageBase64?.trim() && !visionOn) {
+      userMessageContent =
+        `[User attached a photo — image vision is disabled on the server]\n\nUser message:\n${message.trim()}`;
     }
 
     // If ticketId is provided, ensure the user has access to that ticket
@@ -99,7 +130,10 @@ export class ChatController {
       ragResults.length > 0
         ? ragResults
             .slice(0, 6)
-            .map((r, i) => `[${i + 1}] ${truncate(r.text, 1500)}`)
+            .map((r, i) => {
+              const cap = r.sourceCaption ? `${r.sourceCaption}\n` : '';
+              return `[${i + 1}] ${cap}${truncate(r.text, 1500)}`;
+            })
             .join('\n\n')
         : null;
 
@@ -111,7 +145,11 @@ export class ChatController {
               const title = truncate(k.title, 140);
               const problem = truncate(k.problemDescription, 1200);
               const solution = truncate(k.solution, 1600);
-              return `[${i + 1}] ${title}\nProblem:\n${problem}\nSolution:\n${solution}`;
+              const ph = (k as { photoPath?: string | null }).photoPath?.trim();
+              const photoNote = ph ? `Field photo (reference path): ${ph}` : null;
+              const parts = [`[${i + 1}] ${title}`, `Problem:\n${problem}`, `Solution:\n${solution}`];
+              if (photoNote) parts.push(photoNote);
+              return parts.join('\n');
             })
             .join('\n\n')
         : null;
@@ -140,7 +178,7 @@ export class ChatController {
       { role: 'system' as ChatRole, content: ragSystemMessage },
       {
         role: 'user',
-        content: message,
+        content: userMessageContent,
       },
     ];
 
@@ -161,7 +199,22 @@ export class ChatController {
     });
     await this.conversationRepository.save([userEntry, aiEntry]);
 
-    return { reply, ticketId };
+    const sources = [
+      ...ragResults.map((r) => ({
+        kind: 'pdf_chunk' as const,
+        caption: r.sourceCaption || 'PDF excerpt',
+        score: r.score,
+        documentId: r.documentId,
+        chunkIndex: r.chunkIndex,
+      })),
+      ...knowledgeEntries.map((k) => ({
+        kind: 'knowledge_entry' as const,
+        caption: k.title || 'Knowledge entry',
+        knowledgeEntryId: k.id,
+      })),
+    ];
+
+    return { reply, ticketId, sources };
   }
 
   @Get('history/:ticketId')
@@ -177,6 +230,31 @@ export class ChatController {
     });
 
     return history;
+  }
+
+  /** Strip data-URL wrapper and enforce decoded size (JPEG/PNG/WebP magic). */
+  private normalizeChatImageBase64(raw: string): string {
+    const trimmed = raw.trim();
+    const dataUrl = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/i.exec(trimmed);
+    const b64 = (dataUrl ? dataUrl[2] : trimmed).replace(/\s/g, '');
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(b64, 'base64');
+    } catch {
+      throw new BadRequestException('Invalid base64 image');
+    }
+    const max = Math.floor(4.5 * 1024 * 1024);
+    if (!buf.length || buf.length > max) {
+      throw new BadRequestException(`Image must decode to at most ${max} bytes`);
+    }
+    const sig = buf.subarray(0, 12);
+    const isPng = sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47;
+    const isJpeg = sig[0] === 0xff && sig[1] === 0xd8 && sig[2] === 0xff;
+    const isWebp = sig[0] === 0x52 && sig[1] === 0x49 && sig[2] === 0x46 && sig[8] === 0x57 && sig[9] === 0x45 && sig[10] === 0x42 && sig[11] === 0x50;
+    if (!isPng && !isJpeg && !isWebp) {
+      throw new BadRequestException('Only JPEG, PNG, or WebP images are allowed');
+    }
+    return b64;
   }
 
   @Get('my-history')
