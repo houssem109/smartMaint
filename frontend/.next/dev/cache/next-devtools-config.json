@@ -1,6 +1,6 @@
 {
-  "devToolsPosition": "top-right",
+  "devToolsPosition": "bottom-left",
   "devToolsPanelPosition": {
-    "__nextjs-dev-tools-shared-panel-location": "top-right"
+    "__nextjs-dev-tools-shared-panel-location": "bottom-left"
   }
 }

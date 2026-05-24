@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
+import { useAuthStore } from '@/store/auth-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TicketIcon, Users, ClipboardList, UserCheck } from 'lucide-react';
@@ -27,6 +28,7 @@ interface User {
 }
 
 export default function AdminDashboard() {
+  const currentUser = useAuthStore((s) => s.user);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,10 @@ export default function AdminDashboard() {
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
-      <Layout title="Admin Dashboard" showSidebar={true}>
+      <Layout
+        title={currentUser?.role === 'superadmin' ? 'Super Admin Dashboard' : 'Admin Dashboard'}
+        showSidebar={true}
+      >
         <div className="space-y-8">
           {/* Stats */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">

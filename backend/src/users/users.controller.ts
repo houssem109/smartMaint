@@ -122,6 +122,11 @@ export class UsersController {
     @Param('id') id: string,
     @Body() updateData: any,
   ) {
+    // Prevent self-deactivation/activation mistakes (lockout safety).
+    if (req.user.id === id && typeof updateData?.isActive !== 'undefined') {
+      throw new ForbiddenException('You cannot change your own activation status');
+    }
+
     const target = await this.usersService.findOne(id);
 
     // Prevent changing anyone into a superadmin (only the seeded superadmin should exist)

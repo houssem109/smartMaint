@@ -21,7 +21,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ConfirmModal from '@/components/ConfirmModal';
-import { UserPlus, Pencil, Trash2, X } from 'lucide-react';
+import { UserPlus, Pencil, Trash2, X, UserCheck, UserX } from 'lucide-react';
 
 interface User {
   id: string;
@@ -69,6 +69,9 @@ export default function AdminUsersPage() {
   const [saving, setSaving] = useState(false);
   const [page, setPage] = useState(1);
   const pageSize = 10;
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'worker' | 'technician' | 'admin' | 'superadmin'>('all');
 
   const fetchUsers = async () => {
     try {
@@ -84,6 +87,10 @@ export default function AdminUsersPage() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, roleFilter, users.length]);
 
   const openCreate = () => {
     setEditingId(null);
@@ -163,8 +170,40 @@ export default function AdminUsersPage() {
     }
   };
 
-  const totalPages = Math.max(1, Math.ceil(users.length / pageSize));
-  const paginatedUsers = users.slice((page - 1) * pageSize, page * pageSize);
+  const handleToggleActive = async (user: User) => {
+    try {
+      await api.patch(`/users/${user.id}`, { isActive: !user.isActive });
+      toast.success(user.isActive ? 'User deactivated' : 'User activated');
+      fetchUsers();
+    } catch (err: any) {
+      const msg =
+        err.response?.data?.message ||
+        (Array.isArray(err.response?.data?.message)
+          ? err.response.data.message.join(', ')
+          : 'Failed to update user status');
+      toast.error(msg);
+    }
+  };
+
+  const filteredUsers = users.filter((u) => {
+    const normalizedSearch = search.trim().toLowerCase();
+    const matchesSearch =
+      normalizedSearch.length === 0 ||
+      (u.fullName || '').toLowerCase().includes(normalizedSearch) ||
+      u.username.toLowerCase().includes(normalizedSearch) ||
+      u.email.toLowerCase().includes(normalizedSearch);
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && u.isActive) ||
+      (statusFilter === 'inactive' && !u.isActive);
+
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return matchesSearch && matchesStatus && matchesRole;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / pageSize));
+  const paginatedUsers = filteredUsers.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
@@ -183,13 +222,50 @@ export default function AdminUsersPage() {
               <CardTitle className="text-lg">Users list</CardTitle>
             </CardHeader>
             <CardContent>
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="space-y-1">
+                  <Label htmlFor="users-search">Search</Label>
+                  <Input
+                    id="users-search"
+                    placeholder="Name, username, or email"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="users-status-filter">Status</Label>
+                  <Select
+                    id="users-status-filter"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="users-role-filter">Role</Label>
+                  <Select
+                    id="users-role-filter"
+                    value={roleFilter}
+                    onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)}
+                  >
+                    <option value="all">All roles</option>
+                    <option value="worker">Worker</option>
+                    <option value="technician">Technician</option>
+                    <option value="admin">Admin</option>
+                    <option value="superadmin">Super Admin</option>
+                  </Select>
+                </div>
+              </div>
               {loading ? (
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   Loading…
                 </div>
-              ) : users.length === 0 ? (
+              ) : filteredUsers.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
-                  No users yet. Create one to get started.
+                  No users match your filters.
                 </div>
               ) : (
                 <>
@@ -236,6 +312,23 @@ export default function AdminUsersPage() {
                                   // Superadmin should not see edit/delete for their own superadmin account
                                   !(currentUser?.id === user.id && user.role === 'superadmin') && (
                                     <>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => handleToggleActive(user)}
+                                        title={user.isActive ? 'Deactivate account' : 'Activate account'}
+                                        className={
+                                          user.isActive
+                                            ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-100/50'
+                                            : 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-100/50'
+                                        }
+                                      >
+                                        {user.isActive ? (
+                                          <UserX className="h-4 w-4" />
+                                        ) : (
+                                          <UserCheck className="h-4 w-4" />
+                                        )}
+                                      </Button>
                                       <Button
                                         variant="ghost"
                                         size="icon"
