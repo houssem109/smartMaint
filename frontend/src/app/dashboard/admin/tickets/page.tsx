@@ -34,6 +34,14 @@ interface Ticket {
   createdAt: string;
   createdBy?: { fullName: string; email: string };
   assignedTo?: { fullName: string; email: string };
+  assignmentRequestStatus?: 'none' | 'pending' | 'approved' | 'rejected';
+  assignmentRequestedById?: string | null;
+}
+
+interface TechnicianOption {
+  id: string;
+  fullName?: string | null;
+  email: string;
 }
 
 const STATUS_OPTIONS = [
@@ -76,12 +84,25 @@ function getPriorityVariant(priority: string): 'default' | 'secondary' | 'destru
 
 export default function AdminTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
+  const [technicianFilter, setTechnicianFilter] = useState('');
+  const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [page, setPage] = useState(1);
   const pageSize = 10;
+  const [reviewingRequestTicketId, setReviewingRequestTicketId] = useState<string | null>(null);
+
+  const fetchTechnicians = async () => {
+    try {
+      const res = await api.get<TechnicianOption[]>('/users/technicians');
+      setTechnicians(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setTechnicians([]);
+    }
+  };
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -89,6 +110,7 @@ export default function AdminTicketsPage() {
       const params: Record<string, string> = {};
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
+      if (technicianFilter) params.assignedToId = technicianFilter;
       const res = await api.get<Ticket[]>('/tickets', { params });
       setTickets(res.data);
     } catch (err: any) {
@@ -99,8 +121,16 @@ export default function AdminTicketsPage() {
   };
 
   useEffect(() => {
+    fetchTechnicians();
+  }, []);
+
+  useEffect(() => {
     fetchTickets();
-  }, [statusFilter, priorityFilter]);
+  }, [statusFilter, priorityFilter, technicianFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [assignmentFilter]);
 
   const filteredTickets = useMemo(() => {
     // Reset to first page when filters/search change
@@ -108,14 +138,25 @@ export default function AdminTicketsPage() {
 
     if (!search.trim()) return tickets;
     const q = search.trim().toLowerCase();
-    return tickets.filter(
+    const searched = tickets.filter(
       (t) =>
         t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q)
     );
+    return searched;
   }, [tickets, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredTickets.length / pageSize));
-  const paginatedTickets = filteredTickets.slice((page - 1) * pageSize, page * pageSize);
+  const assignmentFilteredTickets = useMemo(() => {
+    if (assignmentFilter === 'assigned') {
+      return filteredTickets.filter((t) => !!t.assignedTo);
+    }
+    if (assignmentFilter === 'unassigned') {
+      return filteredTickets.filter((t) => !t.assignedTo);
+    }
+    return filteredTickets;
+  }, [filteredTickets, assignmentFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(assignmentFilteredTickets.length / pageSize));
+  const paginatedTickets = assignmentFilteredTickets.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
@@ -174,6 +215,29 @@ export default function AdminTicketsPage() {
                     </option>
                   ))}
                 </Select>
+                <Select
+                  value={technicianFilter}
+                  onChange={(e) => setTechnicianFilter(e.target.value)}
+                  className="w-full sm:w-[220px]"
+                >
+                  <option value="">All technicians</option>
+                  {technicians.map((tech) => (
+                    <option key={tech.id} value={tech.id}>
+                      {tech.fullName?.trim() || tech.email}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  value={assignmentFilter}
+                  onChange={(e) =>
+                    setAssignmentFilter(e.target.value as 'all' | 'assigned' | 'unassigned')
+                  }
+                  className="w-full sm:w-[180px]"
+                >
+                  <option value="all">All assignments</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="unassigned">Unassigned</option>
+                </Select>
                 <Button variant="outline" size="icon" onClick={fetchTickets} title="Refresh">
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -184,7 +248,7 @@ export default function AdminTicketsPage() {
                 <div className="flex items-center justify-center py-12 text-muted-foreground">
                   Loading…
                 </div>
-              ) : filteredTickets.length === 0 ? (
+              ) : assignmentFilteredTickets.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
                   <p className="mb-2">
                     {tickets.length === 0
@@ -209,6 +273,7 @@ export default function AdminTicketsPage() {
                           <TableHead>Category</TableHead>
                           <TableHead>Created</TableHead>
                           <TableHead>Assigned to</TableHead>
+                          <TableHead>Self-assign request</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -240,12 +305,69 @@ export default function AdminTicketsPage() {
                             <TableCell className="text-muted-foreground text-sm">
                               {ticket.assignedTo?.fullName || ticket.assignedTo?.email || '—'}
                             </TableCell>
+                            <TableCell>
+                              {ticket.assignmentRequestStatus === 'pending' ? (
+                                <Badge variant="secondary">Pending</Badge>
+                              ) : ticket.assignmentRequestStatus === 'approved' ? (
+                                <Badge variant="default">Approved</Badge>
+                              ) : ticket.assignmentRequestStatus === 'rejected' ? (
+                                <Badge variant="outline">Rejected</Badge>
+                              ) : (
+                                <span className="text-muted-foreground text-sm">—</span>
+                              )}
+                            </TableCell>
                             <TableCell className="text-right">
-                              <Button variant="ghost" size="sm" asChild>
-                                <Link href={`/dashboard/tickets/${ticket.id}`}>
-                                  View details
-                                </Link>
-                              </Button>
+                              <div className="flex items-center justify-end gap-2">
+                                {ticket.assignmentRequestStatus === 'pending' && (
+                                  <>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={reviewingRequestTicketId === ticket.id}
+                                      onClick={async () => {
+                                        setReviewingRequestTicketId(ticket.id);
+                                        try {
+                                          await api.post(`/tickets/${ticket.id}/assignment-request/approve`);
+                                          toast.success('Self-assign request approved.');
+                                          await fetchTickets();
+                                        } catch (err: any) {
+                                          toast.error(err.response?.data?.message || 'Failed to approve request');
+                                        } finally {
+                                          setReviewingRequestTicketId(null);
+                                        }
+                                      }}
+                                    >
+                                      Approve
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      disabled={reviewingRequestTicketId === ticket.id}
+                                      onClick={async () => {
+                                        setReviewingRequestTicketId(ticket.id);
+                                        try {
+                                          await api.post(`/tickets/${ticket.id}/assignment-request/reject`, {
+                                            reason: 'Rejected by admin',
+                                          });
+                                          toast.success('Self-assign request rejected.');
+                                          await fetchTickets();
+                                        } catch (err: any) {
+                                          toast.error(err.response?.data?.message || 'Failed to reject request');
+                                        } finally {
+                                          setReviewingRequestTicketId(null);
+                                        }
+                                      }}
+                                    >
+                                      Reject
+                                    </Button>
+                                  </>
+                                )}
+                                <Button variant="ghost" size="sm" asChild>
+                                  <Link href={`/dashboard/tickets/${ticket.id}`}>
+                                    View details
+                                  </Link>
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         ))}

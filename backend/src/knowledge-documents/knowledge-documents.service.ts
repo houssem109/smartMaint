@@ -48,6 +48,17 @@ import {
 } from './pdf-ingestion.config';
 import { assertValidPdfForIngestion } from './pdf-ingestion.util';
 import {
+  getOcrRenderDpi,
+  getPaddleOcrUrl,
+  getPdfOcrManualMaxPages,
+  getPdfOcrMaxPagesAuto,
+  isPaddleOcrVl,
+  isPdfOcrAutoReindexEnabled,
+  isPdfOcrInlineBeforeIndexEnabled,
+  runOcrOnPng,
+  shouldSkipSharpPreprocess,
+} from './pdf-ocr.util';
+import {
   getGateHeuristicPageCount,
   getGateLlmCharLimit,
   getGateTier1AcceptAbove,
@@ -63,7 +74,18 @@ import {
   getVisionTriggerOcrConfidenceBelow,
   isPdfVisionEnabled,
 } from './pdf-vision.config';
+import {
+  buildPageExplanationVisionPrompt,
+  getPdfPageExplanationMaxPages,
+  getPdfPageExplanationMode,
+  isPdfPageExplanationBeforeIndexEnabled,
+} from './page-explanation.config';
 import { parsePdfWithPoppler } from './pdf-text.util';
+import { chunkQualityFlags, isLowValueChunkText } from './pdf-chunk-quality.util';
+import {
+  buildPipelineAuditExcelBuffer,
+  pipelineAuditExcelFilename,
+} from './pipeline-audit-export.util';
 
 const execFileAsync = promisify(execFile);
 
@@ -450,6 +472,203 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return { count: rows.length, rows };
   }
 
+  /**
+   * Full trace for admin reports: per-page OCR/vision text, Qdrant payloads, chunk audit, KPIs.
+   */
+  async getPipelineAuditReport(documentId: string, ragLimit = 2000): Promise<{
+    generatedAt: string;
+    document: KnowledgeDocument;
+    status: Awaited<ReturnType<KnowledgeDocumentsService['getDocumentStatus']>>;
+    extractionStats: Awaited<ReturnType<KnowledgeDocumentsService['getExtractionStats']>>;
+    visionPreference: ReturnType<KnowledgeDocumentsService['getPdfVisionPreferenceReadModel']>;
+    pipelineConfig: ReturnType<KnowledgeDocumentsService['getPipelineConfigSnapshot']>;
+    metrics: {
+      totalPages: number;
+      pagesWithOcrText: number;
+      pagesVisionUsed: number;
+      pagesByExtractionMode: Record<string, number>;
+      pagesByQuality: Record<string, number>;
+      visionFailedPages: number;
+      ragChunkCount: number;
+      ragMostlyDotsChunks: number;
+      ragEmbedWorthyChunks: number;
+      candidateTotal: number;
+      candidateApproved: number;
+      candidateRejected: number;
+      approvalRatePercent: number | null;
+    };
+    pages: Array<{
+      pageNumber: number;
+      quality: string;
+      extractionMode: string;
+      visionUsed: boolean;
+      ocrConfidence: number | null;
+      sectionType: string | null;
+      qualityWarnings: string[] | null;
+      ocrTextLength: number;
+      popplerTextLength: number;
+      ocrTextPreview: string;
+      popplerTextPreview: string;
+      ocrText: string | null;
+      hasVisionBlock: boolean;
+    }>;
+    ragChunks: Array<{
+      chunkIndex: number;
+      sectionType: string | null;
+      title: string | null;
+      confidence: number | null;
+      textPreview: string;
+      text: string;
+      quality: ReturnType<typeof chunkQualityFlags>;
+    }>;
+    chunkAudit: {
+      builtCount: number;
+      afterNearDuplicateCount: number;
+      afterLowValueFilterCount: number;
+      droppedLowValueSamples: Array<{ index: number; preview: string; reason: string }>;
+      note: string;
+    };
+  }> {
+    const doc = await this.findOne(documentId);
+    const status = await this.getDocumentStatus(documentId);
+    const extractionStats = await this.getExtractionStats(documentId);
+    const pageRows = await this.getPageAnalysis(documentId);
+    const rag = await this.getRagStoredData(documentId, ragLimit);
+    const popplerPageTexts = await this.loadPopplerPageTextsForDocument(doc);
+
+    const pagesByExtractionMode: Record<string, number> = {};
+    const pagesByQuality: Record<string, number> = { good: 0, degraded: 0, poor: 0, unreadable: 0 };
+    let pagesWithOcrText = 0;
+    let pagesVisionUsed = 0;
+    let visionFailedPages = 0;
+
+    const pages = pageRows.map((row) => {
+      const mode = row.extractionMode || 'text';
+      pagesByExtractionMode[mode] = (pagesByExtractionMode[mode] ?? 0) + 1;
+      pagesByQuality[row.quality] = (pagesByQuality[row.quality] ?? 0) + 1;
+      const ocrText = row.ocrText ?? null;
+      if (ocrText && ocrText.trim().length > 0) pagesWithOcrText += 1;
+      if (row.visionUsed) pagesVisionUsed += 1;
+      const warnings = row.qualityWarnings ?? [];
+      if (warnings.some((w) => String(w).includes('vision_model_failed') || String(w).includes('vision_render_failed'))) {
+        visionFailedPages += 1;
+      }
+      const previewLen = 280;
+      const popplerText = popplerPageTexts[row.pageNumber - 1] ?? '';
+      return {
+        pageNumber: row.pageNumber,
+        quality: row.quality,
+        extractionMode: mode,
+        visionUsed: row.visionUsed,
+        ocrConfidence: row.ocrConfidence,
+        sectionType: row.sectionType,
+        qualityWarnings: warnings.length > 0 ? warnings : null,
+        ocrTextLength: ocrText?.length ?? 0,
+        popplerTextLength: popplerText.length,
+        ocrTextPreview: ocrText ? ocrText.slice(0, previewLen) : '',
+        popplerTextPreview: popplerText ? popplerText.slice(0, previewLen) : '',
+        ocrText,
+        hasVisionBlock: !!ocrText?.includes('--- Vision description ---'),
+      };
+    });
+
+    const ragChunks = rag.chunks.map((c) => {
+      const quality = chunkQualityFlags(c.text);
+      return {
+        chunkIndex: c.chunkIndex,
+        sectionType: c.sectionType ?? null,
+        title: c.title ?? null,
+        confidence: c.confidence ?? null,
+        textPreview: c.text.slice(0, 200),
+        text: c.text,
+        quality,
+      };
+    });
+    const ragMostlyDotsChunks = ragChunks.filter((c) => c.quality.mostlyDots).length;
+
+    let chunkAudit = {
+      builtCount: 0,
+      afterNearDuplicateCount: 0,
+      afterLowValueFilterCount: 0,
+      droppedLowValueSamples: [] as Array<{ index: number; preview: string; reason: string }>,
+      note: 'Rebuilds routing from stored page_analysis + Poppler text (same logic as re-index).',
+    };
+    try {
+      const fileBuffer = readFileSync(doc.filePath);
+      const parsed: any = await parsePdfWithPoppler(fileBuffer);
+      const fullText = this.normalizeExtractedText(String(parsed?.text || ''));
+      const chunkSize = Number(process.env.DOC_EXTRACTION_CHUNK_SIZE ?? 12000);
+      const overlap = Number(process.env.DOC_EXTRACTION_CHUNK_OVERLAP ?? 1500);
+      const built = await this.buildRoutedChunks(doc.id, fullText, chunkSize, overlap);
+      const prioritized = this.prioritizeChunksForExtraction(built, doc.docType ?? 'general_reference');
+      const deduped = this.filterNearDuplicateChunks(prioritized);
+      const cleaned = this.filterEmbedWorthyChunks(deduped);
+      const dropped: Array<{ index: number; preview: string; reason: string }> = [];
+      for (let i = 0; i < deduped.length; i++) {
+        if (!cleaned.includes(deduped[i])) {
+          dropped.push({
+            index: i,
+            preview: deduped[i].slice(0, 120),
+            reason: 'mostly_dots_or_separators',
+          });
+        }
+      }
+      chunkAudit = {
+        builtCount: built.length,
+        afterNearDuplicateCount: deduped.length,
+        afterLowValueFilterCount: cleaned.length,
+        droppedLowValueSamples: dropped.slice(0, 40),
+        note: chunkAudit.note,
+      };
+    } catch (e: any) {
+      chunkAudit.note = `Chunk audit rebuild failed: ${e?.message ?? e}`;
+    }
+
+    const candidateTotal =
+      extractionStats.extractedCandidates;
+    const approvalRatePercent =
+      candidateTotal > 0
+        ? Math.round((extractionStats.approvedCandidates / candidateTotal) * 1000) / 10
+        : null;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      document: doc,
+      status,
+      extractionStats,
+      visionPreference: this.getPdfVisionPreferenceReadModel(),
+      pipelineConfig: this.getPipelineConfigSnapshot(),
+      metrics: {
+        totalPages: pageRows.length,
+        pagesWithOcrText,
+        pagesVisionUsed,
+        pagesByExtractionMode,
+        pagesByQuality,
+        visionFailedPages,
+        ragChunkCount: rag.chunkCount,
+        ragMostlyDotsChunks,
+        ragEmbedWorthyChunks: ragChunks.filter((c) => c.quality.embedWorthy).length,
+        candidateTotal,
+        candidateApproved: extractionStats.approvedCandidates,
+        candidateRejected: extractionStats.rejectedCandidates,
+        approvalRatePercent,
+      },
+      pages,
+      ragChunks,
+      chunkAudit,
+    };
+  }
+
+  async exportPipelineAuditExcel(
+    documentId: string,
+    ragLimit = 2000,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const report = await this.getPipelineAuditReport(documentId, ragLimit);
+    const candidates = await this.getExtractionsForDocument(documentId);
+    const buffer = await buildPipelineAuditExcelBuffer(report, candidates);
+    return { buffer, filename: pipelineAuditExcelFilename(report.document) };
+  }
+
   async getDocumentStatus(documentId: string): Promise<{
     documentId: string;
     status: string;
@@ -636,13 +855,19 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       llmCharLimit: number;
       gateModel: string | null;
     };
-    ocr: {
-      enabled: boolean;
-      maxPagesPerDocument: number;
-      tessLang: string;
-      tessPath: string;
-      pdftoppmPath: string;
-    };
+      ocr: {
+        enabled: boolean;
+        maxPagesPerDocument: number;
+        manualMaxPages: number;
+        autoReindex: boolean;
+        inlineBeforeIndex: boolean;
+        renderDpi: number;
+        skipSharpPreprocess: boolean;
+        isVl: boolean;
+        engine: string;
+        paddleOcrUrl: string;
+        pdftoppmPath: string;
+      };
     vision: {
       enabled: boolean;
       enabledFromEnv: boolean;
@@ -653,7 +878,11 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       figureVisionEnabled: boolean;
       triggerOcrConfidenceBelow: number;
       minOcrTextChars: number;
+      pageExplainBeforeIndex: boolean;
+      pageExplainMaxPages: number;
+      pageExplainMode: string;
     };
+    fieldPhotos: { visionEnabled: boolean };
     extraction: {
       maxChunks: number;
       maxCandidatesTotal: number;
@@ -690,9 +919,15 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       },
       ocr: {
         enabled: String(process.env.ENABLE_PDF_OCR ?? 'false').toLowerCase() === 'true',
-        maxPagesPerDocument: num('PDF_OCR_MAX_PAGES', 10),
-        tessLang: process.env.TESSERACT_LANG?.trim() || 'eng+fra',
-        tessPath: process.env.TESSERACT_PATH?.trim() || 'tesseract',
+        maxPagesPerDocument: getPdfOcrMaxPagesAuto(),
+        manualMaxPages: getPdfOcrManualMaxPages(),
+        autoReindex: isPdfOcrAutoReindexEnabled(),
+        inlineBeforeIndex: isPdfOcrInlineBeforeIndexEnabled(),
+        renderDpi: getOcrRenderDpi(),
+        skipSharpPreprocess: shouldSkipSharpPreprocess(),
+        engine: process.env.PADDLE_OCR_ENGINE?.trim() || 'paddleocr-vl',
+        isVl: isPaddleOcrVl(),
+        paddleOcrUrl: getPaddleOcrUrl(),
         pdftoppmPath: process.env.PDFTOPPM_PATH?.trim() || 'pdftoppm',
       },
       vision: {
@@ -705,6 +940,12 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         figureVisionEnabled: this.isFigureVisionEnabled(),
         triggerOcrConfidenceBelow: getVisionTriggerOcrConfidenceBelow(),
         minOcrTextChars: getVisionMinOcrTextChars(),
+        pageExplainBeforeIndex: isPdfPageExplanationBeforeIndexEnabled(),
+        pageExplainMaxPages: getPdfPageExplanationMaxPages(),
+        pageExplainMode: getPdfPageExplanationMode(),
+      },
+      fieldPhotos: {
+        visionEnabled: String(process.env.ENABLE_FIELD_PHOTO_VISION ?? 'true').toLowerCase() !== 'false',
       },
       extraction: {
         maxChunks: num('DOC_EXTRACTION_MAX_CHUNKS', 50),
@@ -1058,7 +1299,7 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     };
   }
 
-  async enqueueExtractionJob(documentId: string): Promise<string> {
+  async enqueueExtractionJob(documentId: string, opts?: { resume?: boolean }): Promise<string> {
     const tracking = await this.knowledgeDocumentJobRepository.save(
       this.knowledgeDocumentJobRepository.create({
         documentId,
@@ -1072,7 +1313,7 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     );
     const bullJob = await this.extractionQueue.add(
       EXTRACTION_JOB,
-      { documentId, trackingJobId: tracking.id },
+      { documentId, trackingJobId: tracking.id, resume: opts?.resume ?? false },
       { removeOnComplete: 100, removeOnFail: 100 },
     );
     tracking.bullJobId = String(bullJob.id);
@@ -1149,22 +1390,44 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return tracking.id;
   }
 
-  async runOcrForDocumentPages(documentId: string, pageNumbers: number[]): Promise<void> {
-    if (!pageNumbers.length) return;
+  async runOcrForDocumentPages(documentId: string, pageNumbers: number[]): Promise<number> {
+    if (!pageNumbers.length) return 0;
     const doc = await this.findOne(documentId);
-    await this.ocrPagesFromPdf(doc.filePath, doc.id, pageNumbers);
+    return this.ocrPagesFromPdf(doc.filePath, doc.id, pageNumbers);
+  }
+
+  /** After async OCR/vision enrichment, refresh Qdrant from updated page_analysis. */
+  async maybeAutoReindexAfterEnrichment(documentId: string, reason: string): Promise<void> {
+    if (!isPdfOcrAutoReindexEnabled()) return;
+    try {
+      const doc = await this.findOne(documentId);
+      const reindexable = ['done', 'partially_indexed', 'processing'].includes(doc.status);
+      if (!reindexable) return;
+      const { chunksIndexed } = await this.reindexManualChunksForDocument(documentId);
+      this.logger.log(`Auto re-indexed ${documentId} (${chunksIndexed} chunks) after ${reason}`);
+    } catch (e: any) {
+      this.logger.warn(`Auto re-index skipped for ${documentId} after ${reason}: ${e?.message ?? e}`);
+    }
   }
 
   /**
-   * Employee 3 (6): render each page, call Ollama vision model, merge text into **`ocrText`**, set **`visionUsed`**.
+   * Employee 3 (6): render each page, call vision model, merge text into **`ocrText`**, set **`visionUsed`**.
    */
-  async runVisionForDocumentPages(documentId: string, pageNumbers: number[]): Promise<number> {
+  async runVisionForDocumentPages(
+    documentId: string,
+    pageNumbers: number[],
+    opts?: { maxPages?: number; promptMode?: 'default' | 'page_explanation'; skipCompleted?: boolean },
+  ): Promise<number> {
     if (!this.isEffectivePdfVision() || !pageNumbers.length) return 0;
-    const maxPages = this.getVisionMaxPagesPerBatch();
-    if (maxPages <= 0) return 0;
+    const batchCap = opts?.maxPages ?? this.getVisionMaxPagesPerBatch();
+    if (batchCap <= 0) return 0;
 
     const doc = await this.findOne(documentId);
-    const pages = [...new Set(pageNumbers)].sort((a, b) => a - b).slice(0, maxPages);
+    let pages = [...new Set(pageNumbers)].sort((a, b) => a - b);
+    if (opts?.skipCompleted !== false) {
+      pages = await this.filterPageNumbersNeedingVision(documentId, pages);
+    }
+    pages = pages.slice(0, batchCap);
     if (!pages.length) return 0;
 
     const workDir = join(tmpdir(), `smartmaint-vision-${documentId}-${Date.now()}`);
@@ -1179,14 +1442,20 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     const langLabel = this.languageLabel(docLanguage);
     const allowedScripts = this.allowedScriptsFor(docLanguage);
 
-    const baseVisionPrompt =
-      'You are reading a page from an industrial maintenance or electrical manual.\n' +
+    const explanationMode = opts?.promptMode === 'page_explanation';
+    const scriptGuard =
       `The document language is ${langLabel}. Transcribe ONLY in ${langLabel} (and standard ASCII numerals/symbols).\n` +
-      `Do NOT insert any characters from other scripts (no Arabic, Hebrew, Chinese, Japanese, Korean, Cyrillic, etc.) unless they are clearly visible on the page in that script.\n` +
-      'When you see leader dots ("....") connecting a heading to a page number, render them as a single ellipsis "..." — never as letters from another alphabet.\n' +
-      '1) Transcribe all readable text (headings, table cells, labels, fault or alarm codes).\n' +
-      '2) For diagrams or schematics, briefly describe components, connections, and identifiers.\n' +
-      '3) Output plain text only (no markdown code fences).';
+      `Do NOT insert characters from other scripts unless clearly visible on the page in that script.\n`;
+    const baseVisionPrompt = explanationMode
+      ? scriptGuard
+      : 'You are reading a page from an industrial maintenance or electrical manual.\n' +
+        scriptGuard +
+        'When you see leader dots ("....") connecting a heading to a page number, render them as a single ellipsis "..." — never as letters from another alphabet.\n' +
+        '1) Transcribe all readable text (headings, table cells, labels, fault or alarm codes).\n' +
+        '2) When the manual shows small square **button icons** in a sentence (return/enter, up, down), write canonical labels in the flow: [RETURN], [UP], [DOWN] (not random symbols).\n' +
+        '3) Dark sidebar or callout boxes often show what the **operator sees on the machine display** (e.g. Goto, Conf, ULoc, SP). Transcribe those labels exactly.\n' +
+        '4) For diagrams or schematics, briefly describe components, connections, and identifiers.\n' +
+        '5) Output plain text only (no markdown code fences).';
 
     // Detect display fonts once for the whole target list (parallel), so the
     // per-page worker does not spawn `pdffonts` again.
@@ -1194,12 +1463,13 @@ export class KnowledgeDocumentsService implements OnModuleInit {
 
     const processOne = async (pageNumber: number): Promise<boolean> => {
       const usesDisplayFont = displayFontPages.has(pageNumber);
-      const visionPrompt =
-        baseVisionPrompt +
-        (usesDisplayFont
-          ? '\nThis page uses seven-segment/LCD readouts. Transcribe display digits and short codes EXACTLY (examples: 0, 10, 20, ULoc, C). ' +
-            'When symbols represent keys/buttons, use canonical labels: UP_ARROW, DOWN_ARROW, ON_OFF_BUTTON.'
-          : '\nIf the page shows seven-segment or LCD-style digital readouts, transcribe those digits and short codes EXACTLY as displayed (e.g. 0, 10, 20, ULoc, C).');
+      const visionPrompt = explanationMode
+        ? baseVisionPrompt + buildPageExplanationVisionPrompt(langLabel, usesDisplayFont)
+        : baseVisionPrompt +
+          (usesDisplayFont
+            ? '\nThis page uses seven-segment/LCD readouts. Transcribe display digits and short codes EXACTLY (examples: 0, 10, 20, ULoc, C). ' +
+              'When symbols represent keys/buttons, use canonical labels: UP_ARROW, DOWN_ARROW, ON_OFF_BUTTON.'
+            : '\nIf the page shows seven-segment or LCD-style digital readouts, transcribe those digits and short codes EXACTLY as displayed (e.g. 0, 10, 20, ULoc, C).');
       await this.pageAnalysisRepository.update(
         { documentId, pageNumber },
         { extractionMode: 'vision', visionUsed: false },
@@ -1511,7 +1781,10 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return { ok: true };
   }
 
-  async runOcrForDocument(documentId: string, adminId: string): Promise<{ ok: true; processedPages: number }> {
+  async runOcrForDocument(
+    documentId: string,
+    adminId: string,
+  ): Promise<{ ok: true; processedPages: number; pagesSelected: number; chunksIndexed?: number }> {
     const doc = await this.findOne(documentId);
     if (!doc.deepMode) {
       throw new BadRequestException('OCR runs only in deep mode');
@@ -1524,24 +1797,34 @@ export class KnowledgeDocumentsService implements OnModuleInit {
 
     const pageRows = await this.getPageAnalysis(documentId);
     const glyphCorruptedPages = await this.detectGlyphCorruptedPagesForDocument(doc, pageRows);
-    const targets = pageRows
-      .filter((p) => p.quality !== 'good' || glyphCorruptedPages.has(p.pageNumber))
-      .slice(0, Number(process.env.PDF_OCR_MAX_PAGES ?? 10));
-    if (targets.length === 0) return { ok: true, processedPages: 0 };
+    const pageTexts = await this.loadPopplerPageTextsForDocument(doc);
+    const pageNumbers = this.selectPageNumbersForOcr(pageRows, {
+      mode: 'manual',
+      pageTexts,
+      glyphCorruptedPages,
+    });
+    if (pageNumbers.length === 0) return { ok: true, processedPages: 0, pagesSelected: 0 };
 
-    const processed = await this.ocrPagesFromPdf(doc.filePath, documentId, targets.map((t) => t.pageNumber));
+    const processed = await this.ocrPagesFromPdf(doc.filePath, documentId, pageNumbers);
+
+    let chunksIndexed: number | undefined;
+    if (isPdfOcrAutoReindexEnabled() && processed > 0) {
+      const reindex = await this.reindexManualChunksForDocument(documentId);
+      chunksIndexed = reindex.chunksIndexed;
+    }
+
     await this.auditLogRepository.save(
       this.auditLogRepository.create({
         actionType: ActionType.UPDATE,
         entityType: 'knowledge_document',
         entityId: doc.id,
         userId: adminId,
-        changes: { event: 'ocr_run', processedPages: processed },
+        changes: { event: 'ocr_run', processedPages: processed, pagesSelected: pageNumbers.length, chunksIndexed },
         reason: null,
       }),
     );
 
-    return { ok: true, processedPages: processed };
+    return { ok: true, processedPages: processed, pagesSelected: pageNumbers.length, chunksIndexed };
   }
 
   async runVisionForDocument(
@@ -2039,8 +2322,8 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     const chunks = await this.buildRoutedChunks(doc.id, relevantText, chunkSize, overlap);
     const prioritizedChunks = this.prioritizeChunksForExtraction(chunks, doc.docType ?? 'general_reference');
     const dedupedChunks = this.filterNearDuplicateChunks(prioritizedChunks);
-    const chunksToUse = dedupedChunks.slice(0, maxChunksToProcess);
-    const chunksToIndex = dedupedChunks.slice(0, indexMax);
+    const embedWorthyChunks = this.filterEmbedWorthyChunks(dedupedChunks);
+    const chunksToIndex = embedWorthyChunks.slice(0, indexMax);
 
     let manufacturer: string | null = null;
     if (doc.machineProfileId) {
@@ -2373,11 +2656,46 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return suggestion;
   }
 
-  async processDocumentExtraction(documentId: string): Promise<void> {
+  async continueDocumentExtraction(
+    documentId: string,
+    adminId: string,
+  ): Promise<{ ok: true; jobId: string }> {
     const doc = await this.findOne(documentId);
+    if (!['failed', 'partially_indexed'].includes(doc.status)) {
+      throw new BadRequestException(
+        'Continue is only for failed or partially_indexed documents (keeps OCR/vision already done)',
+      );
+    }
+    const rows = await this.getPageAnalysis(documentId);
+    if (rows.length === 0) {
+      throw new BadRequestException('No page analysis saved — use gate approve or re-upload instead');
+    }
+    const jobId = await this.enqueueExtractionJob(documentId, { resume: true });
+    await this.auditLogRepository.save(
+      this.auditLogRepository.create({
+        actionType: ActionType.UPDATE,
+        entityType: 'knowledge_document',
+        entityId: doc.id,
+        userId: adminId,
+        changes: { event: 'extraction_continue', jobId },
+        reason: doc.error,
+      }),
+    );
+    return { ok: true, jobId };
+  }
+
+  async processDocumentExtraction(documentId: string, opts?: { resume?: boolean }): Promise<void> {
+    const doc = await this.findOne(documentId);
+    const resume = opts?.resume === true;
 
     try {
-      await this.updateProgress(doc.id, { currentStage: 'extraction_start', progressPercent: 5 });
+      doc.status = 'processing';
+      doc.error = null;
+      await this.knowledgeDocumentsRepository.save(doc);
+      await this.updateProgress(doc.id, {
+        currentStage: resume ? 'extraction_resume' : 'extraction_start',
+        progressPercent: resume ? 10 : 5,
+      });
       const promptPathCandidates = [
         join(process.cwd(), 'src', 'ai', 'prompts', 'techo-pdf-extractor-system.prompt.md'),
         join(__dirname, '..', 'ai', 'prompts', 'techo-pdf-extractor-system.prompt.md'),
@@ -2405,8 +2723,13 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         totalPages,
         pagesProcessed: 0,
       });
-      await this.pageAnalysisRepository.delete({ documentId: doc.id });
-      await this.savePageAnalysis(doc.id, parsed, fullText);
+      const existingRows = resume ? await this.getPageAnalysis(doc.id) : [];
+      const canResumePages =
+        resume && existingRows.length > 0 && existingRows.length === (totalPages || existingRows.length);
+      if (!canResumePages) {
+        await this.pageAnalysisRepository.delete({ documentId: doc.id });
+        await this.savePageAnalysis(doc.id, parsed, fullText);
+      }
 
       // Section 6 (3-Employee model):
       // Employee 2 (OCR) runs in the ocr-queue asynchronously.
@@ -2415,16 +2738,34 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         if (doc.deepMode) {
           const rows = await this.getPageAnalysis(doc.id);
           const batches = this.splitRowsIntoBatches(rows, this.getDocBatchPages());
-          const ocrMax = Number(process.env.PDF_OCR_MAX_PAGES ?? 10);
+          const explainBeforeIndex =
+            isPdfPageExplanationBeforeIndexEnabled() && this.isEffectivePdfVision();
           if (ocrEnabled) {
-            const toOcr = batches.flatMap((batchRows) =>
-              batchRows
-                .filter((r) => r.quality === 'poor' || r.quality === 'unreadable' || r.quality === 'degraded')
-                .slice(0, ocrMax)
-                .map((r) => r.pageNumber),
-            );
+            const pageTexts = this.derivePageTexts(parsed, fullText);
+            const glyphCorrupted = await this.detectGlyphCorruptedPagesForDocument(doc, rows);
+            let toOcr = this.selectPageNumbersForOcr(rows, {
+              mode: 'auto',
+              pageTexts,
+              glyphCorruptedPages: glyphCorrupted,
+            });
+            if (canResumePages) {
+              toOcr = this.filterPageNumbersNeedingOcr(rows, toOcr);
+            }
             if (toOcr.length > 0) {
-              await this.enqueueOcrJob(doc.id, [...new Set(toOcr)].sort((a, b) => a - b));
+              if (isPdfOcrInlineBeforeIndexEnabled()) {
+                await this.updateProgress(doc.id, {
+                  currentStage: 'ocr_before_index',
+                  progressPercent: 16,
+                });
+                try {
+                  await this.ocrPagesFromPdf(doc.filePath, doc.id, toOcr);
+                } catch (e: any) {
+                  this.logger.warn(`Inline OCR before index failed: ${e?.message ?? e}`);
+                  doc.error = `OCR failed before index: ${e?.message ?? e}`.slice(0, 2000);
+                }
+              } else {
+                await this.enqueueOcrJob(doc.id, toOcr);
+              }
             }
           } else if (this.isEffectivePdfVision()) {
             // OCR off: still allow vision-only pass on low-quality pages (bounded).
@@ -2439,7 +2780,17 @@ export class KnowledgeDocumentsService implements OnModuleInit {
             }
           }
 
-          if (this.isEffectivePdfVision()) {
+          if (explainBeforeIndex) {
+            try {
+              await this.updateProgress(doc.id, {
+                currentStage: 'page_explanation_before_index',
+                progressPercent: 18,
+              });
+              await this.runPageExplanationPassBeforeIndex(doc.id, parsed, fullText);
+            } catch (e: any) {
+              this.logger.warn(`Page explanation before index failed: ${e?.message ?? e}`);
+            }
+          } else if (this.isEffectivePdfVision()) {
             const maxVisionPagesPerBatch = this.getVisionMaxPagesPerBatch();
             const pageTextsForFigures = this.derivePageTexts(parsed, fullText);
 
@@ -2471,6 +2822,20 @@ export class KnowledgeDocumentsService implements OnModuleInit {
                     if (perBatch >= maxVisionPagesPerBatch) break;
                   }
                 }
+              }
+            }
+            for (const batchRows of batches) {
+              let perBatch = [...inlineVisionPages].filter((p) =>
+                batchRows.some((r) => r.pageNumber === p),
+              ).length;
+              if (perBatch >= maxVisionPagesPerBatch) continue;
+              for (const r of batchRows) {
+                if (inlineVisionPages.has(r.pageNumber)) continue;
+                const pageText = pageTextsForFigures[r.pageNumber - 1] ?? '';
+                if (!this.pageLikelyNeedsUiVision(pageText, r.sectionType)) continue;
+                inlineVisionPages.add(r.pageNumber);
+                perBatch += 1;
+                if (perBatch >= maxVisionPagesPerBatch) break;
               }
             }
             for (const batchRows of batches) {
@@ -2547,7 +2912,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       }
       // Deep mode is the default architecture mode (full pipeline).
       doc.deepMode = true;
-      doc.status = 'processing';
       await this.knowledgeDocumentsRepository.save(doc);
 
       if (doc.machineName == null || String(doc.machineName).trim() === '') {
@@ -2579,6 +2943,7 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       const chunks = await this.buildRoutedChunks(doc.id, relevantText, chunkSize, overlap);
       const prioritizedChunks = this.prioritizeChunksForExtraction(chunks, doc.docType ?? 'general_reference');
       const dedupedChunks = this.filterNearDuplicateChunks(prioritizedChunks);
+      const embedWorthyChunks = this.filterEmbedWorthyChunks(dedupedChunks);
 
       const ocrScaffold = this.getOcrScaffoldMetadata(fullText);
       if (ocrScaffold.quality === 'poor') {
@@ -2587,8 +2952,8 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       }
 
       const candidatesToSave: KnowledgeExtractionCandidate[] = [];
-      const chunksToUse = dedupedChunks.slice(0, maxChunksToProcess);
-      const chunksToIndex = dedupedChunks.slice(0, indexMax);
+      const chunksToUse = embedWorthyChunks.slice(0, maxChunksToProcess);
+      const chunksToIndex = embedWorthyChunks.slice(0, indexMax);
       const chunkRagMeta: (DocumentChunkRowMeta | undefined)[] = new Array(chunksToUse.length);
       await this.updateProgress(doc.id, { currentStage: 'structured_extraction', progressPercent: 25 });
       const dedupe = new Set<string>();
@@ -2721,10 +3086,16 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         );
         doc.chunksIndexed = chunksToIndex.length;
         doc.status = 'done';
+        if (chunksToIndex.length === 0) {
+          doc.status = 'partially_indexed';
+          doc.error =
+            doc.error ??
+            'No searchable chunks were indexed (often: Paddle OCR or vision failed on glyph/LCD pages). Re-run OCR/vision after fixing paddle-ocr, then re-index.';
+        }
         await this.knowledgeDocumentsRepository.save(doc);
         await this.updateProgress(doc.id, {
-          currentStage: 'done',
-          progressPercent: 100,
+          currentStage: chunksToIndex.length > 0 ? 'done' : 'partially_indexed',
+          progressPercent: chunksToIndex.length > 0 ? 100 : 92,
           pagesProcessed: totalPages || chunksToIndex.length,
           lastProcessedPage: totalPages || chunksToIndex.length,
         });
@@ -3068,10 +3439,18 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     for (let i = 0; i < pageRows.length; i++) {
       const row = pageRows[i];
       const rawPageText = (pages[i] ?? '').trim();
+      const rawGlyphCorrupted =
+        this.detectGlyphCorruption(rawPageText).corrupted ||
+        (row?.qualityWarnings ?? []).some((w) => String(w).startsWith('glyph_corruption_likely'));
+      const hasOcr = !!(row?.ocrText && row.ocrText.trim().length > 0);
+      // Never index Poppler LCD-font garbage when VL/vision has not run yet.
+      if (!hasOcr && rawGlyphCorrupted) {
+        continue;
+      }
       // Prefer OCR/vision text when present. If OCR text contains a mixed
       // "raw + vision" payload and raw text looks glyph-corrupted, keep only
       // the vision block to avoid polluting chunks with unreadable symbols.
-      let pageText = (row?.ocrText && row.ocrText.trim().length > 0 ? row.ocrText : rawPageText).trim();
+      let pageText = (hasOcr ? row!.ocrText! : rawPageText).trim();
       if (pageText.includes('--- Vision description ---')) {
         const [rawPart, ...visionParts] = pageText.split('--- Vision description ---');
         const visionOnly = visionParts.join('--- Vision description ---').trim();
@@ -3182,17 +3561,37 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return union > 0 ? intersection / union : 0;
   }
 
+  private filterEmbedWorthyChunks(chunks: string[]): string[] {
+    return chunks.filter((c) => !isLowValueChunkText(c));
+  }
+
+  /** Pages with HMI/button instructions benefit from vision even when Poppler text looks "good". */
+  private pageLikelyNeedsUiVision(pageText: string, sectionType?: string | null): boolean {
+    const t = String(pageText || '');
+    if (!t.trim()) return false;
+    if (sectionType === 'procedure_steps' || sectionType === 'warning_notice') {
+      if (/(appuyez|press|touchez|touch|button|touche)/i.test(t)) return true;
+    }
+    if (/\bGoto\b|\bConf\b|\bULoc\b|\bSP\s*:/i.test(t)) return true;
+    if (/\[RETURN\]|\[UP\]|\[DOWN\]/i.test(t)) return false;
+    if (/(▲|▼|△|▽)/.test(t) && /(appuyez|press|configuration|mode)/i.test(t)) return true;
+    return false;
+  }
+
   private filterNearDuplicateChunks(chunks: string[]): string[] {
     const threshold = this.getNearDuplicateJaccardThreshold();
     const kept: string[] = [];
     const tokenSets: Set<string>[] = [];
     for (const chunk of chunks) {
+      if (isLowValueChunkText(chunk)) continue;
       const norm = this.normalizeChunkForSimilarity(chunk);
       const tokens = norm.split(' ').filter((t) => t.length >= 3);
       const tokenSet = new Set(tokens);
       if (tokenSet.size === 0) {
-        kept.push(chunk);
-        tokenSets.push(tokenSet);
+        if (!isLowValueChunkText(chunk)) {
+          kept.push(chunk);
+          tokenSets.push(tokenSet);
+        }
         continue;
       }
       let duplicate = false;
@@ -3320,51 +3719,235 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     }
   }
 
-  private async ocrPagesFromPdf(pdfPath: string, documentId: string, pageNumbers: number[]): Promise<number> {
-    const tesseract = process.env.TESSERACT_PATH?.trim() || 'tesseract';
-    const lang = process.env.TESSERACT_LANG?.trim() || 'eng+fra';
+  private async loadPopplerPageTextsForDocument(doc: KnowledgeDocument): Promise<string[]> {
+    if (!doc.filePath || !existsSync(doc.filePath)) return [];
+    try {
+      const parsed: any = await parsePdfWithPoppler(readFileSync(doc.filePath));
+      const fullText = this.normalizeExtractedText(String(parsed?.text || ''));
+      return this.derivePageTexts(parsed, fullText);
+    } catch {
+      return [];
+    }
+  }
 
+  /**
+   * Pages that need a ChatGPT-style vision explanation before the first Qdrant index.
+   */
+  private getMinGoodOcrCharsForVisionSkip(): number {
+    return Number(process.env.PDF_PAGE_EXPLAIN_MIN_CHARS ?? 200);
+  }
+
+  private filterPageNumbersNeedingOcr(rows: KnowledgeDocumentPageAnalysis[], pageNumbers: number[]): number[] {
+    const minOcr = Number(process.env.PDF_OCR_REOCR_BELOW_CHARS ?? 120);
+    const rowMap = new Map(rows.map((r) => [r.pageNumber, r]));
+    return pageNumbers.filter((p) => {
+      const row = rowMap.get(p);
+      if (!row) return true;
+      return (row.ocrText ?? '').trim().length < minOcr;
+    });
+  }
+
+  private async filterPageNumbersNeedingVision(documentId: string, pageNumbers: number[]): Promise<number[]> {
+    if (!pageNumbers.length) return [];
+    const minGood = this.getMinGoodOcrCharsForVisionSkip();
+    const rows = await this.pageAnalysisRepository.find({
+      where: { documentId, pageNumber: In(pageNumbers) },
+    });
+    const rowMap = new Map(rows.map((r) => [r.pageNumber, r]));
+    return pageNumbers.filter((p) => {
+      const row = rowMap.get(p);
+      if (!row) return true;
+      if (row.visionUsed && (row.ocrText ?? '').trim().length >= minGood) return false;
+      return true;
+    });
+  }
+
+  private selectPageNumbersForPageExplanation(
+    pageRows: KnowledgeDocumentPageAnalysis[],
+    pageTexts: string[],
+    glyphCorrupted: Set<number>,
+    displayFontPages: Set<number>,
+  ): number[] {
+    const minGoodChars = Number(process.env.PDF_PAGE_EXPLAIN_MIN_CHARS ?? 200);
+    const selected: number[] = [];
+
+    for (const row of pageRows) {
+      const pageText = pageTexts[row.pageNumber - 1] ?? '';
+      const ocrLen = (row.ocrText ?? '').trim().length;
+      if (row.visionUsed && ocrLen >= minGoodChars) continue;
+
+      const needs =
+        glyphCorrupted.has(row.pageNumber) ||
+        displayFontPages.has(row.pageNumber) ||
+        row.quality === 'poor' ||
+        row.quality === 'unreadable' ||
+        row.quality === 'degraded' ||
+        row.sectionType === 'wiring' ||
+        this.pageLikelyHasDiagram(pageText) ||
+        this.pageLikelyNeedsUiVision(pageText, row.sectionType) ||
+        ocrLen < minGoodChars;
+
+      if (needs) selected.push(row.pageNumber);
+    }
+
+    const uniq = [...new Set(selected)].sort((a, b) => a - b);
+    const cap = getPdfPageExplanationMaxPages();
+    return cap > 0 ? uniq.slice(0, cap) : uniq;
+  }
+
+  private async runPageExplanationPassBeforeIndex(
+    documentId: string,
+    parsed: unknown,
+    fullText: string,
+  ): Promise<void> {
+    const doc = await this.findOne(documentId);
+    const rows = await this.getPageAnalysis(documentId);
+    const pageTexts = this.derivePageTexts(parsed, fullText);
+    const glyphCorrupted = await this.detectGlyphCorruptedPagesForDocument(doc, rows);
+    const displayFontPages = await this.detectDisplayFontPagesParallel(
+      doc.filePath,
+      rows.map((r) => r.pageNumber),
+    );
+    const pages = this.selectPageNumbersForPageExplanation(rows, pageTexts, glyphCorrupted, displayFontPages);
+    if (!pages.length) return;
+
+    const batchSize = Math.max(1, this.getVisionMaxPagesPerBatch());
+    const totalVision = pages.length;
+    let visionDone = 0;
+    for (let i = 0; i < pages.length; i += batchSize) {
+      const slice = pages.slice(i, i + batchSize);
+      visionDone += await this.runVisionForDocumentPages(documentId, slice, {
+        maxPages: slice.length,
+        promptMode: 'page_explanation',
+      });
+      await this.updateProgress(documentId, {
+        currentStage: 'page_explanation_before_index',
+        progressPercent: this.progressInBand(visionDone, totalVision, 24, 65),
+        pagesProcessed: visionDone,
+        lastProcessedPage: slice[slice.length - 1],
+        totalPages: doc.totalPages || totalVision,
+      });
+    }
+  }
+
+  /**
+   * Choose pages for OCR. Manual run is broader (figures, empty ocrText). Auto run caps with PDF_OCR_MAX_PAGES.
+   */
+  private selectPageNumbersForOcr(
+    pageRows: KnowledgeDocumentPageAnalysis[],
+    options: {
+      mode: 'auto' | 'manual';
+      pageTexts?: string[];
+      glyphCorruptedPages?: Set<number>;
+    },
+  ): number[] {
+    const minPopplerChars = Number(process.env.PDF_OCR_MIN_POPPLER_CHARS ?? 80);
+    const minOcrChars = Number(process.env.PDF_OCR_REOCR_BELOW_CHARS ?? 120);
+    const selected: number[] = [];
+
+    for (const row of pageRows) {
+      const pageText = options.pageTexts?.[row.pageNumber - 1] ?? '';
+      const ocrLen = (row.ocrText ?? '').trim().length;
+      const popplerLen = pageText.trim().length;
+
+      let include = false;
+      if (options.mode === 'auto') {
+        include =
+          row.quality === 'poor' ||
+          row.quality === 'unreadable' ||
+          row.quality === 'degraded' ||
+          (options.glyphCorruptedPages?.has(row.pageNumber) ?? false);
+      } else {
+        include =
+          row.quality !== 'good' ||
+          (options.glyphCorruptedPages?.has(row.pageNumber) ?? false) ||
+          ocrLen < minOcrChars ||
+          (popplerLen > 0 && popplerLen < minPopplerChars) ||
+          this.pageLikelyHasDiagram(pageText);
+      }
+      if (include) selected.push(row.pageNumber);
+    }
+
+    const uniq = [...new Set(selected)].sort((a, b) => a - b);
+    const cap = options.mode === 'manual' ? getPdfOcrManualMaxPages() : getPdfOcrMaxPagesAuto();
+    if (cap > 0) return uniq.slice(0, cap);
+    return uniq;
+  }
+
+  /** Map completed units into a progress % band (used so the UI moves during long OCR/vision). */
+  private progressInBand(completed: number, total: number, startPct: number, endPct: number): number {
+    if (total <= 0) return startPct;
+    const ratio = Math.min(1, Math.max(0, completed / total));
+    return Math.floor(startPct + ratio * (endPct - startPct));
+  }
+
+  private async ocrPagesFromPdf(pdfPath: string, documentId: string, pageNumbers: number[]): Promise<number> {
     const workDir = join(tmpdir(), `smartmaint-ocr-${documentId}-${Date.now()}`);
     mkdirSync(workDir, { recursive: true });
+    const dpi = getOcrRenderDpi();
+    const skipSharp = shouldSkipSharpPreprocess();
+    const totalOcr = pageNumbers.length;
+    const doc = await this.findOne(documentId);
 
     let processed = 0;
+    let ocrFailures = 0;
     try {
       for (const page of pageNumbers) {
-        const pngPath = await this.renderPdfPageToPng(pdfPath, page, workDir);
+        try {
+          const pngPath = await this.renderPdfPageToPng(pdfPath, page, workDir, dpi);
 
-        const first = await this.runTesseract(pngPath, tesseract, lang);
-        let bestText = first.text;
-        let bestConf = first.confidence;
-        let bestMode: 'raw' | 'preprocessed' = 'raw';
+          const first = await runOcrOnPng(pngPath);
+          let bestText = first.text;
+          let bestConf = first.confidence;
+          let bestMode: 'raw' | 'preprocessed' = 'raw';
 
-        // Auto-fix pipeline for degraded/poor pages: denoise/contrast/binarize/sharpen.
-        const preprocessedPath = join(workDir, `page-${page}-pre.png`);
-        await sharp(pngPath)
-          .grayscale()
-          .normalize()
-          .median(1)
-          .sharpen()
-          .threshold(180)
-          .png()
-          .toFile(preprocessedPath);
-        const second = await this.runTesseract(preprocessedPath, tesseract, lang);
-        if ((second.confidence ?? 0) > (bestConf ?? 0)) {
-          bestText = second.text;
-          bestConf = second.confidence;
-          bestMode = 'preprocessed';
+          if (!skipSharp) {
+            const preprocessedPath = join(workDir, `page-${page}-pre.png`);
+            await sharp(pngPath)
+              .grayscale()
+              .normalize()
+              .median(1)
+              .sharpen()
+              .threshold(180)
+              .png()
+              .toFile(preprocessedPath);
+            const second = await runOcrOnPng(preprocessedPath);
+            if ((second.confidence ?? 0) > (bestConf ?? 0)) {
+              bestText = second.text;
+              bestConf = second.confidence;
+              bestMode = 'preprocessed';
+            }
+          }
+
+          await this.pageAnalysisRepository.update(
+            { documentId, pageNumber: page },
+            {
+              ocrText: bestText || null,
+              ocrConfidence: bestConf,
+              processingMode: bestMode,
+              extractionMode: 'ocr',
+            },
+          );
+
+          processed += 1;
+        } catch (e: any) {
+          ocrFailures += 1;
+          this.logger.warn(`OCR failed page ${page} doc ${documentId}: ${e?.message ?? e}`);
+          await this.appendPageQualityWarning(documentId, page, 'ocr_failed');
         }
 
-        await this.pageAnalysisRepository.update(
-          { documentId, pageNumber: page },
-          {
-            ocrText: bestText || null,
-            ocrConfidence: bestConf,
-            processingMode: bestMode,
-            extractionMode: 'ocr',
-          },
-        );
+        const doneUnits = processed + ocrFailures;
+        await this.updateProgress(documentId, {
+          currentStage: 'ocr_before_index',
+          progressPercent: this.progressInBand(doneUnits, totalOcr, 16, 24),
+          pagesProcessed: processed,
+          lastProcessedPage: page,
+          totalPages: doc.totalPages || totalOcr,
+        });
+      }
 
-        processed += 1;
+      if (ocrFailures > 0 && processed === 0) {
+        throw new Error(`OCR failed on all ${ocrFailures} page(s); check paddle-ocr logs`);
       }
 
       await this.maybeEnqueueVisionPagesAfterOcr(documentId, pageNumbers);
@@ -3377,48 +3960,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     }
 
     return processed;
-  }
-
-  private async runTesseract(
-    pngPath: string,
-    tesseractBin: string,
-    lang: string,
-  ): Promise<{ text: string; confidence: number | null }> {
-    const textRes = await execFileAsync(tesseractBin, [pngPath, 'stdout', '-l', lang], {
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    const text = this.normalizeExtractedText((textRes.stdout ?? '').toString().trim());
-
-    const tsvRes = await execFileAsync(tesseractBin, [pngPath, 'stdout', '-l', lang, 'tsv'], {
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    const tsv = (tsvRes.stdout ?? '').toString();
-    const confidence = this.meanTesseractConfidence(tsv);
-    return { text, confidence };
-  }
-
-  private meanTesseractConfidence(tsv: string): number | null {
-    // TSV format: level page_num block_num par_num line_num word_num left top width height conf text
-    const lines = String(tsv || '').split(/\r?\n/);
-    if (lines.length <= 1) return null;
-    let sum = 0;
-    let count = 0;
-    for (const line of lines.slice(1)) {
-      if (!line.trim()) continue;
-      const parts = line.split('\t');
-      const confStr = parts[10];
-      const text = parts[11];
-      if (!text || !text.trim()) continue;
-      const conf = Number(confStr);
-      if (!Number.isFinite(conf) || conf < 0) continue;
-      sum += conf;
-      count += 1;
-    }
-    if (count === 0) return null;
-    // Tesseract conf is 0..100
-    return Math.max(0, Math.min(1, (sum / count) / 100));
   }
 
   private async detectMachineProfile(

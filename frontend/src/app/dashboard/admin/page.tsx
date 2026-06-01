@@ -8,7 +8,9 @@ import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { TicketIcon, Users, ClipboardList, UserCheck } from 'lucide-react';
+import Link from 'next/link';
+import { TicketIcon, Users, ClipboardList, UserCheck, Database } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface Ticket {
   id: string;
@@ -92,6 +94,23 @@ export default function AdminDashboard() {
         showSidebar={true}
       >
         <div className="space-y-8">
+          <Card className="border-border/50 shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <div>
+                <CardTitle className="text-lg">Database schema</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  All PostgreSQL tables and columns (live from the database), plus Docker/psql instructions.
+                </p>
+              </div>
+              <Database className="h-5 w-5 text-muted-foreground shrink-0" />
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" asChild className="gap-2">
+                <Link href="/dashboard/admin/database-inventory">View full schema</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
           {/* Stats */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <Card className="border-border/50 shadow-sm transition-shadow hover:shadow-md">

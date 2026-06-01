@@ -35,7 +35,10 @@ interface Ticket {
   updatedAt: string;
   createdById?: string;
   createdBy?: { fullName: string; email: string };
-  assignedTo?: { fullName: string; email: string };
+  assignedTo?: { id?: string; fullName: string; email: string };
+  assignmentRequestStatus?: 'none' | 'pending' | 'approved' | 'rejected';
+  assignmentRequestedById?: string | null;
+  assignmentRequestNote?: string | null;
   attachments?: {
     id: string;
     fileName: string;
@@ -46,6 +49,12 @@ interface Ticket {
   }[];
 }
 
+interface TechnicianOption {
+  id: string;
+  fullName?: string | null;
+  email: string;
+}
+
 export default function TicketDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -54,6 +63,11 @@ export default function TicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [newStatus, setNewStatus] = useState('');
+  const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState('');
+  const [assigning, setAssigning] = useState(false);
+  const [requestingSelfAssign, setRequestingSelfAssign] = useState(false);
+  const [reviewingSelfAssign, setReviewingSelfAssign] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showCloseModal, setShowCloseModal] = useState(false);
 
@@ -63,16 +77,32 @@ export default function TicketDetailPage() {
     }
   }, [params.id]);
 
+  useEffect(() => {
+    const canAssign = user?.role === 'admin' || user?.role === 'superadmin';
+    if (!canAssign) return;
+    fetchTechnicians();
+  }, [user?.role]);
+
   const fetchTicket = async (id: string) => {
     try {
       const response = await api.get(`/tickets/${id}`);
       setTicket(response.data);
       setNewStatus(response.data.status);
+      setSelectedTechnicianId(response.data?.assignedTo?.id || '');
     } catch (error: any) {
       console.error('Failed to fetch ticket:', error);
       toast.error(error.response?.data?.message || 'Failed to load ticket');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTechnicians = async () => {
+    try {
+      const res = await api.get<TechnicianOption[]>('/users/technicians');
+      setTechnicians(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setTechnicians([]);
     }
   };
 
@@ -109,6 +139,22 @@ export default function TicketDetailPage() {
     }
   };
 
+  const handleAssignTechnician = async () => {
+    if (!ticket || !selectedTechnicianId) return;
+    setAssigning(true);
+    const toastId = toast.loading('Assigning technician...');
+    try {
+      await api.post(`/tickets/${ticket.id}/assign`, { technicianId: selectedTechnicianId });
+      await fetchTicket(ticket.id);
+      toast.success('Technician assigned successfully!', { id: toastId });
+    } catch (error: any) {
+      console.error('Failed to assign technician:', error);
+      toast.error(error.response?.data?.message || 'Failed to assign technician', { id: toastId });
+    } finally {
+      setAssigning(false);
+    }
+  };
+
   const getStatusBadgeClass = (status: string): string => {
     const classes: Record<string, string> = {
       open: 'bg-blue-500 text-white border-0 hover:bg-blue-600',
@@ -133,6 +179,8 @@ export default function TicketDetailPage() {
   const canUpdateStatus = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
   const canDelete = user?.role === 'admin' || user?.role === 'superadmin' || (user?.role === 'worker' && ticket?.createdById === user?.id);
   const canClose = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
+  const canAssignTechnician = user?.role === 'admin' || user?.role === 'superadmin';
+  const canRequestSelfAssign = user?.role === 'technician';
   const showSidebar = user?.role === 'admin' || user?.role === 'superadmin';
 
   const handleDeleteClick = () => {
@@ -320,6 +368,128 @@ export default function TicketDetailPage() {
                   <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
                     Details
                   </h2>
+                  {canAssignTechnician && (
+                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                        Assign technician
+                      </div>
+                      <div className="flex gap-2">
+                        <Select
+                          value={selectedTechnicianId}
+                          onChange={(e) => setSelectedTechnicianId(e.target.value)}
+                          className="h-9"
+                        >
+                          <option value="">Select technician</option>
+                          {technicians.map((tech) => (
+                            <option key={tech.id} value={tech.id}>
+                              {tech.fullName?.trim() || tech.email}
+                            </option>
+                          ))}
+                        </Select>
+                        <Button
+                          size="sm"
+                          onClick={handleAssignTechnician}
+                          disabled={assigning || !selectedTechnicianId}
+                          className="h-9"
+                        >
+                          {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Assign'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  {canRequestSelfAssign && (
+                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                        Self-assign
+                      </div>
+                      {ticket.assignedToId === user?.id ? (
+                        <Badge variant="default">Already assigned to you</Badge>
+                      ) : ticket.assignedToId ? (
+                        <Badge variant="secondary">Already assigned</Badge>
+                      ) : ticket.assignmentRequestStatus === 'pending' && ticket.assignmentRequestedById === user?.id ? (
+                        <Badge variant="outline">Request pending admin approval</Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            if (!ticket) return;
+                            setRequestingSelfAssign(true);
+                            const toastId = toast.loading('Sending request...');
+                            try {
+                              await api.post(`/tickets/${ticket.id}/request-self-assign`);
+                              await fetchTicket(ticket.id);
+                              toast.success('Self-assign request sent for admin approval.', { id: toastId });
+                            } catch (error: any) {
+                              toast.error(error.response?.data?.message || 'Failed to send request', {
+                                id: toastId,
+                              });
+                            } finally {
+                              setRequestingSelfAssign(false);
+                            }
+                          }}
+                          disabled={requestingSelfAssign}
+                        >
+                          {requestingSelfAssign ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Request assignment'}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  {canAssignTechnician && ticket.assignmentRequestStatus === 'pending' && (
+                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
+                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                        Pending self-assign request
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          disabled={reviewingSelfAssign}
+                          onClick={async () => {
+                            if (!ticket) return;
+                            setReviewingSelfAssign(true);
+                            const toastId = toast.loading('Approving request...');
+                            try {
+                              await api.post(`/tickets/${ticket.id}/assignment-request/approve`);
+                              await fetchTicket(ticket.id);
+                              toast.success('Request approved and technician assigned.', { id: toastId });
+                            } catch (error: any) {
+                              toast.error(error.response?.data?.message || 'Failed to approve request', {
+                                id: toastId,
+                              });
+                            } finally {
+                              setReviewingSelfAssign(false);
+                            }
+                          }}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={reviewingSelfAssign}
+                          onClick={async () => {
+                            if (!ticket) return;
+                            setReviewingSelfAssign(true);
+                            const toastId = toast.loading('Rejecting request...');
+                            try {
+                              await api.post(`/tickets/${ticket.id}/assignment-request/reject`, {
+                                reason: 'Rejected by admin',
+                              });
+                              await fetchTicket(ticket.id);
+                              toast.success('Request rejected.', { id: toastId });
+                            } catch (error: any) {
+                              toast.error(error.response?.data?.message || 'Failed to reject request', {
+                                id: toastId,
+                              });
+                            } finally {
+                              setReviewingSelfAssign(false);
+                            }
+                          }}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <ul className="space-y-2.5 text-sm">
                     <li className="flex justify-between gap-3">
                       <span className="text-muted-foreground shrink-0">Created by</span>

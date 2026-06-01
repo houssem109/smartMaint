@@ -30,5 +30,7 @@ export declare class AiService {
         model?: string;
     }): Promise<string>;
     private openRouterChatCompletions;
+    private parseOpenRouterErrorBody;
+    private userFacingOpenRouterError;
 }
 export {};

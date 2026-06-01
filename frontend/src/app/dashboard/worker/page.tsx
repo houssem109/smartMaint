@@ -92,9 +92,14 @@ export default function WorkerDashboard() {
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-xl font-semibold tracking-tight">My Tickets</h2>
-            <Button asChild className="w-fit">
-              <Link href="/dashboard/create-ticket">Create New Ticket</Link>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline" className="w-fit">
+                <Link href="/dashboard/worker/knowledge">Knowledge Base</Link>
+              </Button>
+              <Button asChild className="w-fit">
+                <Link href="/dashboard/create-ticket">Create New Ticket</Link>
+              </Button>
+            </div>
           </div>
 
           {/* Search + filters */}

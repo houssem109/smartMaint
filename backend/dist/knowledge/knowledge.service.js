@@ -50,14 +50,22 @@ exports.KnowledgeService = void 0;
 const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
+const fs_1 = require("fs");
+const path_1 = require("path");
 const ExcelJS = __importStar(require("exceljs"));
 const knowledge_entry_entity_1 = require("./entities/knowledge-entry.entity");
 const user_entity_1 = require("../users/entities/user.entity");
 const rag_service_1 = require("../ai/rag.service");
+const ai_service_1 = require("../ai/ai.service");
+const audit_log_entity_1 = require("../common/entities/audit-log.entity");
+const page_explanation_config_1 = require("../knowledge-documents/page-explanation.config");
+const knowledge_photo_config_1 = require("./knowledge-photo.config");
 let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
-    constructor(knowledgeRepository, ragService) {
+    constructor(knowledgeRepository, auditLogRepository, ragService, aiService) {
         this.knowledgeRepository = knowledgeRepository;
+        this.auditLogRepository = auditLogRepository;
         this.ragService = ragService;
+        this.aiService = aiService;
         this.logger = new common_1.Logger(KnowledgeService_1.name);
     }
     buildIndexText(entry) {
@@ -69,7 +77,11 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
             entry.rootCause ? `Cause: ${entry.rootCause}` : null,
             `Solution: ${entry.solution}`,
             entry.tags ? `Tags: ${entry.tags}` : null,
-            entry.photoPath ? `Field photo on file: ${entry.photoPath}` : null,
+            entry.photoVisionDescription?.trim()
+                ? `Field photo description: ${entry.photoVisionDescription.trim()}`
+                : entry.photoPath
+                    ? `Field photo on file: ${entry.photoPath}`
+                    : null,
         ].filter(Boolean);
         return parts.join('\n');
     }
@@ -90,22 +102,37 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
         }
     }
     async create(dto, userId, role, options) {
-        const isTech = role === user_entity_1.UserRole.TECHNICIAN;
-        const reviewStatus = isTech ? 'pending_review' : 'approved';
+        const isFieldContributor = role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER;
+        const reviewStatus = isFieldContributor ? 'pending_review' : 'approved';
         const { knowledgeDocumentId, ...rest } = dto;
         const entry = this.knowledgeRepository.create({
             ...rest,
-            knowledgeDocument: !isTech && knowledgeDocumentId ? { id: knowledgeDocumentId } : null,
+            knowledgeDocument: !isFieldContributor && knowledgeDocumentId ? { id: knowledgeDocumentId } : null,
             createdById: userId,
             reviewStatus,
-            entryType: dto.entryType?.trim() || (isTech ? 'experience' : null),
-            source: dto.source?.trim() || (isTech ? 'field_experience' : null),
+            entryType: dto.entryType?.trim() || (isFieldContributor ? 'experience' : null),
+            source: dto.source?.trim() || (isFieldContributor ? 'field_experience' : null),
             machineName: dto.machineName?.trim() || null,
             symptom: dto.symptom?.trim() || null,
             rootCause: dto.rootCause?.trim() || null,
             severity: dto.severity?.trim() || null,
         });
         const saved = await this.knowledgeRepository.save(entry);
+        if (isFieldContributor) {
+            await this.auditLogRepository.save(this.auditLogRepository.create({
+                actionType: audit_log_entity_1.ActionType.CREATE,
+                entityId: saved.id,
+                entityType: 'knowledge_entry',
+                userId,
+                changes: {
+                    event: 'knowledge_entry_submitted',
+                    title: saved.title,
+                    reviewStatus: saved.reviewStatus,
+                    createdById: saved.createdById,
+                },
+                reason: null,
+            }));
+        }
         if (reviewStatus === 'approved' && !options?.skipAutoIndex) {
             await this.indexEntryIfApproved(saved);
         }
@@ -113,8 +140,11 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
     }
     async findAllForRole(userId, role) {
         const qb = this.knowledgeRepository.createQueryBuilder('k').leftJoinAndSelect('k.createdBy', 'createdBy');
-        if (role === user_entity_1.UserRole.TECHNICIAN) {
-            qb.where('k.createdById = :userId', { userId });
+        if (role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER) {
+            qb.where('(k.reviewStatus = :approved OR k.createdById = :userId)', {
+                approved: 'approved',
+                userId,
+            });
         }
         qb.orderBy('k.createdAt', 'DESC');
         return qb.getMany();
@@ -161,21 +191,24 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
     }
     async findOneForUser(id, userId, role) {
         const entry = await this.findOne(id);
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.createdById !== userId) {
-            throw new common_1.ForbiddenException('You can only view your own knowledge entries');
+        if ((role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER) &&
+            entry.reviewStatus !== 'approved' &&
+            entry.createdById !== userId) {
+            throw new common_1.ForbiddenException('You can only view your own non-approved knowledge entries');
         }
         return entry;
     }
     async update(id, dto, userId, role) {
         const entry = await this.findOne(id);
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.createdById !== userId) {
+        const isFieldContributor = role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER;
+        if (isFieldContributor && entry.createdById !== userId) {
             throw new common_1.ForbiddenException('You can only update your own knowledge entries');
         }
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.reviewStatus === 'approved') {
-            throw new common_1.BadRequestException('Approved entries cannot be edited by technicians');
+        if (isFieldContributor && entry.reviewStatus === 'approved') {
+            throw new common_1.BadRequestException('Approved entries cannot be edited by field users');
         }
         Object.assign(entry, dto);
-        if (role === user_entity_1.UserRole.TECHNICIAN) {
+        if (isFieldContributor) {
             entry.reviewStatus = 'pending_review';
             entry.reviewedById = null;
             entry.reviewedAt = null;
@@ -189,7 +222,7 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
     }
     async remove(id, userId, role) {
         const entry = await this.findOne(id);
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.createdById !== userId) {
+        if ((role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER) && entry.createdById !== userId) {
             throw new common_1.ForbiddenException('You can only delete your own knowledge entries');
         }
         await this.knowledgeRepository.delete(id);
@@ -205,6 +238,19 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
         entry.rejectReason = null;
         const saved = await this.knowledgeRepository.save(entry);
         await this.indexEntryIfApproved(saved);
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.APPROVE,
+            entityId: saved.id,
+            entityType: 'knowledge_entry',
+            userId: adminId,
+            changes: {
+                event: 'knowledge_entry_approved',
+                forUserId: saved.createdById,
+                title: saved.title,
+                reviewStatus: saved.reviewStatus,
+            },
+            reason: null,
+        }));
         return saved;
     }
     async rejectKnowledgeEntry(id, adminId, reason) {
@@ -216,26 +262,70 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
         entry.reviewedById = adminId;
         entry.reviewedAt = new Date();
         entry.rejectReason = reason?.trim() || null;
-        return this.knowledgeRepository.save(entry);
+        const saved = await this.knowledgeRepository.save(entry);
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.REJECT,
+            entityId: saved.id,
+            entityType: 'knowledge_entry',
+            userId: adminId,
+            changes: {
+                event: 'knowledge_entry_rejected',
+                forUserId: saved.createdById,
+                title: saved.title,
+                reviewStatus: saved.reviewStatus,
+                rejectReason: saved.rejectReason,
+            },
+            reason: saved.rejectReason,
+        }));
+        return saved;
     }
     async setPhotoPath(entryId, relativePath, userId, role) {
         const entry = await this.findOne(entryId);
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.createdById !== userId) {
+        const isFieldContributor = role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER;
+        if (isFieldContributor && entry.createdById !== userId) {
             throw new common_1.ForbiddenException('You can only attach photos to your own entries');
         }
-        if (role === user_entity_1.UserRole.TECHNICIAN && entry.reviewStatus === 'approved') {
+        if (isFieldContributor && entry.reviewStatus === 'approved') {
             throw new common_1.BadRequestException('Cannot change photo on approved entries');
         }
         entry.photoPath = relativePath;
-        if (role === user_entity_1.UserRole.TECHNICIAN) {
+        entry.photoVisionDescription = null;
+        if (isFieldContributor) {
             entry.reviewStatus = 'pending_review';
             entry.reviewedById = null;
             entry.reviewedAt = null;
         }
-        return this.knowledgeRepository.save(entry);
+        const saved = await this.knowledgeRepository.save(entry);
+        await this.describeFieldPhotoForEntry(saved);
+        const refreshed = await this.findOne(saved.id);
+        if (refreshed.reviewStatus === 'approved') {
+            await this.indexEntryIfApproved(refreshed);
+        }
+        return refreshed;
+    }
+    async describeFieldPhotoForEntry(entry) {
+        if (!(0, page_explanation_config_1.isFieldPhotoVisionEnabled)() || !entry.photoPath?.trim())
+            return;
+        const root = (0, path_1.resolve)((0, path_1.join)(process.cwd(), (0, knowledge_photo_config_1.getKnowledgePhotoUploadDir)()));
+        const abs = (0, path_1.resolve)((0, path_1.join)(process.cwd(), entry.photoPath));
+        if (!abs.startsWith(root) || !(0, fs_1.existsSync)(abs)) {
+            this.logger.warn(`Field photo missing for entry ${entry.id}: ${entry.photoPath}`);
+            return;
+        }
+        try {
+            const b64 = (0, fs_1.readFileSync)(abs).toString('base64');
+            const prompt = (0, page_explanation_config_1.buildFieldPhotoVisionPrompt)(entry.machineName, entry.title);
+            const description = (await this.aiService.describeImageBase64ForPdf(b64, prompt)).trim().slice(0, 50000);
+            if (!description)
+                return;
+            await this.knowledgeRepository.update(entry.id, { photoVisionDescription: description });
+        }
+        catch (e) {
+            this.logger.warn(`Field photo vision failed for ${entry.id}: ${e?.message ?? e}`);
+        }
     }
     async exportCsvForUser(userId, role) {
-        const rows = role === user_entity_1.UserRole.TECHNICIAN
+        const rows = role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER
             ? await this.knowledgeRepository.find({ where: { createdById: userId }, order: { createdAt: 'DESC' } })
             : await this.knowledgeRepository.find({ order: { createdAt: 'DESC' } });
         const header = [
@@ -279,7 +369,7 @@ let KnowledgeService = KnowledgeService_1 = class KnowledgeService {
         return [header, ...lines].join('\n');
     }
     async exportXlsxForUser(userId, role) {
-        const rows = role === user_entity_1.UserRole.TECHNICIAN
+        const rows = role === user_entity_1.UserRole.TECHNICIAN || role === user_entity_1.UserRole.WORKER
             ? await this.knowledgeRepository.find({ where: { createdById: userId }, order: { createdAt: 'DESC' } })
             : await this.knowledgeRepository.find({ order: { createdAt: 'DESC' } });
         const wb = new ExcelJS.Workbook();
@@ -328,7 +418,11 @@ exports.KnowledgeService = KnowledgeService;
 exports.KnowledgeService = KnowledgeService = KnowledgeService_1 = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(knowledge_entry_entity_1.KnowledgeEntry)),
+    __param(1, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
+    __param(3, (0, common_1.Inject)((0, common_1.forwardRef)(() => ai_service_1.AiService))),
     __metadata("design:paramtypes", [typeorm_2.Repository,
-        rag_service_1.RagService])
+        typeorm_2.Repository,
+        rag_service_1.RagService,
+        ai_service_1.AiService])
 ], KnowledgeService);
 //# sourceMappingURL=knowledge.service.js.map

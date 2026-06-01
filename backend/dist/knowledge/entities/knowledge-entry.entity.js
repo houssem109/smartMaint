@@ -81,6 +81,10 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeEntry.prototype, "photoPath", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeEntry.prototype, "photoVisionDescription", void 0);
+__decorate([
     (0, typeorm_1.ManyToOne)(() => knowledge_document_entity_1.KnowledgeDocument, { nullable: true, onDelete: 'SET NULL' }),
     (0, typeorm_1.JoinColumn)({ name: 'knowledgeDocumentId' }),
     __metadata("design:type", knowledge_document_entity_1.KnowledgeDocument)

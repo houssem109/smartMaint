@@ -51,11 +51,11 @@ export class KnowledgeDocumentsExtractionQueueProcessor {
   constructor(private readonly knowledgeDocumentsService: KnowledgeDocumentsService) {}
 
   @Process(EXTRACTION_JOB)
-  async handleExtraction(job: Job<{ documentId: string; trackingJobId?: string }>) {
-    const { documentId, trackingJobId } = job.data;
+  async handleExtraction(job: Job<{ documentId: string; trackingJobId?: string; resume?: boolean }>) {
+    const { documentId, trackingJobId, resume } = job.data;
     await this.knowledgeDocumentsService.markTrackingJobActive(trackingJobId, String(job.id));
     try {
-      await this.knowledgeDocumentsService.processDocumentExtraction(documentId);
+      await this.knowledgeDocumentsService.processDocumentExtraction(documentId, { resume: resume === true });
       await this.knowledgeDocumentsService.markTrackingJobCompleted(trackingJobId);
     } catch (e: any) {
       const msg = e?.message ? String(e.message) : String(e);
@@ -78,7 +78,13 @@ export class KnowledgeDocumentsOcrQueueProcessor {
     const { documentId, trackingJobId, pageNumbers } = job.data;
     await this.knowledgeDocumentsService.markTrackingJobActive(trackingJobId, String(job.id));
     try {
-      await this.knowledgeDocumentsService.runOcrForDocumentPages(documentId, pageNumbers ?? []);
+      const processed = await this.knowledgeDocumentsService.runOcrForDocumentPages(
+        documentId,
+        pageNumbers ?? [],
+      );
+      if (processed > 0) {
+        await this.knowledgeDocumentsService.maybeAutoReindexAfterEnrichment(documentId, 'async OCR');
+      }
       await this.knowledgeDocumentsService.markTrackingJobCompleted(trackingJobId);
     } catch (e: any) {
       const msg = e?.message ? String(e.message) : String(e);
@@ -101,7 +107,13 @@ export class KnowledgeDocumentsVisionQueueProcessor {
     const { documentId, trackingJobId, pageNumbers } = job.data;
     await this.knowledgeDocumentsService.markTrackingJobActive(trackingJobId, String(job.id));
     try {
-      await this.knowledgeDocumentsService.runVisionForDocumentPages(documentId, pageNumbers ?? []);
+      const processed = await this.knowledgeDocumentsService.runVisionForDocumentPages(
+        documentId,
+        pageNumbers ?? [],
+      );
+      if (processed > 0) {
+        await this.knowledgeDocumentsService.maybeAutoReindexAfterEnrichment(documentId, 'async vision');
+      }
       await this.knowledgeDocumentsService.markTrackingJobCompleted(trackingJobId);
     } catch (e: any) {
       const msg = e?.message ? String(e.message) : String(e);

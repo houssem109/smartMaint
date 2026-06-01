@@ -61,6 +61,10 @@ export class KnowledgeEntry {
   @Column({ type: 'varchar', length: 1024, nullable: true })
   photoPath: string | null;
 
+  /** AI description of field photo — indexed in Qdrant for Techo RAG. */
+  @Column({ type: 'text', nullable: true })
+  photoVisionDescription: string | null;
+
   @ManyToOne(() => KnowledgeDocument, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'knowledgeDocumentId' })
   knowledgeDocument?: KnowledgeDocument | null;

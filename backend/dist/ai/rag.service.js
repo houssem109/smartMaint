@@ -21,6 +21,7 @@ const typeorm_2 = require("typeorm");
 const crypto_1 = require("crypto");
 const uuid_1 = require("uuid");
 const vector_chunk_hash_entity_1 = require("./entities/vector-chunk-hash.entity");
+const pdf_chunk_quality_util_1 = require("../knowledge-documents/pdf-chunk-quality.util");
 let RagService = RagService_1 = class RagService {
     constructor(configService, vectorChunkHashRepository) {
         this.configService = configService;
@@ -43,11 +44,18 @@ let RagService = RagService_1 = class RagService {
         let lastError = 'unknown error';
         for (const maxChars of [...new Set(attempts)]) {
             const input = String(text || '').slice(0, maxChars);
-            const res = await fetch(`${this.ollamaBaseUrl}/api/embed`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: this.embedModel, input, truncate: true }),
-            });
+            let res;
+            try {
+                res = await fetch(`${this.ollamaBaseUrl}/api/embed`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: this.embedModel, input, truncate: true }),
+                });
+            }
+            catch (err) {
+                const msg = err?.message ? String(err.message) : String(err);
+                throw new Error(`Ollama unreachable at ${this.ollamaBaseUrl} (${msg}). Start Ollama on the host and run: ollama pull ${this.embedModel}`);
+            }
             if (res.ok) {
                 const data = await res.json();
                 const vec = data?.embeddings?.[0];
@@ -111,7 +119,7 @@ let RagService = RagService_1 = class RagService {
         let skipped = 0;
         for (let i = 0; i < chunks.length; i++) {
             const text = chunks[i]?.trim();
-            if (!text)
+            if (!text || (0, pdf_chunk_quality_util_1.isLowValueChunkText)(text))
                 continue;
             const norm = this.normalizeChunkForHash(text);
             const hash = this.sha256Hex('docchunk', norm);

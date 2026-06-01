@@ -18,6 +18,7 @@ export declare class KnowledgeDocumentsExtractionQueueProcessor {
     handleExtraction(job: Job<{
         documentId: string;
         trackingJobId?: string;
+        resume?: boolean;
     }>): Promise<void>;
 }
 export declare class KnowledgeDocumentsOcrQueueProcessor {

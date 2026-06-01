@@ -65,8 +65,12 @@ export class AiService {
         'PDF chat',
       );
     } catch (error) {
-      this.logger.error(`PDF chat failed: ${error instanceof Error ? error.message : String(error)}`);
-      throw error;
+      this.logger.warn(
+        `OpenRouter PDF chat failed, falling back to Ollama (${this.model}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return this.chat(messages, opts);
     }
   }
 
@@ -240,11 +244,11 @@ export class AiService {
       }
 
       const text = await response.text().catch(() => '');
-      lastErr = `${response.status} ${text}`;
+      lastErr = this.parseOpenRouterErrorBody(text, response.status);
       const retryable = response.status === 429 || response.status === 408 || response.status >= 500;
       if (!retryable || attempt === maxAttempts) {
         this.logger.error(`OpenRouter ${scope} error: ${lastErr}`);
-        throw new Error(`OpenRouter ${scope} returned an error`);
+        throw new Error(this.userFacingOpenRouterError(scope, lastErr));
       }
 
       const headerWaitSec = Number(response.headers.get('retry-after') ?? 0);
@@ -257,7 +261,26 @@ export class AiService {
       );
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
-    throw new Error(`OpenRouter ${scope} returned an error after retries: ${lastErr}`);
+    throw new Error(this.userFacingOpenRouterError(scope, lastErr));
+  }
+
+  private parseOpenRouterErrorBody(text: string, status: number): string {
+    try {
+      const parsed = JSON.parse(text);
+      const msg = parsed?.error?.message ?? parsed?.message;
+      if (typeof msg === 'string' && msg.trim()) return `${status}: ${msg.trim()}`;
+    } catch {
+      // keep raw body
+    }
+    return `${status} ${text}`.trim();
+  }
+
+  private userFacingOpenRouterError(scope: string, detail: string): string {
+    const lower = detail.toLowerCase();
+    if (lower.includes('key limit exceeded') || lower.includes('insufficient') || lower.includes('credit')) {
+      return `OpenRouter ${scope}: monthly limit or credits exhausted (${detail}). Add credits at openrouter.ai or remove OPENROUTER_API_KEY to use local Ollama.`;
+    }
+    return `OpenRouter ${scope} failed (${detail})`;
   }
 }
 

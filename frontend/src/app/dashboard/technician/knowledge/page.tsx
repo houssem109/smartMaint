@@ -61,7 +61,9 @@ export default function TechnicianKnowledgePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const [modalOpen, setModalOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<KnowledgeEntry | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -142,6 +144,16 @@ export default function TechnicianKnowledgePage() {
     setPhotoFile(null);
   };
 
+  const openDetails = (entry: KnowledgeEntry) => {
+    setSelectedEntry(entry);
+    setDetailsOpen(true);
+  };
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    setSelectedEntry(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -185,23 +197,6 @@ export default function TechnicianKnowledgePage() {
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleDelete = async (entry: KnowledgeEntry) => {
-    if (!window.confirm(`Delete "${entry.title}"? This cannot be undone.`)) return;
-    try {
-      await api.delete(`/knowledge/${entry.id}`);
-      toast.success('Knowledge entry deleted');
-      fetchEntries();
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to delete entry');
-    }
-  };
-
-  const canModify = (entry: KnowledgeEntry) => {
-    if (!currentUser) return false;
-    if (entry.createdById !== currentUser.id) return false;
-    return entry.reviewStatus !== 'approved';
   };
 
   return (
@@ -249,17 +244,17 @@ export default function TechnicianKnowledgePage() {
                         <TableHead>Tags</TableHead>
                         <TableHead>Created by</TableHead>
                         <TableHead>Created at</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {paginatedEntries.map((entry) => (
                         <TableRow key={entry.id} className="align-top">
-                          <TableCell className="py-3">
+                          <TableCell
+                            className="py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                            onClick={() => openDetails(entry)}
+                            title="Click to view details"
+                          >
                             <div className="font-medium">{entry.title}</div>
-                            <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
-                              {entry.problemDescription}
-                            </div>
                           </TableCell>
                           <TableCell className="py-3">
                             {entry.tags ? (
@@ -279,31 +274,6 @@ export default function TechnicianKnowledgePage() {
                           </TableCell>
                           <TableCell className="py-3 text-xs text-muted-foreground whitespace-nowrap">
                             {new Date(entry.createdAt).toLocaleString()}
-                          </TableCell>
-                          <TableCell className="py-3 text-right">
-                            <div className="flex justify-end gap-2">
-                              {canModify(entry) && (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => openEdit(entry)}
-                                    title="Edit"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => handleDelete(entry)}
-                                    title="Delete"
-                                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </>
-                              )}
-                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -450,6 +420,52 @@ export default function TechnicianKnowledgePage() {
                     </Button>
                   </div>
                 </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {detailsOpen && selectedEntry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <CardTitle>{selectedEntry.title}</CardTitle>
+                <Button variant="ghost" size="icon" onClick={closeDetails}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {selectedEntry.reviewStatus && (
+                  <Badge
+                    variant={selectedEntry.reviewStatus === 'approved' ? 'default' : 'secondary'}
+                    className="capitalize"
+                  >
+                    {selectedEntry.reviewStatus}
+                  </Badge>
+                )}
+                <div className="space-y-1">
+                  <Label>Problem</Label>
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                    {selectedEntry.problemDescription}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Solution</Label>
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                    {selectedEntry.solution}
+                  </div>
+                </div>
+                {(selectedEntry.machineName ||
+                  selectedEntry.symptom ||
+                  selectedEntry.rootCause ||
+                  selectedEntry.severity) && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedEntry.machineName && <Badge variant="outline">Machine: {selectedEntry.machineName}</Badge>}
+                    {selectedEntry.severity && <Badge variant="outline">Severity: {selectedEntry.severity}</Badge>}
+                    {selectedEntry.symptom && <Badge variant="outline">Symptom: {selectedEntry.symptom}</Badge>}
+                    {selectedEntry.rootCause && <Badge variant="outline">Root cause: {selectedEntry.rootCause}</Badge>}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

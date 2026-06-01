@@ -37,6 +37,11 @@ export default function TechoChatWidget() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
+  const name = user?.fullName?.trim() || user?.username?.trim() || user?.email?.split('@')[0] || '';
+  const greeting = name
+    ? `Hello ${name}, I'm Techo. How can I help you today?`
+    : "Hello, I'm Techo, the SmartMaint assistant. How can I help you today?";
+
   // Only show for authenticated users inside dashboard
   const shouldShow =
     !!user && pathname?.startsWith('/dashboard') && !pathname.startsWith('/dashboard/admin/history');
@@ -53,11 +58,11 @@ export default function TechoChatWidget() {
         // Techo greeting for new thread
         addMessage(id, {
           role: 'assistant',
-          content: "Hello, I'm Techo, the SmartMaint assistant. How can I help you today?",
+          content: greeting,
         });
       }
     }
-  }, [isOpen, activeThreadId, threads, createThread, addMessage, setActiveThread]);
+  }, [isOpen, activeThreadId, threads, createThread, addMessage, setActiveThread, greeting]);
 
   const activeMessages = activeThreadId ? messagesByThread[activeThreadId] || [] : [];
   const activeThread = threads.find((t) => t.id === activeThreadId) || null;
@@ -193,7 +198,7 @@ export default function TechoChatWidget() {
     // Re-add greeting after reset
     addMessage(activeThreadId, {
       role: 'assistant',
-      content: "Hello, I'm Techo, the SmartMaint assistant. How can I help you today?",
+      content: greeting,
     });
   };
 
@@ -201,7 +206,7 @@ export default function TechoChatWidget() {
     const id = createThread();
     addMessage(id, {
       role: 'assistant',
-      content: "Hello, I'm Techo, the SmartMaint assistant. How can I help you today?",
+      content: greeting,
     });
   };
 

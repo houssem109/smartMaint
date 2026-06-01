@@ -1,6 +1,7 @@
 import { StreamableFile } from '@nestjs/common';
 import { UserRole } from '../users/entities/user.entity';
 import { KnowledgeDocumentsService } from './knowledge-documents.service';
+import { DatabaseSchemaService } from '../database/database-schema.service';
 import { ApproveMachineNameSuggestionDto, RejectMachineNameSuggestionDto, SuggestMachineNameDto, UpdateMachineNameDto } from './dto/machine-name.dto';
 import { SetPdfVisionPreferenceDto } from './dto/set-pdf-vision-preference.dto';
 declare class ApproveExtractionDto {
@@ -20,7 +21,8 @@ declare class AdminFixTextDto {
 }
 export declare class KnowledgeDocumentsController {
     private readonly knowledgeDocumentsService;
-    constructor(knowledgeDocumentsService: KnowledgeDocumentsService);
+    private readonly databaseSchemaService;
+    constructor(knowledgeDocumentsService: KnowledgeDocumentsService, databaseSchemaService: DatabaseSchemaService);
     private acceptPdfUpload;
     upload(file: Express.Multer.File, req: any, supersedesDocumentId?: string): Promise<{
         documentId: string;
@@ -74,6 +76,65 @@ export declare class KnowledgeDocumentsController {
         documentId: string;
         chunkCount: number;
         chunks: Awaited<ReturnType<import("../ai/rag.service").RagService["listDocumentChunks"]>>;
+    }>;
+    pipelineAuditExportXlsx(id: string, ragLimitRaw?: string): Promise<StreamableFile>;
+    pipelineAuditReport(id: string, ragLimitRaw?: string): Promise<{
+        generatedAt: string;
+        document: import("./entities/knowledge-document.entity").KnowledgeDocument;
+        status: Awaited<ReturnType<KnowledgeDocumentsService["getDocumentStatus"]>>;
+        extractionStats: Awaited<ReturnType<KnowledgeDocumentsService["getExtractionStats"]>>;
+        visionPreference: ReturnType<KnowledgeDocumentsService["getPdfVisionPreferenceReadModel"]>;
+        pipelineConfig: ReturnType<KnowledgeDocumentsService["getPipelineConfigSnapshot"]>;
+        metrics: {
+            totalPages: number;
+            pagesWithOcrText: number;
+            pagesVisionUsed: number;
+            pagesByExtractionMode: Record<string, number>;
+            pagesByQuality: Record<string, number>;
+            visionFailedPages: number;
+            ragChunkCount: number;
+            ragMostlyDotsChunks: number;
+            ragEmbedWorthyChunks: number;
+            candidateTotal: number;
+            candidateApproved: number;
+            candidateRejected: number;
+            approvalRatePercent: number | null;
+        };
+        pages: Array<{
+            pageNumber: number;
+            quality: string;
+            extractionMode: string;
+            visionUsed: boolean;
+            ocrConfidence: number | null;
+            sectionType: string | null;
+            qualityWarnings: string[] | null;
+            ocrTextLength: number;
+            popplerTextLength: number;
+            ocrTextPreview: string;
+            popplerTextPreview: string;
+            ocrText: string | null;
+            hasVisionBlock: boolean;
+        }>;
+        ragChunks: Array<{
+            chunkIndex: number;
+            sectionType: string | null;
+            title: string | null;
+            confidence: number | null;
+            textPreview: string;
+            text: string;
+            quality: ReturnType<typeof import("./pdf-chunk-quality.util").chunkQualityFlags>;
+        }>;
+        chunkAudit: {
+            builtCount: number;
+            afterNearDuplicateCount: number;
+            afterLowValueFilterCount: number;
+            droppedLowValueSamples: Array<{
+                index: number;
+                preview: string;
+                reason: string;
+            }>;
+            note: string;
+        };
     }>;
     ragStoredDataGlobal(limitRaw?: string, documentId?: string): Promise<{
         count: number;
@@ -137,8 +198,14 @@ export declare class KnowledgeDocumentsController {
         ocr: {
             enabled: boolean;
             maxPagesPerDocument: number;
-            tessLang: string;
-            tessPath: string;
+            manualMaxPages: number;
+            autoReindex: boolean;
+            inlineBeforeIndex: boolean;
+            renderDpi: number;
+            skipSharpPreprocess: boolean;
+            isVl: boolean;
+            engine: string;
+            paddleOcrUrl: string;
             pdftoppmPath: string;
         };
         vision: {
@@ -151,6 +218,12 @@ export declare class KnowledgeDocumentsController {
             figureVisionEnabled: boolean;
             triggerOcrConfidenceBelow: number;
             minOcrTextChars: number;
+            pageExplainBeforeIndex: boolean;
+            pageExplainMaxPages: number;
+            pageExplainMode: string;
+        };
+        fieldPhotos: {
+            visionEnabled: boolean;
         };
         extraction: {
             maxChunks: number;
@@ -186,6 +259,7 @@ export declare class KnowledgeDocumentsController {
             purpose: string;
         }[];
     };
+    databaseSchema(): Promise<import("../database/database-schema.service").DatabaseSchemaSnapshot>;
     qaSuccessCriteria(): {
         checkedAt: string;
         rows: {
@@ -249,6 +323,8 @@ export declare class KnowledgeDocumentsController {
     runOcr(id: string, req: any): Promise<{
         ok: true;
         processedPages: number;
+        pagesSelected: number;
+        chunksIndexed?: number;
     }>;
     runVision(id: string, req: any): Promise<{
         ok: true;
@@ -257,6 +333,10 @@ export declare class KnowledgeDocumentsController {
     reindexManualChunks(id: string): Promise<{
         ok: true;
         chunksIndexed: number;
+    }>;
+    continueExtraction(id: string, req: any): Promise<{
+        ok: true;
+        jobId: string;
     }>;
     download(id: string, res: any): Promise<any>;
     details(id: string): Promise<{

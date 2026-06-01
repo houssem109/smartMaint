@@ -22,7 +22,13 @@ let AiModule = class AiModule {
 exports.AiModule = AiModule;
 exports.AiModule = AiModule = __decorate([
     (0, common_1.Module)({
-        imports: [config_1.ConfigModule, typeorm_1.TypeOrmModule.forFeature([conversation_entity_1.Conversation]), tickets_module_1.TicketsModule, knowledge_module_1.KnowledgeModule, rag_module_1.RagModule],
+        imports: [
+            config_1.ConfigModule,
+            typeorm_1.TypeOrmModule.forFeature([conversation_entity_1.Conversation]),
+            tickets_module_1.TicketsModule,
+            (0, common_1.forwardRef)(() => knowledge_module_1.KnowledgeModule),
+            rag_module_1.RagModule,
+        ],
         controllers: [ai_controller_1.AiController, chat_controller_1.ChatController],
         providers: [ai_service_1.AiService],
         exports: [ai_service_1.AiService, rag_module_1.RagModule],

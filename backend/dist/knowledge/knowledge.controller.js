@@ -233,7 +233,7 @@ exports.KnowledgeController = KnowledgeController = __decorate([
     (0, swagger_1.ApiTags)('Knowledge'),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN, user_entity_1.UserRole.WORKER),
     (0, common_1.Controller)('knowledge'),
     __metadata("design:paramtypes", [knowledge_service_1.KnowledgeService])
 ], KnowledgeController);

@@ -16,6 +16,7 @@ import { Queue } from 'bull';
 import { MachineProfilesService } from '../machine-profiles/machine-profiles.service';
 import { DocumentProgressGateway } from './document-progress.gateway';
 import { UserRole } from '../users/entities/user.entity';
+import { chunkQualityFlags } from './pdf-chunk-quality.util';
 export declare class KnowledgeDocumentsService implements OnModuleInit {
     private readonly knowledgeDocumentsRepository;
     private readonly extractionCandidatesRepository;
@@ -96,6 +97,68 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
             originalName: string | null;
         }>;
     }>;
+    getPipelineAuditReport(documentId: string, ragLimit?: number): Promise<{
+        generatedAt: string;
+        document: KnowledgeDocument;
+        status: Awaited<ReturnType<KnowledgeDocumentsService['getDocumentStatus']>>;
+        extractionStats: Awaited<ReturnType<KnowledgeDocumentsService['getExtractionStats']>>;
+        visionPreference: ReturnType<KnowledgeDocumentsService['getPdfVisionPreferenceReadModel']>;
+        pipelineConfig: ReturnType<KnowledgeDocumentsService['getPipelineConfigSnapshot']>;
+        metrics: {
+            totalPages: number;
+            pagesWithOcrText: number;
+            pagesVisionUsed: number;
+            pagesByExtractionMode: Record<string, number>;
+            pagesByQuality: Record<string, number>;
+            visionFailedPages: number;
+            ragChunkCount: number;
+            ragMostlyDotsChunks: number;
+            ragEmbedWorthyChunks: number;
+            candidateTotal: number;
+            candidateApproved: number;
+            candidateRejected: number;
+            approvalRatePercent: number | null;
+        };
+        pages: Array<{
+            pageNumber: number;
+            quality: string;
+            extractionMode: string;
+            visionUsed: boolean;
+            ocrConfidence: number | null;
+            sectionType: string | null;
+            qualityWarnings: string[] | null;
+            ocrTextLength: number;
+            popplerTextLength: number;
+            ocrTextPreview: string;
+            popplerTextPreview: string;
+            ocrText: string | null;
+            hasVisionBlock: boolean;
+        }>;
+        ragChunks: Array<{
+            chunkIndex: number;
+            sectionType: string | null;
+            title: string | null;
+            confidence: number | null;
+            textPreview: string;
+            text: string;
+            quality: ReturnType<typeof chunkQualityFlags>;
+        }>;
+        chunkAudit: {
+            builtCount: number;
+            afterNearDuplicateCount: number;
+            afterLowValueFilterCount: number;
+            droppedLowValueSamples: Array<{
+                index: number;
+                preview: string;
+                reason: string;
+            }>;
+            note: string;
+        };
+    }>;
+    exportPipelineAuditExcel(documentId: string, ragLimit?: number): Promise<{
+        buffer: Buffer;
+        filename: string;
+    }>;
     getDocumentStatus(documentId: string): Promise<{
         documentId: string;
         status: string;
@@ -151,8 +214,14 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         ocr: {
             enabled: boolean;
             maxPagesPerDocument: number;
-            tessLang: string;
-            tessPath: string;
+            manualMaxPages: number;
+            autoReindex: boolean;
+            inlineBeforeIndex: boolean;
+            renderDpi: number;
+            skipSharpPreprocess: boolean;
+            isVl: boolean;
+            engine: string;
+            paddleOcrUrl: string;
             pdftoppmPath: string;
         };
         vision: {
@@ -165,6 +234,12 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
             figureVisionEnabled: boolean;
             triggerOcrConfidenceBelow: number;
             minOcrTextChars: number;
+            pageExplainBeforeIndex: boolean;
+            pageExplainMaxPages: number;
+            pageExplainMode: string;
+        };
+        fieldPhotos: {
+            visionEnabled: boolean;
         };
         extraction: {
             maxChunks: number;
@@ -239,15 +314,22 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         }[];
         notes: string[];
     };
-    enqueueExtractionJob(documentId: string): Promise<string>;
+    enqueueExtractionJob(documentId: string, opts?: {
+        resume?: boolean;
+    }): Promise<string>;
     enqueueOcrJob(documentId: string, pageNumbers: number[]): Promise<string>;
     enqueueVisionJob(documentId: string, pageNumbers: number[]): Promise<string>;
     enqueueIndexingJob(documentId: string, payload: {
         knowledgeEntryId: string;
         candidateId?: string;
     }): Promise<string>;
-    runOcrForDocumentPages(documentId: string, pageNumbers: number[]): Promise<void>;
-    runVisionForDocumentPages(documentId: string, pageNumbers: number[]): Promise<number>;
+    runOcrForDocumentPages(documentId: string, pageNumbers: number[]): Promise<number>;
+    maybeAutoReindexAfterEnrichment(documentId: string, reason: string): Promise<void>;
+    runVisionForDocumentPages(documentId: string, pageNumbers: number[], opts?: {
+        maxPages?: number;
+        promptMode?: 'default' | 'page_explanation';
+        skipCompleted?: boolean;
+    }): Promise<number>;
     private getVisionConcurrency;
     private appendPageQualityWarning;
     private renderPdfPageToPng;
@@ -263,6 +345,8 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     runOcrForDocument(documentId: string, adminId: string): Promise<{
         ok: true;
         processedPages: number;
+        pagesSelected: number;
+        chunksIndexed?: number;
     }>;
     runVisionForDocument(documentId: string, adminId: string): Promise<{
         ok: true;
@@ -323,7 +407,13 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         approved: MachineNameSuggestion;
     }>;
     rejectMachineNameSuggestion(suggestionId: string, adminId: string, reason?: string): Promise<MachineNameSuggestion>;
-    processDocumentExtraction(documentId: string): Promise<void>;
+    continueDocumentExtraction(documentId: string, adminId: string): Promise<{
+        ok: true;
+        jobId: string;
+    }>;
+    processDocumentExtraction(documentId: string, opts?: {
+        resume?: boolean;
+    }): Promise<void>;
     private heuristicDocType;
     private quickRelevanceHeuristic;
     private classifyUploadGateThreeTier;
@@ -338,14 +428,22 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     private getNearDuplicateJaccardThreshold;
     private normalizeChunkForSimilarity;
     private jaccardSetSimilarity;
+    private filterEmbedWorthyChunks;
+    private pageLikelyNeedsUiVision;
     private filterNearDuplicateChunks;
     private normalizeExtractedText;
     private detectGlyphCorruptedPagesForDocument;
     private getOcrScaffoldMetadata;
     private savePageAnalysis;
+    private loadPopplerPageTextsForDocument;
+    private getMinGoodOcrCharsForVisionSkip;
+    private filterPageNumbersNeedingOcr;
+    private filterPageNumbersNeedingVision;
+    private selectPageNumbersForPageExplanation;
+    private runPageExplanationPassBeforeIndex;
+    private selectPageNumbersForOcr;
+    private progressInBand;
     private ocrPagesFromPdf;
-    private runTesseract;
-    private meanTesseractConfidence;
     private detectMachineProfile;
     private derivePageTexts;
     private scorePageQuality;

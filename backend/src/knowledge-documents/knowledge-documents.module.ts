@@ -18,6 +18,7 @@ import { AiModule } from '../ai/ai.module';
 import { RagModule } from '../ai/rag.module';
 import { MachineProfilesModule } from '../machine-profiles/machine-profiles.module';
 import { AuthModule } from '../auth/auth.module';
+import { DatabaseSchemaModule } from '../database/database-schema.module';
 import { DocumentProgressGateway } from './document-progress.gateway';
 import {
   KnowledgeDocumentsExtractionQueueProcessor,
@@ -60,6 +61,7 @@ import {
     RagModule,
     MachineProfilesModule,
     AuthModule,
+    DatabaseSchemaModule,
   ],
   providers: [
     DocumentProgressGateway,

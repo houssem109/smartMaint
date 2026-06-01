@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 
 type DocRow = { id: string; originalName: string; machineName?: string | null };
@@ -39,10 +40,12 @@ type RagRow = {
 };
 
 export default function RagStoredDataGlobalPage() {
+  const searchParams = useSearchParams();
+  const initialDocId = searchParams.get('documentId')?.trim() || '__all__';
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [rows, setRows] = useState<RagRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [documentId, setDocumentId] = useState('__all__');
+  const [documentId, setDocumentId] = useState(initialDocId);
   const [limit, setLimit] = useState('400');
   const [searchTerm, setSearchTerm] = useState('');
 

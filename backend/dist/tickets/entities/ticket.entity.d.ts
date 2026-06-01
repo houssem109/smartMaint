@@ -29,6 +29,12 @@ export declare enum TicketSource {
     WHATSAPP = "whatsapp",
     EMAIL = "email"
 }
+export declare enum AssignmentRequestStatus {
+    NONE = "none",
+    PENDING = "pending",
+    APPROVED = "approved",
+    REJECTED = "rejected"
+}
 export declare class Ticket {
     id: string;
     title: string;
@@ -44,6 +50,12 @@ export declare class Ticket {
     createdBy: User;
     assignedToId: string;
     assignedTo: User;
+    assignmentRequestedById: string;
+    assignmentRequestStatus: AssignmentRequestStatus;
+    assignmentRequestNote: string;
+    assignmentRequestedAt: Date | null;
+    assignmentReviewedById: string;
+    assignmentReviewedAt: Date | null;
     conversations: Conversation[];
     attachments: Attachment[];
     isDeleted: boolean;

@@ -8,10 +8,10 @@ function isPdfVisionEnabled() {
     return String(process.env.ENABLE_PDF_VISION ?? 'false').toLowerCase() === 'true';
 }
 function getPdfVisionMaxPages() {
-    const n = Number(process.env.PDF_VISION_MAX_PAGES ?? 5);
+    const n = Number(process.env.PDF_VISION_MAX_PAGES ?? 180);
     if (!Number.isFinite(n))
-        return 5;
-    return Math.max(0, Math.min(20, Math.floor(n)));
+        return 180;
+    return Math.max(0, Math.min(500, Math.floor(n)));
 }
 function getVisionTriggerOcrConfidenceBelow() {
     const v = Number(process.env.PDF_VISION_TRIGGER_OCR_CONFIDENCE_BELOW ?? 0.45);

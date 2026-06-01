@@ -124,7 +124,7 @@ Login: `http://localhost:3000/login`
 | Upload stuck / no progress | Backend logs, Redis, `GET /api/knowledge-documents/queues/health` |
 | Gate / extraction errors | Backend console, document `error` field on detail page |
 | Chat has no manual answers | Qdrant up, Ollama embed model, document `status` = `done`, approved candidates |
-| OCR/vision does nothing | `ENABLE_PDF_OCR`, `ENABLE_PDF_VISION`, Poppler/Tesseract on PATH (Docker image has them) |
+| OCR/vision does nothing | `ENABLE_PDF_OCR`, `ENABLE_PDF_VISION`, `paddle-ocr` service healthy, Poppler in backend image |
 | WebSocket progress | Browser devtools → Network → WS; technician PDF detail page |
 
 ### 1.6 Admin navigation map (Pipeline hub)
@@ -224,7 +224,7 @@ Legend: **UI** = click path · **API** = Swagger or curl · **DB** = optional SQ
 | 6.5 | **API:** `POST .../:id/run-ocr`, `POST .../:id/run-vision` | Same as UI |
 | 6.6 | Disable OCR in env, restart, upload scan | Vision-only path on low-quality pages (bounded) |
 
-**Bugs to watch:** Poppler/Tesseract missing on host (use Docker backend); Ollama vision model missing → warnings only.
+**Bugs to watch:** `paddle-ocr` not running or unhealthy; Poppler missing in backend image; Ollama vision model missing → warnings only.
 
 ---
 

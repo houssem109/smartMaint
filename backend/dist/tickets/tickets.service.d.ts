@@ -17,10 +17,13 @@ export declare class TicketsService {
         priority?: string;
         assignedToId?: string;
     }): Promise<Ticket[]>;
+    findByTitleForRole(userId: string, userRole: UserRole, title: string, limit?: number): Promise<Ticket[]>;
     findOne(id: string, userId: string, userRole: UserRole): Promise<Ticket>;
     update(id: string, updateTicketDto: UpdateTicketDto, userId: string, userRole: UserRole): Promise<Ticket>;
     remove(id: string, userId: string, userRole: UserRole): Promise<void>;
     assignTicket(ticketId: string, technicianId: string, userId: string, userRole: UserRole): Promise<Ticket>;
+    requestSelfAssign(ticketId: string, userId: string, userRole: UserRole, note?: string): Promise<Ticket>;
+    reviewSelfAssignRequest(ticketId: string, approve: boolean, userId: string, userRole: UserRole, reason?: string): Promise<Ticket>;
     addAttachments(ticketId: string, files: Express.Multer.File[], userId: string, userRole: UserRole): Promise<Attachment[]>;
     restore(id: string, userId: string, userRole: UserRole): Promise<Ticket>;
     getHistory(ticketId?: string, limit?: number): Promise<AuditLog[]>;

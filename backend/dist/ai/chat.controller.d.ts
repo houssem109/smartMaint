@@ -13,6 +13,7 @@ declare class ChatMessageDto {
     ticketId?: string;
     imageBase64?: string;
     history?: ChatHistoryItemDto[];
+    allowTicketCreation?: boolean;
 }
 export declare class ChatController {
     private readonly aiService;
@@ -38,6 +39,21 @@ export declare class ChatController {
     }>;
     history(ticketId: string, req: any): Promise<Conversation[]>;
     private normalizeChatImageBase64;
+    private persistConversation;
+    private extractTicketIdFromMessage;
+    private buildTicketContext;
+    private maybeHandleTicketCreationFlow;
+    private maybeHandleTicketStatusQuestion;
+    private maybeHandleTicketListQuestion;
+    private extractTicketStatusFromMessage;
+    private extractTicketPriorityFromMessage;
+    private isTicketStatusQuestion;
+    private extractTicketTitleCandidate;
+    private renderTicketStatusReply;
+    private safeParseJson;
+    private normalizeTicketCategory;
+    private normalizeTicketPriority;
+    private getFriendlyUserName;
     myHistory(req: any): Promise<Conversation[]>;
 }
 export {};

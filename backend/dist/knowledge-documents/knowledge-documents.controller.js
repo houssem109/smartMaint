@@ -20,6 +20,7 @@ const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const user_entity_1 = require("../users/entities/user.entity");
 const knowledge_documents_service_1 = require("./knowledge-documents.service");
+const database_schema_service_1 = require("../database/database-schema.service");
 const platform_express_1 = require("@nestjs/platform-express");
 const multer_1 = require("multer");
 const path_1 = require("path");
@@ -72,8 +73,9 @@ __decorate([
     __metadata("design:type", String)
 ], AdminFixTextDto.prototype, "text", void 0);
 let KnowledgeDocumentsController = class KnowledgeDocumentsController {
-    constructor(knowledgeDocumentsService) {
+    constructor(knowledgeDocumentsService, databaseSchemaService) {
         this.knowledgeDocumentsService = knowledgeDocumentsService;
+        this.databaseSchemaService = databaseSchemaService;
     }
     async acceptPdfUpload(file, req, supersedesDocumentId) {
         if (!file) {
@@ -171,6 +173,20 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
         const limit = Number.isFinite(parsed) ? parsed : 120;
         return this.knowledgeDocumentsService.getRagStoredData(id, limit);
     }
+    async pipelineAuditExportXlsx(id, ragLimitRaw) {
+        const parsed = ragLimitRaw != null ? parseInt(ragLimitRaw, 10) : 2000;
+        const ragLimit = Number.isFinite(parsed) ? parsed : 2000;
+        const { buffer, filename } = await this.knowledgeDocumentsService.exportPipelineAuditExcel(id, ragLimit);
+        return new common_1.StreamableFile(buffer, {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            disposition: `attachment; filename="${filename}"`,
+        });
+    }
+    async pipelineAuditReport(id, ragLimitRaw) {
+        const parsed = ragLimitRaw != null ? parseInt(ragLimitRaw, 10) : 2000;
+        const ragLimit = Number.isFinite(parsed) ? parsed : 2000;
+        return this.knowledgeDocumentsService.getPipelineAuditReport(id, ragLimit);
+    }
     async ragStoredDataGlobal(limitRaw, documentId) {
         const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 400;
         const limit = Number.isFinite(parsed) ? parsed : 400;
@@ -197,6 +213,9 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     }
     databaseInventory() {
         return this.knowledgeDocumentsService.getDatabaseInventory();
+    }
+    databaseSchema() {
+        return this.databaseSchemaService.getPublicSchema();
     }
     qaSuccessCriteria() {
         return this.knowledgeDocumentsService.getQaSuccessCriteria();
@@ -246,6 +265,9 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     }
     async reindexManualChunks(id) {
         return this.knowledgeDocumentsService.reindexManualChunksForDocument(id);
+    }
+    async continueExtraction(id, req) {
+        return this.knowledgeDocumentsService.continueDocumentExtraction(id, req.user.id);
     }
     async download(id, res) {
         const doc = await this.knowledgeDocumentsService.findOne(id);
@@ -497,6 +519,30 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "ragStoredData", null);
 __decorate([
+    (0, common_1.Get)(':id/pipeline-audit-export/xlsx'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Excel report: summary, pages OCR, RAG chunks, LLM extraction (readable for jury / thesis)',
+    }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Query)('ragLimit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "pipelineAuditExportXlsx", null);
+__decorate([
+    (0, common_1.Get)(':id/pipeline-audit-report'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Full pipeline audit for jury/report: page OCR+vision text, Qdrant chunks, KPIs, chunk before/after filter',
+    }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Query)('ragLimit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "pipelineAuditReport", null);
+__decorate([
     (0, common_1.Get)('rag-stored-data-global'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiOperation)({ summary: 'Get RAG chunks across all PDFs for admin inspection' }),
@@ -572,6 +618,16 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], KnowledgeDocumentsController.prototype, "databaseInventory", null);
+__decorate([
+    (0, common_1.Get)('database-schema'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Live PostgreSQL public schema: all tables, columns, and foreign keys (from information_schema)',
+    }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], KnowledgeDocumentsController.prototype, "databaseSchema", null);
 __decorate([
     (0, common_1.Get)('qa-success-criteria'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
@@ -705,6 +761,18 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "reindexManualChunks", null);
 __decorate([
+    (0, common_1.Post)(':id/continue-extraction'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Resume failed/partial extraction without re-upload — keeps OCR/vision page work, re-runs LLM + Qdrant',
+    }),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "continueExtraction", null);
+__decorate([
     (0, common_1.Get)(':id/download'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
     (0, swagger_1.ApiOperation)({ summary: 'Download uploaded PDF' }),
@@ -738,6 +806,7 @@ exports.KnowledgeDocumentsController = KnowledgeDocumentsController = __decorate
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)('knowledge-documents'),
-    __metadata("design:paramtypes", [knowledge_documents_service_1.KnowledgeDocumentsService])
+    __metadata("design:paramtypes", [knowledge_documents_service_1.KnowledgeDocumentsService,
+        database_schema_service_1.DatabaseSchemaService])
 ], KnowledgeDocumentsController);
 //# sourceMappingURL=knowledge-documents.controller.js.map

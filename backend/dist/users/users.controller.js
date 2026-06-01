@@ -107,6 +107,9 @@ let UsersController = class UsersController {
         return this.usersService.findOne(id);
     }
     async update(req, id, updateData) {
+        if (req.user.id === id && typeof updateData?.isActive !== 'undefined') {
+            throw new common_1.ForbiddenException('You cannot change your own activation status');
+        }
         const target = await this.usersService.findOne(id);
         if (updateData.role === user_entity_1.UserRole.SUPERADMIN && target.email !== 'superadmin@smartmaint.com') {
             throw new common_1.ForbiddenException('Promoting users to superadmin is not allowed');

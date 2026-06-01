@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Ticket, TicketStatus } from './entities/ticket.entity';
+import { AssignmentRequestStatus, Ticket, TicketStatus } from './entities/ticket.entity';
 import { Attachment } from './entities/attachment.entity';
 import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
@@ -84,6 +84,49 @@ export class TicketsService {
     return queryBuilder.getMany();
   }
 
+  async findByTitleForRole(
+    userId: string,
+    userRole: UserRole,
+    title: string,
+    limit = 5,
+  ): Promise<Ticket[]> {
+    const q = (title ?? '').trim();
+    if (!q) return [];
+
+    const exactQb = this.ticketsRepository
+      .createQueryBuilder('ticket')
+      .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
+      .where('ticket.isDeleted = false');
+
+    if (userRole === UserRole.WORKER) {
+      exactQb.andWhere('ticket.createdById = :userId', { userId });
+    }
+
+    exactQb
+      .andWhere('LOWER(ticket.title) = LOWER(:title)', { title: q })
+      .orderBy('ticket.createdAt', 'DESC')
+      .take(limit);
+
+    const exact = await exactQb.getMany();
+    if (exact.length > 0) return exact;
+
+    const likeQb = this.ticketsRepository
+      .createQueryBuilder('ticket')
+      .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
+      .where('ticket.isDeleted = false');
+
+    if (userRole === UserRole.WORKER) {
+      likeQb.andWhere('ticket.createdById = :userId', { userId });
+    }
+
+    likeQb
+      .andWhere('LOWER(ticket.title) LIKE LOWER(:titleLike)', { titleLike: `%${q}%` })
+      .orderBy('ticket.createdAt', 'DESC')
+      .take(limit);
+
+    return likeQb.getMany();
+  }
+
   async findOne(id: string, userId: string, userRole: UserRole): Promise<Ticket> {
     const ticket = await this.ticketsRepository.findOne({
       where: { id, isDeleted: false },
@@ -105,7 +148,8 @@ export class TicketsService {
     if (
       userRole === UserRole.TECHNICIAN &&
       ticket.createdById !== userId &&
-      ticket.assignedToId !== userId
+      ticket.assignedToId !== userId &&
+      !!ticket.assignedToId
     ) {
       throw new ForbiddenException('You can only view assigned tickets');
     }
@@ -235,13 +279,19 @@ export class TicketsService {
     userId: string,
     userRole: UserRole,
   ): Promise<Ticket> {
-    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPERADMIN && userRole !== UserRole.TECHNICIAN) {
-      throw new ForbiddenException('Only admins and technicians can assign tickets');
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only admins can assign tickets');
     }
 
     const ticket = await this.findOne(ticketId, userId, userRole);
     ticket.assignedToId = technicianId;
     ticket.status = TicketStatus.IN_PROGRESS;
+    ticket.assignmentRequestStatus = AssignmentRequestStatus.NONE;
+    ticket.assignmentRequestedById = null as any;
+    ticket.assignmentRequestNote = null as any;
+    ticket.assignmentRequestedAt = null;
+    ticket.assignmentReviewedById = userId;
+    ticket.assignmentReviewedAt = new Date();
 
     const saved = await this.ticketsRepository.save(ticket);
 
@@ -250,6 +300,95 @@ export class TicketsService {
       status: { to: TicketStatus.IN_PROGRESS },
     });
 
+    return saved;
+  }
+
+  async requestSelfAssign(
+    ticketId: string,
+    userId: string,
+    userRole: UserRole,
+    note?: string,
+  ): Promise<Ticket> {
+    if (userRole !== UserRole.TECHNICIAN) {
+      throw new ForbiddenException('Only technicians can request self-assignment');
+    }
+    const ticket = await this.findOne(ticketId, userId, userRole);
+
+    if (ticket.assignedToId === userId) {
+      return ticket;
+    }
+    if (ticket.assignedToId && ticket.assignedToId !== userId) {
+      throw new ForbiddenException('This ticket is already assigned to another technician');
+    }
+    if (ticket.assignmentRequestStatus === AssignmentRequestStatus.PENDING) {
+      throw new ForbiddenException('A request is already pending for this ticket');
+    }
+
+    ticket.assignmentRequestedById = userId;
+    ticket.assignmentRequestStatus = AssignmentRequestStatus.PENDING;
+    ticket.assignmentRequestNote = note?.trim() || null;
+    ticket.assignmentRequestedAt = new Date();
+    ticket.assignmentReviewedById = null as any;
+    ticket.assignmentReviewedAt = null;
+
+    const saved = await this.ticketsRepository.save(ticket);
+    await this.logTicketAction(ticketId, ActionType.UPDATE, userId, {
+      assignmentRequest: {
+        event: 'self_assign_requested',
+        requestedById: userId,
+        note: ticket.assignmentRequestNote,
+      },
+    });
+    return saved;
+  }
+
+  async reviewSelfAssignRequest(
+    ticketId: string,
+    approve: boolean,
+    userId: string,
+    userRole: UserRole,
+    reason?: string,
+  ): Promise<Ticket> {
+    if (userRole !== UserRole.ADMIN && userRole !== UserRole.SUPERADMIN) {
+      throw new ForbiddenException('Only admin or superadmin can review assignment requests');
+    }
+    const ticket = await this.findOne(ticketId, userId, userRole);
+    if (ticket.assignmentRequestStatus !== AssignmentRequestStatus.PENDING || !ticket.assignmentRequestedById) {
+      throw new ForbiddenException('No pending assignment request for this ticket');
+    }
+
+    const requestedById = ticket.assignmentRequestedById;
+    ticket.assignmentReviewedById = userId;
+    ticket.assignmentReviewedAt = new Date();
+
+    if (approve) {
+      ticket.assignedToId = requestedById;
+      ticket.status = TicketStatus.IN_PROGRESS;
+      ticket.assignmentRequestStatus = AssignmentRequestStatus.APPROVED;
+      ticket.assignmentRequestNote = null as any;
+      ticket.assignmentRequestedById = null as any;
+      ticket.assignmentRequestedAt = null;
+    } else {
+      ticket.assignmentRequestStatus = AssignmentRequestStatus.REJECTED;
+      ticket.assignmentRequestNote = reason?.trim() || null;
+      ticket.assignmentRequestedById = null as any;
+      ticket.assignmentRequestedAt = null;
+    }
+
+    const saved = await this.ticketsRepository.save(ticket);
+    await this.logTicketAction(ticketId, ActionType.UPDATE, userId, {
+      assignmentRequest: {
+        event: approve ? 'self_assign_approved' : 'self_assign_rejected',
+        requestedById,
+        reason: reason?.trim() || null,
+      },
+      ...(approve
+        ? {
+            assignedToId: { to: requestedById },
+            status: { to: TicketStatus.IN_PROGRESS },
+          }
+        : {}),
+    });
     return saved;
   }
 
@@ -360,7 +499,7 @@ export class TicketsService {
       );
     } else {
       qb.where('log.entityType IN (:...types)', {
-        types: ['ticket', 'user', 'knowledge_document'],
+        types: ['ticket', 'user', 'knowledge_document', 'knowledge_entry'],
       });
     }
 
@@ -390,10 +529,6 @@ export class TicketsService {
       return [];
     }
 
-    if (tickets.length === 0 && userRole !== UserRole.TECHNICIAN) {
-      return [];
-    }
-
     const idToTitle = new Map<string, string>();
     const ticketIds = tickets.map((t) => {
       idToTitle.set(t.id, t.title);
@@ -416,31 +551,47 @@ export class TicketsService {
       }));
     }
 
-    if (userRole !== UserRole.TECHNICIAN) {
-      return ticketMapped;
+    let withMachineTitles: (AuditLog & { ticketTitle?: string })[] = [];
+    if (userRole === UserRole.TECHNICIAN) {
+      const machineNameLogs = await this.auditLogRepository
+        .createQueryBuilder('log')
+        .where('log.entityType = :t', { t: 'machine_name_suggestion' })
+        .andWhere("log.changes->>'forUserId' = :userId", { userId })
+        .orderBy('log.timestamp', 'DESC')
+        .take(limit)
+        .getMany();
+
+      withMachineTitles = machineNameLogs.map((log) => {
+        const ch = log.changes as Record<string, unknown> | null;
+        const docName =
+          ch && typeof ch.documentOriginalName === 'string'
+            ? ch.documentOriginalName
+            : undefined;
+        return {
+          ...log,
+          ticketTitle: docName,
+        };
+      });
     }
 
-    const machineNameLogs = await this.auditLogRepository
+    const knowledgeReviewLogs = await this.auditLogRepository
       .createQueryBuilder('log')
-      .where('log.entityType = :t', { t: 'machine_name_suggestion' })
+      .where('log.entityType = :t', { t: 'knowledge_entry' })
       .andWhere("log.changes->>'forUserId' = :userId", { userId })
       .orderBy('log.timestamp', 'DESC')
       .take(limit)
       .getMany();
 
-    const withMachineTitles = machineNameLogs.map((log) => {
+    const withKnowledgeTitles = knowledgeReviewLogs.map((log) => {
       const ch = log.changes as Record<string, unknown> | null;
-      const docName =
-        ch && typeof ch.documentOriginalName === 'string'
-          ? ch.documentOriginalName
-          : undefined;
+      const title = ch && typeof ch.title === 'string' ? ch.title : undefined;
       return {
         ...log,
-        ticketTitle: docName,
+        ticketTitle: title,
       };
     });
 
-    const merged = [...ticketMapped, ...withMachineTitles].sort(
+    const merged = [...ticketMapped, ...withMachineTitles, ...withKnowledgeTitles].sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
     );
     return merged.slice(0, limit);

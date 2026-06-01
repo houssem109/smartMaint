@@ -44,6 +44,13 @@ export enum TicketSource {
   EMAIL = 'email',
 }
 
+export enum AssignmentRequestStatus {
+  NONE = 'none',
+  PENDING = 'pending',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+}
+
 @Entity('tickets')
 export class Ticket {
   @PrimaryGeneratedColumn('uuid')
@@ -105,6 +112,28 @@ export class Ticket {
   @ManyToOne(() => User, (user) => user.assignedTickets)
   @JoinColumn({ name: 'assignedToId' })
   assignedTo: User;
+
+  @Column({ nullable: true })
+  assignmentRequestedById: string;
+
+  @Column({
+    type: 'enum',
+    enum: AssignmentRequestStatus,
+    default: AssignmentRequestStatus.NONE,
+  })
+  assignmentRequestStatus: AssignmentRequestStatus;
+
+  @Column({ type: 'text', nullable: true })
+  assignmentRequestNote: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignmentRequestedAt: Date | null;
+
+  @Column({ nullable: true })
+  assignmentReviewedById: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  assignmentReviewedAt: Date | null;
 
   @OneToMany(() => Conversation, (conversation) => conversation.ticket)
   conversations: Conversation[];

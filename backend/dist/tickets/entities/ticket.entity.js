@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Ticket = exports.TicketSource = exports.TicketCategory = exports.TicketPriority = exports.TicketStatus = void 0;
+exports.Ticket = exports.AssignmentRequestStatus = exports.TicketSource = exports.TicketCategory = exports.TicketPriority = exports.TicketStatus = void 0;
 const typeorm_1 = require("typeorm");
 const user_entity_1 = require("../../users/entities/user.entity");
 const conversation_entity_1 = require("./conversation.entity");
@@ -46,6 +46,13 @@ var TicketSource;
     TicketSource["WHATSAPP"] = "whatsapp";
     TicketSource["EMAIL"] = "email";
 })(TicketSource || (exports.TicketSource = TicketSource = {}));
+var AssignmentRequestStatus;
+(function (AssignmentRequestStatus) {
+    AssignmentRequestStatus["NONE"] = "none";
+    AssignmentRequestStatus["PENDING"] = "pending";
+    AssignmentRequestStatus["APPROVED"] = "approved";
+    AssignmentRequestStatus["REJECTED"] = "rejected";
+})(AssignmentRequestStatus || (exports.AssignmentRequestStatus = AssignmentRequestStatus = {}));
 let Ticket = class Ticket {
 };
 exports.Ticket = Ticket;
@@ -123,6 +130,34 @@ __decorate([
     (0, typeorm_1.JoinColumn)({ name: 'assignedToId' }),
     __metadata("design:type", user_entity_1.User)
 ], Ticket.prototype, "assignedTo", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ nullable: true }),
+    __metadata("design:type", String)
+], Ticket.prototype, "assignmentRequestedById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({
+        type: 'enum',
+        enum: AssignmentRequestStatus,
+        default: AssignmentRequestStatus.NONE,
+    }),
+    __metadata("design:type", String)
+], Ticket.prototype, "assignmentRequestStatus", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], Ticket.prototype, "assignmentRequestNote", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Date)
+], Ticket.prototype, "assignmentRequestedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ nullable: true }),
+    __metadata("design:type", String)
+], Ticket.prototype, "assignmentReviewedById", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamp', nullable: true }),
+    __metadata("design:type", Date)
+], Ticket.prototype, "assignmentReviewedAt", void 0);
 __decorate([
     (0, typeorm_1.OneToMany)(() => conversation_entity_1.Conversation, (conversation) => conversation.ticket),
     __metadata("design:type", Array)

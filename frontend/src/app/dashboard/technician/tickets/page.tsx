@@ -87,10 +87,9 @@ export default function TechnicianTicketsPage() {
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
       const res = await api.get<Ticket[]>('/tickets', { params });
-      // Show only tickets that are assigned to this technician
       const myTickets = currentUser
         ? res.data.filter((t) => t.assignedToId === currentUser.id)
-        : res.data;
+        : [];
       setTickets(myTickets);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load tickets');
@@ -100,8 +99,9 @@ export default function TechnicianTicketsPage() {
   };
 
   useEffect(() => {
+    if (!currentUser?.id) return;
     fetchTickets();
-  }, [statusFilter, priorityFilter]);
+  }, [statusFilter, priorityFilter, currentUser?.id]);
 
   const filteredTickets = useMemo(() => {
     // Reset to first page whenever search or tickets change
@@ -131,7 +131,7 @@ export default function TechnicianTicketsPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader className="space-y-4">
-              <CardTitle className="text-lg">Tickets list</CardTitle>
+              <CardTitle className="text-lg">Tickets assigned to me</CardTitle>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-3">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

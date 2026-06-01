@@ -22,4 +22,7 @@ export declare class TicketsController {
     remove(id: string, req: any): Promise<void>;
     restore(id: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     assignTicket(ticketId: string, technicianId: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
+    requestSelfAssign(ticketId: string, note: string | undefined, req: any): Promise<import("./entities/ticket.entity").Ticket>;
+    approveSelfAssignRequest(ticketId: string, req: any): Promise<import("./entities/ticket.entity").Ticket>;
+    rejectSelfAssignRequest(ticketId: string, reason: string | undefined, req: any): Promise<import("./entities/ticket.entity").Ticket>;
 }

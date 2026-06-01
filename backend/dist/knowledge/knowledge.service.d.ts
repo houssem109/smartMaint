@@ -4,11 +4,15 @@ import { CreateKnowledgeEntryDto } from './dto/create-knowledge-entry.dto';
 import { UpdateKnowledgeEntryDto } from './dto/update-knowledge-entry.dto';
 import { UserRole } from '../users/entities/user.entity';
 import { RagService } from '../ai/rag.service';
+import { AiService } from '../ai/ai.service';
+import { AuditLog } from '../common/entities/audit-log.entity';
 export declare class KnowledgeService {
     private readonly knowledgeRepository;
+    private readonly auditLogRepository;
     private readonly ragService;
+    private readonly aiService;
     private readonly logger;
-    constructor(knowledgeRepository: Repository<KnowledgeEntry>, ragService: RagService);
+    constructor(knowledgeRepository: Repository<KnowledgeEntry>, auditLogRepository: Repository<AuditLog>, ragService: RagService, aiService: AiService);
     buildIndexText(entry: KnowledgeEntry): string;
     private indexEntryIfApproved;
     create(dto: CreateKnowledgeEntryDto, userId: string, role: UserRole, options?: {
@@ -26,6 +30,7 @@ export declare class KnowledgeService {
     approveKnowledgeEntry(id: string, adminId: string): Promise<KnowledgeEntry>;
     rejectKnowledgeEntry(id: string, adminId: string, reason?: string | null): Promise<KnowledgeEntry>;
     setPhotoPath(entryId: string, relativePath: string, userId: string, role: UserRole): Promise<KnowledgeEntry>;
+    private describeFieldPhotoForEntry;
     exportCsvForUser(userId: string, role: UserRole): Promise<string>;
     exportXlsxForUser(userId: string, role: UserRole): Promise<Buffer>;
 }

@@ -181,6 +181,7 @@ export default function Layout({ children, title }: LayoutProps) {
                           const isKnowledgeDoc =
                             n.entityType === 'knowledge_document' && isAdminRole;
                           const isMachineNameSuggestion = n.entityType === 'machine_name_suggestion';
+                          const isKnowledgeEntryReview = n.entityType === 'knowledge_entry';
                           const ch = n.changes as Record<string, unknown> | null | undefined;
 
                           let title = n.ticketTitle;
@@ -196,6 +197,8 @@ export default function Layout({ children, title }: LayoutProps) {
                               title = String(ch.documentOriginalName);
                             } else if (isMachineNameSuggestion && ch.documentOriginalName) {
                               title = String(ch.documentOriginalName);
+                            } else if (isKnowledgeEntryReview && typeof ch.title === 'string') {
+                              title = String(ch.title);
                             }
                           }
                           let displayTitle =
@@ -213,6 +216,15 @@ export default function Layout({ children, title }: LayoutProps) {
                           if (isMachineNameSuggestion && ch?.event === 'machine_name_suggestion_superseded') {
                             displayTitle = 'Machine name suggestion closed';
                           }
+                          if (isKnowledgeEntryReview && ch?.event === 'knowledge_entry_approved') {
+                            displayTitle = 'Solution approved';
+                          }
+                          if (isKnowledgeEntryReview && ch?.event === 'knowledge_entry_rejected') {
+                            displayTitle = 'Solution rejected';
+                          }
+                          if (isKnowledgeEntryReview && ch?.event === 'knowledge_entry_submitted') {
+                            displayTitle = 'New solution submitted';
+                          }
 
                           const href = (() => {
                             if (isUserEntity) return '/dashboard/admin/users';
@@ -221,6 +233,11 @@ export default function Layout({ children, title }: LayoutProps) {
                             }
                             if (isMachineNameSuggestion && typeof ch?.documentId === 'string') {
                               return `/dashboard/technician/knowledge-pdfs/${ch.documentId}`;
+                            }
+                            if (isKnowledgeEntryReview) {
+                              if (isAdminRole) return '/dashboard/admin/knowledge';
+                              if (user?.role === 'worker') return '/dashboard/worker/knowledge';
+                              return '/dashboard/technician/knowledge';
                             }
                             return `/dashboard/tickets/${n.entityId}`;
                           })();

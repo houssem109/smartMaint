@@ -17,6 +17,7 @@ export declare class KnowledgeEntry {
     reviewedAt: Date | null;
     rejectReason: string | null;
     photoPath: string | null;
+    photoVisionDescription: string | null;
     knowledgeDocument?: KnowledgeDocument | null;
     knowledgeDocumentId: string | null;
     createdById: string;

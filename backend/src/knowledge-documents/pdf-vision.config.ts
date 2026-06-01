@@ -5,11 +5,11 @@ export function isPdfVisionEnabled(): boolean {
   return String(process.env.ENABLE_PDF_VISION ?? 'false').toLowerCase() === 'true';
 }
 
-/** Max pages per document to send through vision (after OCR or direct). */
+/** Max pages per document for async vision enrichment (after index). */
 export function getPdfVisionMaxPages(): number {
-  const n = Number(process.env.PDF_VISION_MAX_PAGES ?? 5);
-  if (!Number.isFinite(n)) return 5;
-  return Math.max(0, Math.min(20, Math.floor(n)));
+  const n = Number(process.env.PDF_VISION_MAX_PAGES ?? 180);
+  if (!Number.isFinite(n)) return 180;
+  return Math.max(0, Math.min(500, Math.floor(n)));
 }
 
 /**

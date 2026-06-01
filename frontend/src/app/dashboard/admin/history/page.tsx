@@ -43,6 +43,10 @@ export default function TicketHistoryPage() {
 
   useEffect(() => {
     fetchHistory();
+    const id = setInterval(() => {
+      fetchHistory();
+    }, 10000);
+    return () => clearInterval(id);
   }, []);
 
   const formatAction = (actionType: string) => {
@@ -87,6 +91,7 @@ export default function TicketHistoryPage() {
   const isTicket = (entry: TicketHistoryEntry) => entry.entityType === 'ticket';
   const isUser = (entry: TicketHistoryEntry) => entry.entityType === 'user';
   const isKnowledgeDoc = (entry: TicketHistoryEntry) => entry.entityType === 'knowledge_document';
+  const isKnowledgeEntry = (entry: TicketHistoryEntry) => entry.entityType === 'knowledge_entry';
 
   const handleRestore = async (entry: TicketHistoryEntry) => {
     if (entry.actionType !== 'delete') return;
@@ -110,18 +115,14 @@ export default function TicketHistoryPage() {
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
-      <Layout title="Ticket History" showSidebar={true}>
+      <Layout title="Activity Log" showSidebar={true}>
         <div className="space-y-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">Recent Ticket Activity</h2>
-            <Button variant="outline" size="sm" onClick={fetchHistory}>
-              Refresh
-            </Button>
-          </div>
-
           <Card className="border-border/50 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-lg">History log</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-lg">System Activity Log</CardTitle>
+              <Button variant="outline" size="sm" onClick={fetchHistory}>
+                Refresh
+              </Button>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -175,6 +176,12 @@ export default function TicketHistoryPage() {
                                 <Link href={`/dashboard/admin/knowledge-docs/${entry.entityId}`}>
                                   {(entry.changes as any)?.documentOriginalName ||
                                     `PDF ${entry.entityId.slice(0, 8)}…`}
+                                </Link>
+                              </Button>
+                            ) : isKnowledgeEntry(entry) ? (
+                              <Button variant="link" size="sm" asChild className="px-0">
+                                <Link href="/dashboard/admin/knowledge">
+                                  {(entry.changes as any)?.title || `Knowledge ${entry.entityId.slice(0, 8)}…`}
                                 </Link>
                               </Button>
                             ) : (

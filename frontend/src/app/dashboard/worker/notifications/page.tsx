@@ -42,9 +42,18 @@ export default function WorkerNotificationsPage() {
 
   useEffect(() => {
     fetchNotifications();
+    const interval = setInterval(fetchNotifications, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const formatAction = (entry: NotificationEntry) => {
+    const event = entry.changes?.event;
+    if (entry.entityType === 'knowledge_entry') {
+      if (event === 'knowledge_entry_submitted') return 'Solution submitted';
+      if (event === 'knowledge_entry_approved') return 'Solution approved';
+      if (event === 'knowledge_entry_rejected') return 'Solution rejected';
+      return 'Knowledge update';
+    }
     switch (entry.actionType) {
       case 'create':
         return 'Your ticket was created';
@@ -62,6 +71,15 @@ export default function WorkerNotificationsPage() {
   const formatDetails = (entry: NotificationEntry): string => {
     const changes = entry.changes;
     if (!changes) return '—';
+    if (entry.entityType === 'knowledge_entry') {
+      if (changes?.event === 'knowledge_entry_rejected' && typeof changes?.rejectReason === 'string') {
+        return `Reason: ${changes.rejectReason}`;
+      }
+      if (changes?.reviewStatus && typeof changes.reviewStatus === 'string') {
+        return `Status: ${changes.reviewStatus}`;
+      }
+      return 'Knowledge entry review update';
+    }
 
     if (changes.deletedSnapshot) return 'Ticket soft-deleted (can be restored by admin).';
     if (changes.restoredFromDelete) return 'Ticket restored from trash.';
@@ -82,7 +100,7 @@ export default function WorkerNotificationsPage() {
       <Layout title="Notifications" showSidebar={true}>
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">My Ticket Notifications</h2>
+            <h2 className="text-xl font-semibold tracking-tight">My Notifications</h2>
             <Button variant="outline" size="sm" onClick={fetchNotifications}>
               Refresh
             </Button>
@@ -107,7 +125,7 @@ export default function WorkerNotificationsPage() {
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
                         <TableHead>When</TableHead>
-                        <TableHead>Ticket</TableHead>
+                        <TableHead>Item</TableHead>
                         <TableHead>Event</TableHead>
                         <TableHead>Details</TableHead>
                       </TableRow>
@@ -120,7 +138,13 @@ export default function WorkerNotificationsPage() {
                           </TableCell>
                           <TableCell className="text-sm">
                             <Button variant="link" size="sm" asChild className="px-0">
-                              <Link href={`/dashboard/tickets/${n.entityId}`}>
+                              <Link
+                                href={
+                                  n.entityType === 'knowledge_entry'
+                                    ? '/dashboard/worker/knowledge'
+                                    : `/dashboard/tickets/${n.entityId}`
+                                }
+                              >
                                 {(() => {
                                   if (n.ticketTitle) return n.ticketTitle;
                                   const changes: any = n.changes;
@@ -131,7 +155,9 @@ export default function WorkerNotificationsPage() {
                                     if ('to' in changes.title) return String(changes.title.to);
                                     if ('from' in changes.title) return String(changes.title.from);
                                   }
-                                  return `Ticket ${n.entityId.slice(0, 8)}…`;
+                                  return n.entityType === 'knowledge_entry'
+                                    ? `Knowledge ${n.entityId.slice(0, 8)}…`
+                                    : `Ticket ${n.entityId.slice(0, 8)}…`;
                                 })()}
                               </Link>
                             </Button>

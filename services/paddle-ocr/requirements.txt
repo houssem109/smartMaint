@@ -1,0 +1,13 @@
+# PyTorch GPU installed in Dockerfile (cu126 index)
+# Pin 4.57.x — transformers 5.x breaks PaddleOCR-VL remote code (text_config error)
+transformers==4.57.6
+accelerate>=0.34.0
+safetensors>=0.4.0
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pillow==10.4.0
+numpy==1.26.4
+protobuf>=4.25.0
+sentencepiece>=0.2.0
+einops>=0.7.0

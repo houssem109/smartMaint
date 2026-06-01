@@ -34,7 +34,7 @@ import { ensureKnowledgePhotoUploadDir, getKnowledgePhotoUploadDir } from './kno
 @ApiTags('Knowledge')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+@Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN, UserRole.WORKER)
 @Controller('knowledge')
 export class KnowledgeController {
   constructor(private readonly knowledgeService: KnowledgeService) {}

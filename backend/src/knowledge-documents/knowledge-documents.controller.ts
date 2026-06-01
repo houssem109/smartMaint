@@ -24,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../users/entities/user.entity';
 import { KnowledgeDocumentsService } from './knowledge-documents.service';
+import { DatabaseSchemaService } from '../database/database-schema.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join } from 'path';
@@ -80,7 +81,10 @@ class AdminFixTextDto {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('knowledge-documents')
 export class KnowledgeDocumentsController {
-  constructor(private readonly knowledgeDocumentsService: KnowledgeDocumentsService) {}
+  constructor(
+    private readonly knowledgeDocumentsService: KnowledgeDocumentsService,
+    private readonly databaseSchemaService: DatabaseSchemaService,
+  ) {}
 
   private async acceptPdfUpload(
     file: Express.Multer.File,
@@ -333,6 +337,33 @@ export class KnowledgeDocumentsController {
     return this.knowledgeDocumentsService.getRagStoredData(id, limit);
   }
 
+  @Get(':id/pipeline-audit-export/xlsx')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Excel report: summary, pages OCR, RAG chunks, LLM extraction (readable for jury / thesis)',
+  })
+  async pipelineAuditExportXlsx(@Param('id') id: string, @Query('ragLimit') ragLimitRaw?: string) {
+    const parsed = ragLimitRaw != null ? parseInt(ragLimitRaw, 10) : 2000;
+    const ragLimit = Number.isFinite(parsed) ? parsed : 2000;
+    const { buffer, filename } = await this.knowledgeDocumentsService.exportPipelineAuditExcel(id, ragLimit);
+    return new StreamableFile(buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="${filename}"`,
+    });
+  }
+
+  @Get(':id/pipeline-audit-report')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary:
+      'Full pipeline audit for jury/report: page OCR+vision text, Qdrant chunks, KPIs, chunk before/after filter',
+  })
+  async pipelineAuditReport(@Param('id') id: string, @Query('ragLimit') ragLimitRaw?: string) {
+    const parsed = ragLimitRaw != null ? parseInt(ragLimitRaw, 10) : 2000;
+    const ragLimit = Number.isFinite(parsed) ? parsed : 2000;
+    return this.knowledgeDocumentsService.getPipelineAuditReport(id, ragLimit);
+  }
+
   @Get('rag-stored-data-global')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({ summary: 'Get RAG chunks across all PDFs for admin inspection' })
@@ -398,6 +429,15 @@ export class KnowledgeDocumentsController {
   })
   databaseInventory() {
     return this.knowledgeDocumentsService.getDatabaseInventory();
+  }
+
+  @Get('database-schema')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Live PostgreSQL public schema: all tables, columns, and foreign keys (from information_schema)',
+  })
+  databaseSchema() {
+    return this.databaseSchemaService.getPublicSchema();
   }
 
   @Get('qa-success-criteria')
@@ -529,6 +569,16 @@ export class KnowledgeDocumentsController {
   })
   async reindexManualChunks(@Param('id') id: string) {
     return this.knowledgeDocumentsService.reindexManualChunksForDocument(id);
+  }
+
+  @Post(':id/continue-extraction')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({
+    summary:
+      'Resume failed/partial extraction without re-upload — keeps OCR/vision page work, re-runs LLM + Qdrant',
+  })
+  async continueExtraction(@Param('id') id: string, @Request() req) {
+    return this.knowledgeDocumentsService.continueDocumentExtraction(id, req.user.id);
   }
 
   @Get(':id/download')

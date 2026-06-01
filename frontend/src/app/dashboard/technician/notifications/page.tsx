@@ -42,9 +42,19 @@ export default function TechnicianNotificationsPage() {
 
   useEffect(() => {
     fetchNotifications();
+    const id = setInterval(() => {
+      fetchNotifications();
+    }, 10000);
+    return () => clearInterval(id);
   }, []);
 
   const formatAction = (entry: NotificationEntry) => {
+    if (entry.entityType === 'knowledge_entry') {
+      const ev = (entry.changes as any)?.event;
+      if (ev === 'knowledge_entry_submitted') return 'Solution submitted';
+      if (ev === 'knowledge_entry_approved') return 'Solution approved';
+      if (ev === 'knowledge_entry_rejected') return 'Solution rejected';
+    }
     if (entry.entityType === 'machine_name_suggestion') {
       const ev = (entry.changes as any)?.event;
       if (ev === 'machine_name_suggestion_approved') return 'Machine name approved';
@@ -140,6 +150,9 @@ export default function TechnicianNotificationsPage() {
                             <Button variant="link" size="sm" asChild className="px-0">
                               <Link
                                 href={
+                                  n.entityType === 'knowledge_entry'
+                                    ? '/dashboard/technician/knowledge'
+                                    :
                                   n.entityType === 'machine_name_suggestion' &&
                                   typeof (n.changes as any)?.documentId === 'string'
                                     ? `/dashboard/technician/knowledge-pdfs/${(n.changes as any).documentId}`
@@ -158,6 +171,9 @@ export default function TechnicianNotificationsPage() {
                                   }
                                   if (n.entityType === 'machine_name_suggestion' && changes?.documentOriginalName) {
                                     return String(changes.documentOriginalName);
+                                  }
+                                  if (n.entityType === 'knowledge_entry' && changes?.title) {
+                                    return String(changes.title);
                                   }
                                   return `Ticket ${n.entityId.slice(0, 8)}…`;
                                 })()}

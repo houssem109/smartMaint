@@ -27,6 +27,7 @@ const ai_module_1 = require("../ai/ai.module");
 const rag_module_1 = require("../ai/rag.module");
 const machine_profiles_module_1 = require("../machine-profiles/machine-profiles.module");
 const auth_module_1 = require("../auth/auth.module");
+const database_schema_module_1 = require("../database/database-schema.module");
 const document_progress_gateway_1 = require("./document-progress.gateway");
 const knowledge_documents_queue_processor_1 = require("./knowledge-documents.queue.processor");
 const queues_constants_1 = require("./queues.constants");
@@ -54,6 +55,7 @@ exports.KnowledgeDocumentsModule = KnowledgeDocumentsModule = __decorate([
             rag_module_1.RagModule,
             machine_profiles_module_1.MachineProfilesModule,
             auth_module_1.AuthModule,
+            database_schema_module_1.DatabaseSchemaModule,
         ],
         providers: [
             document_progress_gateway_1.DocumentProgressGateway,

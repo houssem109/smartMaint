@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import { v5 as uuidv5 } from 'uuid';
 import { VectorChunkHash } from './entities/vector-chunk-hash.entity';
+import { isLowValueChunkText } from '../knowledge-documents/pdf-chunk-quality.util';
 
 export type DocumentChunkIndexMeta = {
   machineProfileId?: string | null;
@@ -131,11 +132,19 @@ export class RagService {
 
     for (const maxChars of [...new Set(attempts)]) {
       const input = String(text || '').slice(0, maxChars);
-      const res = await fetch(`${this.ollamaBaseUrl}/api/embed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: this.embedModel, input, truncate: true }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${this.ollamaBaseUrl}/api/embed`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: this.embedModel, input, truncate: true }),
+        });
+      } catch (err: any) {
+        const msg = err?.message ? String(err.message) : String(err);
+        throw new Error(
+          `Ollama unreachable at ${this.ollamaBaseUrl} (${msg}). Start Ollama on the host and run: ollama pull ${this.embedModel}`,
+        );
+      }
 
       if (res.ok) {
         const data: any = await res.json();
@@ -218,7 +227,7 @@ export class RagService {
 
     for (let i = 0; i < chunks.length; i++) {
       const text = chunks[i]?.trim();
-      if (!text) continue;
+      if (!text || isLowValueChunkText(text)) continue;
 
       const norm = this.normalizeChunkForHash(text);
       const hash = this.sha256Hex('docchunk', norm);

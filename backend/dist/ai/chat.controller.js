@@ -23,6 +23,7 @@ const knowledge_service_1 = require("../knowledge/knowledge.service");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const conversation_entity_1 = require("../tickets/entities/conversation.entity");
+const ticket_entity_1 = require("../tickets/entities/ticket.entity");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
 class ChatHistoryItemDto {
@@ -59,6 +60,10 @@ __decorate([
     (0, class_transformer_1.Type)(() => ChatHistoryItemDto),
     __metadata("design:type", Array)
 ], ChatMessageDto.prototype, "history", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], ChatMessageDto.prototype, "allowTicketCreation", void 0);
 let ChatController = class ChatController {
     constructor(aiService, ticketsService, ragService, knowledgeService, conversationRepository) {
         this.aiService = aiService;
@@ -69,6 +74,7 @@ let ChatController = class ChatController {
     }
     async sendMessage(body, req) {
         const { message, ticketId, history, imageBase64 } = body;
+        const allowTicketCreation = body.allowTicketCreation !== false;
         const user = req.user;
         if (!message || !message.trim()) {
             return { reply: "Please enter a message so I can help you.", ticketId, sources: [] };
@@ -94,16 +100,69 @@ let ChatController = class ChatController {
             userMessageContent =
                 `[User attached a photo — image vision is disabled on the server]\n\nUser message:\n${message.trim()}`;
         }
+        let linkedTicket = null;
+        let effectiveTicketId = ticketId;
         if (ticketId) {
-            await this.ticketsService.findOne(ticketId, user.id, user.role);
+            linkedTicket = await this.ticketsService.findOne(ticketId, user.id, user.role);
+        }
+        else {
+            const ticketIdFromMessage = this.extractTicketIdFromMessage(message);
+            if (ticketIdFromMessage) {
+                linkedTicket = await this.ticketsService.findOne(ticketIdFromMessage, user.id, user.role);
+                effectiveTicketId = linkedTicket.id;
+            }
+        }
+        if (allowTicketCreation) {
+            const ticketCreation = await this.maybeHandleTicketCreationFlow({
+                user,
+                message,
+                history,
+            });
+            if (ticketCreation) {
+                await this.persistConversation(user.id, effectiveTicketId ?? ticketCreation.ticketId ?? null, message, ticketCreation.reply);
+                return {
+                    reply: ticketCreation.reply,
+                    ticketId: ticketCreation.ticketId ?? effectiveTicketId,
+                    sources: [],
+                };
+            }
+        }
+        const listIntentReply = await this.maybeHandleTicketListQuestion({
+            user,
+            message,
+        });
+        if (listIntentReply) {
+            await this.persistConversation(user.id, effectiveTicketId ?? null, message, listIntentReply);
+            return {
+                reply: listIntentReply,
+                ticketId: effectiveTicketId,
+                sources: [],
+            };
+        }
+        const statusIntentReply = await this.maybeHandleTicketStatusQuestion({
+            user,
+            message,
+            linkedTicket,
+            history,
+        });
+        if (statusIntentReply) {
+            await this.persistConversation(user.id, effectiveTicketId ?? null, message, statusIntentReply);
+            return {
+                reply: statusIntentReply,
+                ticketId: effectiveTicketId,
+                sources: [],
+            };
         }
         const systemPrompt = this.aiService.getSystemPrompt();
         const historyMessages = history?.map((h) => ({
             role: h.role === 'assistant' ? 'assistant' : 'user',
             content: h.content,
         })) ?? [];
+        const retrievalQuery = linkedTicket
+            ? `${message}\n\nTicket title: ${linkedTicket.title}\nTicket description: ${linkedTicket.description}`
+            : message;
         const [ragResults, knowledgeEntries] = await Promise.all([
-            this.ragService.searchRelevantChunks(message, 6),
+            this.ragService.searchRelevantChunks(retrievalQuery, 6),
             this.knowledgeService.searchRelevantEntries(message, 3),
         ]);
         const truncate = (s, max = 1200) => (s ?? '').length > max ? `${String(s).slice(0, max)}…` : String(s ?? '');
@@ -133,6 +192,7 @@ let ChatController = class ChatController {
                 .join('\n\n')
             : null;
         const contextBlocks = [
+            linkedTicket ? `Current ticket context:\n${this.buildTicketContext(linkedTicket)}` : null,
             ragContext
                 ? `Manual excerpts:\n${ragContext}`
                 : null,
@@ -140,16 +200,21 @@ let ChatController = class ChatController {
                 ? `Approved knowledge entries:\n${knowledgeContext}`
                 : null,
         ].filter(Boolean);
+        const userContextMessage = `Current logged-in user context:\n` +
+            `- email: ${user?.email ?? 'unknown'}\n` +
+            `- role: ${user?.role ?? 'unknown'}\n` +
+            `Address the user naturally when useful (for example by name if known).`;
         const ragSystemMessage = contextBlocks.length
             ? `Retrieved manual excerpts and/or approved knowledge entries follow. Prefer them over guessing; do not invent machine-specific procedures or specs not supported by this text.\n` +
-                `If the question is on-topic (plant equipment, maintenance, simple shop-floor PC basics) but this text does not cover it, you may give only short, common-sense reminders—what a technician might say in one breath—not long improvised diagnostics.\n\n` +
+                `If the question is on-topic (plant equipment, maintenance, simple shop-floor PC basics) but this text does not fully cover it, you may provide concise practical guidance from general industrial best practices. Briefly mark when guidance is general and not from a manual.\n\n` +
                 `${contextBlocks.join('\n\n')}`
             : `No manual excerpts or knowledge entries were retrieved.\n` +
-                `If the question is clearly about plant machines, maintenance, or simple shop-floor equipment/PC basics, you may answer very briefly with common sense only—no long improvised answers.\n` +
+                `If the question is clearly about plant machines, maintenance, or simple shop-floor equipment/PC basics, you may answer with concise practical best-practice guidance.\n` +
                 `If the user frames the question as home, kitchen, cooking, or other non-plant life topics, or anything not grounded in industrial maintenance, decline in one or two neutral sentences (production equipment and SmartMaint only)—do not answer “anyway.”\n` +
                 `If the question mixes plant and home: only address it if retrieved context would apply; otherwise decline.`;
         const messages = [
             { role: 'system', content: systemPrompt },
+            { role: 'system', content: userContextMessage },
             ...historyMessages,
             { role: 'system', content: ragSystemMessage },
             {
@@ -158,19 +223,7 @@ let ChatController = class ChatController {
             },
         ];
         const reply = await this.aiService.chat(messages);
-        const userEntry = this.conversationRepository.create({
-            ticketId: ticketId ?? null,
-            message,
-            senderType: conversation_entity_1.SenderType.USER,
-            senderId: user.id,
-        });
-        const aiEntry = this.conversationRepository.create({
-            ticketId: ticketId ?? null,
-            message: reply,
-            senderType: conversation_entity_1.SenderType.AI,
-            senderId: null,
-        });
-        await this.conversationRepository.save([userEntry, aiEntry]);
+        await this.persistConversation(user.id, effectiveTicketId ?? null, message, reply);
         const sources = [
             ...ragResults.map((r) => ({
                 kind: 'pdf_chunk',
@@ -185,7 +238,7 @@ let ChatController = class ChatController {
                 knowledgeEntryId: k.id,
             })),
         ];
-        return { reply, ticketId, sources };
+        return { reply, ticketId: effectiveTicketId, sources };
     }
     async history(ticketId, req) {
         const user = req.user;
@@ -219,6 +272,297 @@ let ChatController = class ChatController {
             throw new common_1.BadRequestException('Only JPEG, PNG, or WebP images are allowed');
         }
         return b64;
+    }
+    async persistConversation(userId, ticketId, userMessage, aiReply) {
+        const userEntry = this.conversationRepository.create({
+            ticketId: ticketId ?? null,
+            message: userMessage,
+            senderType: conversation_entity_1.SenderType.USER,
+            senderId: userId,
+        });
+        const aiEntry = this.conversationRepository.create({
+            ticketId: ticketId ?? null,
+            message: aiReply,
+            senderType: conversation_entity_1.SenderType.AI,
+            senderId: null,
+        });
+        await this.conversationRepository.save([userEntry, aiEntry]);
+    }
+    extractTicketIdFromMessage(message) {
+        const m = message.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i);
+        return m?.[0];
+    }
+    buildTicketContext(ticket) {
+        const lines = [
+            `Ticket ID: ${ticket.id}`,
+            `Title: ${ticket.title}`,
+            `Description: ${ticket.description}`,
+            `Status: ${ticket.status}`,
+            `Priority: ${ticket.priority}`,
+            `Category: ${ticket.category}`,
+            ticket.subcategory ? `Subcategory: ${ticket.subcategory}` : null,
+            ticket.machine ? `Machine: ${ticket.machine}` : null,
+            ticket.area ? `Area: ${ticket.area}` : null,
+            ticket.assignedToId ? `Assigned technician id: ${ticket.assignedToId}` : 'Assigned technician id: none',
+        ].filter(Boolean);
+        return lines.join('\n');
+    }
+    async maybeHandleTicketCreationFlow(params) {
+        const { user, message, history } = params;
+        const lower = message.toLowerCase();
+        const triggerWords = [
+            'create ticket',
+            'open ticket',
+            'new ticket',
+            'submit ticket',
+            'raise ticket',
+            'make ticket',
+            'report incident',
+            'problem report',
+            'create an issue',
+            'creer ticket',
+            'créer ticket',
+            'ouvrir ticket',
+        ];
+        const maybeTicketFlow = triggerWords.some((w) => lower.includes(w)) ||
+            (history ?? []).some((h) => /ticket\s+(details|title|description|priority|category)|before i create/i.test(h.content));
+        if (!maybeTicketFlow)
+            return null;
+        const recentHistory = (history ?? []).slice(-10);
+        const convo = recentHistory
+            .map((h) => `${h.role.toUpperCase()}: ${h.content}`)
+            .concat(`USER: ${message}`)
+            .join('\n');
+        const extractionPrompt = `You extract ticket-creation intent and fields from a chat.\n` +
+            `Return JSON only (no markdown) with this exact schema:\n` +
+            `{"intent":"create_ticket"|"other","canCreateNow":boolean,"missingFields":string[],"followUpQuestion":string,"ticket":{"title":string,"description":string,"category":"software"|"hardware"|"electrical"|"mechanical"|"it"|"plumbing"|"task"|"other","priority":"low"|"medium"|"high"|"critical","subcategory":string,"machine":string,"area":string}}\n` +
+            `Rules:\n` +
+            `- canCreateNow=true only if title and description are both sufficiently clear.\n` +
+            `- If user asks to create/open a ticket but details are missing, intent must be create_ticket and provide one concise followUpQuestion.\n` +
+            `- Keep missingFields among: title, description, category, priority, machine, area, subcategory.\n` +
+            `- If not creating ticket now, set intent="other".\n` +
+            `Conversation:\n${convo}`;
+        let parsed = null;
+        try {
+            const raw = await this.aiService.chatPdf([{ role: 'user', content: extractionPrompt }], {
+                model: process.env.OPENROUTER_MODEL || undefined,
+            });
+            parsed = this.safeParseJson(raw);
+        }
+        catch {
+            parsed = null;
+        }
+        if (!parsed || parsed.intent !== 'create_ticket')
+            return null;
+        const draft = (parsed.ticket ?? {});
+        const title = typeof draft.title === 'string' ? draft.title.trim() : '';
+        const description = typeof draft.description === 'string' ? draft.description.trim() : '';
+        if (!parsed.canCreateNow || !title || !description) {
+            const question = typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim().length > 0
+                ? parsed.followUpQuestion.trim()
+                : 'I can create the ticket for you. What title and detailed problem description should I use?';
+            const name = this.getFriendlyUserName(user.email);
+            return {
+                reply: `${name ? `${name}, ` : ''}Before I create the ticket: ${question}`,
+            };
+        }
+        const category = this.normalizeTicketCategory(draft.category);
+        const priority = this.normalizeTicketPriority(draft.priority);
+        const createDto = {
+            title,
+            description,
+            category,
+            priority,
+            source: ticket_entity_1.TicketSource.WEB,
+            subcategory: typeof draft.subcategory === 'string' ? draft.subcategory.trim() || undefined : undefined,
+            machine: typeof draft.machine === 'string' ? draft.machine.trim() || undefined : undefined,
+            area: typeof draft.area === 'string' ? draft.area.trim() || undefined : undefined,
+        };
+        const created = await this.ticketsService.create(createDto, user.id);
+        const name = this.getFriendlyUserName(user.email);
+        return {
+            reply: `${name ? `${name}, ` : ''}I created ticket "${created.title}" successfully.\n` +
+                `Ticket ID: ${created.id}\n` +
+                `Priority: ${created.priority}\n` +
+                `Category: ${created.category}`,
+            ticketId: created.id,
+        };
+    }
+    async maybeHandleTicketStatusQuestion(params) {
+        const { user, message, linkedTicket, history } = params;
+        if (!this.isTicketStatusQuestion(message))
+            return null;
+        if (linkedTicket) {
+            return this.renderTicketStatusReply(linkedTicket);
+        }
+        const title = this.extractTicketTitleCandidate(message, history);
+        if (!title) {
+            return 'I can check that for you. Please share the ticket title (or ticket ID) you want me to verify.';
+        }
+        const rows = await this.ticketsService.findByTitleForRole(user.id, user.role, title, 3);
+        if (rows.length === 0) {
+            return `I could not find a ticket with title "${title}" in your accessible tickets.`;
+        }
+        if (rows.length === 1) {
+            return this.renderTicketStatusReply(rows[0]);
+        }
+        const lines = rows.map((t) => `- ${t.title} (${t.id.slice(0, 8)}...) -> ${t.status}`);
+        return `I found multiple matching tickets:\n${lines.join('\n')}\nTell me the ticket ID and I will check one exactly.`;
+    }
+    async maybeHandleTicketListQuestion(params) {
+        const { user, message } = params;
+        const lower = (message ?? '').toLowerCase();
+        const asksList = /(show|list|display|give|see)\b/.test(lower) &&
+            /(ticket|tickets)\b/.test(lower);
+        const asksCount = /(count|how many|combien)\b/.test(lower) &&
+            /(ticket|tickets)\b/.test(lower);
+        const asksMine = /\bmy\b/.test(lower) || /\bmes\b/.test(lower);
+        const status = this.extractTicketStatusFromMessage(lower);
+        const priority = this.extractTicketPriorityFromMessage(lower);
+        if ((!asksList && !asksCount) || !status)
+            return null;
+        const rows = await this.ticketsService.findAll(user.id, user.role, {
+            status,
+            ...(priority ? { priority } : {}),
+        });
+        const filtered = asksMine
+            ? rows.filter((t) => t.createdById === user.id || t.assignedToId === user.id)
+            : rows;
+        if (filtered.length === 0) {
+            const scope = asksMine ? 'your' : 'matching';
+            const priorityPart = priority ? `${priority} priority ` : '';
+            return `I could not find ${scope} ${priorityPart}${status} tickets.`;
+        }
+        if (asksCount) {
+            const scope = asksMine ? 'your' : 'matching';
+            const priorityPart = priority ? `${priority} priority ` : '';
+            return `You have ${filtered.length} ${scope} ${priorityPart}${status} ticket(s).`;
+        }
+        const shown = filtered.slice(0, 8);
+        const lines = shown.map((t) => `- ${t.title} (${t.id.slice(0, 8)}...) | ${t.status} | ${t.priority}`);
+        const scope = asksMine ? 'your' : 'the';
+        const priorityPart = priority ? `${priority} priority ` : '';
+        const more = filtered.length > shown.length ? `\nAnd ${filtered.length - shown.length} more.` : '';
+        return `I found ${filtered.length} ${scope} ${priorityPart}${status} ticket(s):\n${lines.join('\n')}${more}`;
+    }
+    extractTicketStatusFromMessage(lowerMessage) {
+        if (/\bopen\b|\bouvert\b/.test(lowerMessage))
+            return ticket_entity_1.TicketStatus.OPEN;
+        if (/\bclosed\b|\bclose\b|\bferme\b|\bfermé\b/.test(lowerMessage))
+            return ticket_entity_1.TicketStatus.CLOSED;
+        if (/\bsolved\b|\br[eé]solu\b/.test(lowerMessage))
+            return ticket_entity_1.TicketStatus.SOLVED;
+        if (/\bin progress\b|\ben cours\b/.test(lowerMessage))
+            return ticket_entity_1.TicketStatus.IN_PROGRESS;
+        if (/\bin review\b|\ben revue\b/.test(lowerMessage))
+            return ticket_entity_1.TicketStatus.IN_REVIEW;
+        return null;
+    }
+    extractTicketPriorityFromMessage(lowerMessage) {
+        if (/\bcritical\b|\bcritique\b/.test(lowerMessage))
+            return ticket_entity_1.TicketPriority.CRITICAL;
+        if (/\bhigh\b|\bhaute\b|\belev[ée]\b/.test(lowerMessage))
+            return ticket_entity_1.TicketPriority.HIGH;
+        if (/\bmedium\b|\bmoyenne\b/.test(lowerMessage))
+            return ticket_entity_1.TicketPriority.MEDIUM;
+        if (/\blow\b|\bbasse\b/.test(lowerMessage))
+            return ticket_entity_1.TicketPriority.LOW;
+        return null;
+    }
+    isTicketStatusQuestion(message) {
+        const m = (message ?? '').toLowerCase();
+        return ((m.includes('ticket') && (m.includes('open') || m.includes('status') || m.includes('closed'))) ||
+            /is\s+.*ticket.*open|ticket.*open\s+or\s+not|ticket.*status/i.test(message) ||
+            /ticket.*ouvert|statut.*ticket/i.test(message));
+    }
+    extractTicketTitleCandidate(message, history) {
+        const tryExtract = (text) => {
+            if (!text)
+                return null;
+            const patterns = [
+                /ticket\s+with\s+title\s+["']?(.+?)["']?$/i,
+                /ticket\s+(?:named|called)\s+["']?(.+?)["']?$/i,
+                /title\s*[:=]\s*["']?(.+?)["']?$/i,
+                /ticket\s+title\s+["']?(.+?)["']?$/i,
+            ];
+            for (const p of patterns) {
+                const m = text.match(p);
+                if (m?.[1]?.trim())
+                    return m[1].trim();
+            }
+            const bare = text.trim();
+            if (bare.length >= 5 &&
+                bare.length <= 180 &&
+                !/[?]/.test(bare) &&
+                !/\b(open|closed|status|show|list|count|create|ticket id)\b/i.test(bare)) {
+                return bare.replace(/^["']|["']$/g, '').trim();
+            }
+            return null;
+        };
+        const fromCurrent = tryExtract(message);
+        if (fromCurrent)
+            return fromCurrent;
+        const canUseHistoryTitle = /\b(it|this ticket|that ticket|ce ticket|cet ticket)\b/i.test(message) ||
+            /\b(open or not|status\??)\b/i.test(message);
+        if (!canUseHistoryTitle) {
+            return null;
+        }
+        const hist = (history ?? []).filter((h) => h.role === 'user').slice().reverse();
+        for (const h of hist) {
+            const t = tryExtract(h.content);
+            if (t)
+                return t;
+        }
+        return null;
+    }
+    renderTicketStatusReply(ticket) {
+        const assigned = ticket.assignedTo?.fullName || ticket.assignedToId || 'Unassigned';
+        return (`Yes — I found the ticket "${ticket.title}".\n` +
+            `Status: ${ticket.status}\n` +
+            `Priority: ${ticket.priority}\n` +
+            `Assigned to: ${assigned}`);
+    }
+    safeParseJson(raw) {
+        if (!raw || typeof raw !== 'string')
+            return null;
+        const trimmed = raw.trim();
+        try {
+            return JSON.parse(trimmed);
+        }
+        catch {
+            const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+            if (fenced?.[1]) {
+                try {
+                    return JSON.parse(fenced[1].trim());
+                }
+                catch {
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+    normalizeTicketCategory(value) {
+        const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+        const allowed = Object.values(ticket_entity_1.TicketCategory);
+        return (allowed.includes(v) ? v : ticket_entity_1.TicketCategory.OTHER);
+    }
+    normalizeTicketPriority(value) {
+        const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+        const allowed = Object.values(ticket_entity_1.TicketPriority);
+        return (allowed.includes(v) ? v : ticket_entity_1.TicketPriority.MEDIUM);
+    }
+    getFriendlyUserName(email) {
+        if (!email)
+            return '';
+        const local = email.split('@')[0] || '';
+        if (!local)
+            return '';
+        return local
+            .replace(/[._-]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/\b\w/g, (c) => c.toUpperCase());
     }
     async myHistory(req) {
         const user = req.user;

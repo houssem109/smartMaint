@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiService } from './ai.service';
@@ -10,7 +10,13 @@ import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { RagModule } from './rag.module';
 
 @Module({
-  imports: [ConfigModule, TypeOrmModule.forFeature([Conversation]), TicketsModule, KnowledgeModule, RagModule],
+  imports: [
+    ConfigModule,
+    TypeOrmModule.forFeature([Conversation]),
+    TicketsModule,
+    forwardRef(() => KnowledgeModule),
+    RagModule,
+  ],
   controllers: [AiController, ChatController],
   providers: [AiService],
   exports: [AiService, RagModule],

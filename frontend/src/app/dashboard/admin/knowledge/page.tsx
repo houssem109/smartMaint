@@ -27,6 +27,12 @@ interface KnowledgeEntry {
   problemDescription: string;
   solution: string;
   tags?: string | null;
+  machineName?: string | null;
+  symptom?: string | null;
+  rootCause?: string | null;
+  severity?: string | null;
+  photoPath?: string | null;
+  reviewStatus?: string;
   createdBy?: {
     fullName?: string | null;
     email: string;
@@ -39,6 +45,12 @@ const emptyForm: Omit<KnowledgeEntry, 'id' | 'createdAt' | 'createdBy'> = {
   problemDescription: '',
   solution: '',
   tags: '',
+  machineName: '',
+  symptom: '',
+  rootCause: '',
+  severity: '',
+  photoPath: null,
+  reviewStatus: '',
 };
 
 interface PendingEntry extends KnowledgeEntry {
@@ -54,9 +66,12 @@ export default function AdminKnowledgePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const [modalOpen, setModalOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<KnowledgeEntry | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
 
   const fetchEntries = async () => {
     setLoading(true);
@@ -160,6 +175,7 @@ export default function AdminKnowledgePage() {
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
+    setPhotoFile(null);
     setModalOpen(true);
   };
 
@@ -170,7 +186,14 @@ export default function AdminKnowledgePage() {
       problemDescription: entry.problemDescription,
       solution: entry.solution,
       tags: entry.tags || '',
+      machineName: entry.machineName || '',
+      symptom: entry.symptom || '',
+      rootCause: entry.rootCause || '',
+      severity: entry.severity || '',
+      photoPath: entry.photoPath || null,
+      reviewStatus: entry.reviewStatus || '',
     });
+    setPhotoFile(null);
     setModalOpen(true);
   };
 
@@ -178,6 +201,17 @@ export default function AdminKnowledgePage() {
     setModalOpen(false);
     setEditingId(null);
     setForm(emptyForm);
+    setPhotoFile(null);
+  };
+
+  const openDetails = (entry: KnowledgeEntry) => {
+    setSelectedEntry(entry);
+    setDetailsOpen(true);
+  };
+
+  const closeDetails = () => {
+    setDetailsOpen(false);
+    setSelectedEntry(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -189,13 +223,27 @@ export default function AdminKnowledgePage() {
         problemDescription: form.problemDescription,
         solution: form.solution,
         tags: form.tags?.trim() || undefined,
+        machineName: form.machineName?.trim() || undefined,
+        symptom: form.symptom?.trim() || undefined,
+        rootCause: form.rootCause?.trim() || undefined,
+        severity: form.severity?.trim() || undefined,
       };
+      let entryId = editingId;
       if (editingId) {
         await api.patch(`/knowledge/${editingId}`, payload);
         toast.success('Knowledge entry updated');
       } else {
-        await api.post('/knowledge', payload);
+        const res = await api.post<KnowledgeEntry>('/knowledge', payload);
+        entryId = res.data.id;
         toast.success('Knowledge entry created');
+      }
+      if (photoFile && entryId) {
+        const fd = new FormData();
+        fd.append('file', photoFile);
+        await api.post(`/knowledge/${entryId}/photo`, fd, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        toast.success('Photo attached.');
       }
       closeModal();
       fetchEntries();
@@ -313,11 +361,12 @@ export default function AdminKnowledgePage() {
                     <TableBody>
                       {paginatedEntries.map((entry) => (
                         <TableRow key={entry.id} className="align-top">
-                          <TableCell className="py-3">
+                          <TableCell
+                            className="py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                            onClick={() => openDetails(entry)}
+                            title="Click to view details"
+                          >
                             <div className="font-medium">{entry.title}</div>
-                            <div className="mt-1 text-xs text-muted-foreground line-clamp-2">
-                              {entry.problemDescription}
-                            </div>
                           </TableCell>
                           <TableCell className="py-3">
                             {entry.tags ? (
@@ -450,6 +499,51 @@ export default function AdminKnowledgePage() {
                       placeholder="machine-x, overheating, error-e42"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="machineName">Machine name (optional)</Label>
+                    <Input
+                      id="machineName"
+                      value={form.machineName || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, machineName: e.target.value }))}
+                      placeholder="e.g. Danao line 3"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="symptom">Symptom (optional)</Label>
+                    <Textarea
+                      id="symptom"
+                      value={form.symptom || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, symptom: e.target.value }))}
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="rootCause">Root cause (optional)</Label>
+                    <Textarea
+                      id="rootCause"
+                      value={form.rootCause || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))}
+                      rows={2}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="severity">Severity (optional)</Label>
+                    <Input
+                      id="severity"
+                      value={form.severity || ''}
+                      onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}
+                      placeholder="low / medium / high"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="photo">Field photo (optional, JPEG/PNG/WebP)</Label>
+                    <Input
+                      id="photo"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+                    />
+                  </div>
                   <div className="flex gap-2 pt-2">
                     <Button type="button" variant="outline" onClick={closeModal}>
                       Cancel
@@ -459,6 +553,52 @@ export default function AdminKnowledgePage() {
                     </Button>
                   </div>
                 </form>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {detailsOpen && selectedEntry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <CardTitle>{selectedEntry.title}</CardTitle>
+                <Button variant="ghost" size="icon" onClick={closeDetails}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {selectedEntry.reviewStatus && (
+                  <Badge
+                    variant={selectedEntry.reviewStatus === 'approved' ? 'default' : 'secondary'}
+                    className="capitalize"
+                  >
+                    {selectedEntry.reviewStatus}
+                  </Badge>
+                )}
+                <div className="space-y-1">
+                  <Label>Problem</Label>
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                    {selectedEntry.problemDescription}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Solution</Label>
+                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                    {selectedEntry.solution}
+                  </div>
+                </div>
+                {(selectedEntry.machineName ||
+                  selectedEntry.symptom ||
+                  selectedEntry.rootCause ||
+                  selectedEntry.severity) && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedEntry.machineName && <Badge variant="outline">Machine: {selectedEntry.machineName}</Badge>}
+                    {selectedEntry.severity && <Badge variant="outline">Severity: {selectedEntry.severity}</Badge>}
+                    {selectedEntry.symptom && <Badge variant="outline">Symptom: {selectedEntry.symptom}</Badge>}
+                    {selectedEntry.rootCause && <Badge variant="outline">Root cause: {selectedEntry.rootCause}</Badge>}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

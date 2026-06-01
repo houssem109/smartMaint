@@ -169,7 +169,7 @@ export class TicketsController {
 
   @Post(':id/assign')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({ summary: 'Assign ticket to technician' })
   assignTicket(
     @Param('id') ticketId: string,
@@ -181,6 +181,44 @@ export class TicketsController {
       technicianId,
       req.user.id,
       req.user.role,
+    );
+  }
+
+  @Post(':id/request-self-assign')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Technician requests to self-assign a ticket' })
+  requestSelfAssign(
+    @Param('id') ticketId: string,
+    @Body('note') note: string | undefined,
+    @Request() req,
+  ) {
+    return this.ticketsService.requestSelfAssign(ticketId, req.user.id, req.user.role, note);
+  }
+
+  @Post(':id/assignment-request/approve')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Approve technician self-assign request' })
+  approveSelfAssignRequest(@Param('id') ticketId: string, @Request() req) {
+    return this.ticketsService.reviewSelfAssignRequest(ticketId, true, req.user.id, req.user.role);
+  }
+
+  @Post(':id/assignment-request/reject')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Reject technician self-assign request' })
+  rejectSelfAssignRequest(
+    @Param('id') ticketId: string,
+    @Body('reason') reason: string | undefined,
+    @Request() req,
+  ) {
+    return this.ticketsService.reviewSelfAssignRequest(
+      ticketId,
+      false,
+      req.user.id,
+      req.user.role,
+      reason,
     );
   }
 }

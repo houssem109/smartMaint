@@ -11,6 +11,7 @@ import {
   LogOut,
   Settings,
   Bell,
+  BookOpen,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -21,6 +22,7 @@ interface WorkerSidebarProps {
 
 const navItems = [
   { href: '/dashboard/worker', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard/worker/knowledge', label: 'Knowledge Base', icon: BookOpen },
   { href: '/dashboard/worker/notifications', label: 'Notifications', icon: Bell },
 ];
 

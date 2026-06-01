@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import {
   LayoutDashboard,
   Ticket,
+  ClipboardPlus,
   PanelLeftClose,
   PanelLeft,
   LogOut,
@@ -23,6 +24,7 @@ interface TechnicianSidebarProps {
 const navItems = [
   { href: '/dashboard/technician', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/technician/tickets', label: 'My Tickets', icon: Ticket },
+  { href: '/dashboard/technician/ticket-requests', label: 'Request Tickets', icon: ClipboardPlus },
   { href: '/dashboard/technician/knowledge', label: 'Knowledge base', icon: BookOpenText },
   { href: '/dashboard/technician/knowledge-pdfs', label: 'PDF manuals', icon: FileText },
   { href: '/dashboard/technician/notifications', label: 'Notifications', icon: Bell },

@@ -55,8 +55,32 @@ services:
       timeout: 5s
       retries: 5
 
-  # NestJS Backend API
-  # Tesseract + Poppler are installed inside the image via backend/Dockerfile (Alpine apk)
+  # PaddleOCR-VL (Hugging Face + GPU). Model cache persisted in volume after first download.
+  paddle-ocr:
+    build:
+      context: ./services/paddle-ocr
+      dockerfile: Dockerfile
+    container_name: smartmaint-paddle-ocr
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      PADDLE_OCR_ENGINE: vl
+      PADDLE_OCR_VL_MODEL: ${PADDLE_OCR_VL_MODEL:-PaddlePaddle/PaddleOCR-VL}
+      HF_HOME: /models/huggingface
+    ports:
+      - "${PADDLE_OCR_PORT:-8008}:8000"
+    volumes:
+      - paddle_ocr_models:/models/huggingface
+    networks:
+      - smartmaint-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 900s
+
+  # NestJS Backend API (Poppler in image; OCR via paddle-ocr sidecar)
   backend:
     build:
       context: ./backend
@@ -91,12 +115,17 @@ services:
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
       # Qdrant (vector DB) for manual chunks
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
-      # PDF OCR — binaries installed inside the container via apk, PATH is enough
+      # PDF OCR — PaddleOCR sidecar + Poppler (pdftoppm in backend image)
       ENABLE_PDF_OCR: ${ENABLE_PDF_OCR:-true}
+      PADDLE_OCR_URL: ${PADDLE_OCR_URL:-http://paddle-ocr:8000}
+      PADDLE_OCR_LANG: ${PADDLE_OCR_LANG:-latin}
+      PADDLE_OCR_TIMEOUT_MS: ${PADDLE_OCR_TIMEOUT_MS:-120000}
       PDFTOPPM_PATH: ${PDFTOPPM_PATH:-}
-      TESSERACT_PATH: ${TESSERACT_PATH:-}
-      TESSERACT_LANG: ${TESSERACT_LANG:-eng+fra}
-      PDF_OCR_MAX_PAGES: ${PDF_OCR_MAX_PAGES:-10}
+      # Pipeline caps — use values from .env (do not hard-cap OCR at 10 here)
+      PDF_OCR_MAX_PAGES: ${PDF_OCR_MAX_PAGES:-200}
+      PDF_OCR_INLINE_BEFORE_INDEX: ${PDF_OCR_INLINE_BEFORE_INDEX:-true}
+      PDF_PAGE_EXPLAIN_BEFORE_INDEX: ${PDF_PAGE_EXPLAIN_BEFORE_INDEX:-true}
+      ENABLE_PDF_VISION: ${ENABLE_PDF_VISION:-true}
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     volumes:
@@ -109,6 +138,8 @@ services:
       redis:
         condition: service_healthy
       qdrant:
+        condition: service_started
+      paddle-ocr:
         condition: service_started
     networks:
       - smartmaint-network
@@ -142,6 +173,8 @@ volumes:
   redis_data:
     driver: local
   qdrant_data:
+    driver: local
+  paddle_ocr_models:
     driver: local
 
 networks:

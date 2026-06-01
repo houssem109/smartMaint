@@ -7,6 +7,28 @@ No feature should be built outside this plan without updating this document firs
 
 ---
 
+## Product vision (what we are building)
+
+SmartMaint should behave like giving a **PDF or a field photo** to ChatGPT/Claude/Gemini: the system **reads** it, **explains** it in clear technician language, and **stores** that understanding so **Techo** can answer later from **Qdrant** (the “Wikipedia” layer for RAG).
+
+| Input | What happens | Where it lives for search |
+|--------|----------------|---------------------------|
+| **PDF manual** | Poppler draft → PaddleOCR-VL on hard pages → vision “page explanation” on menus/diagrams/LCD pages → chunk + embed | **`knowledge_document_page_analysis.ocrText`** → routed chunks → **Qdrant `manual_chunks`** |
+| **Field photo** (technician experience) | Vision describes the photo on upload | **`knowledge_entries.photoVisionDescription`** → **`buildIndexText`** → **Qdrant** (knowledge entry points) |
+| **Structured faults/procedures** | LLM extracts candidates (separate from page text) | PostgreSQL **`knowledge_extraction_candidates`** → approved → **`knowledge_entries`** |
+
+**Three employees (pipeline roles):**
+
+1. **Poppler** — fast text-layer draft; **not trusted alone** when glyph corruption is detected (custom/LCD fonts).
+2. **PaddleOCR-VL** — page-as-image OCR (tables, scans, display fonts).
+3. **Vision** — explains the page like a human expert; result is stored in **`ocrText`** (same column OCR uses) so **`buildRoutedChunks`** and Qdrant see clean text.
+
+**Before first Qdrant index (default):** inline OCR (`PDF_OCR_INLINE_BEFORE_INDEX`) then inline page explanation (`PDF_PAGE_EXPLAIN_BEFORE_INDEX`). After async OCR/vision jobs finish, **`PDF_OCR_AUTO_REINDEX`** refreshes Qdrant without a manual button.
+
+**Ops:** Ollama must run for embeddings (`nomic-embed-text` at `OLLAMA_BASE_URL`). Re-upload or re-index old PDFs after pipeline changes — stale Qdrant rows keep bad Poppler-only text.
+
+---
+
 ## Purpose
 
 SmartMaint is a maintenance management system used in industrial environments.
@@ -28,8 +50,9 @@ This block records **what shipped**, **what was suggested in audits**, and **wha
 
 | Date | Area | Notes |
 |------|------|--------|
+| 2026-05-26 | **Product vision + page explanation + field photos** | Doc **Product vision** block. **`PDF_PAGE_EXPLAIN_BEFORE_INDEX`** runs **`runPageExplanationPassBeforeIndex`** (ChatGPT-style prompt via **`buildPageExplanationVisionPrompt`**) after inline OCR and **before** **`buildRoutedChunks`**. **`PDF_VISION_MAX_PAGES`** cap raised (default **180**, max **500**). **`knowledge_entries.photoVisionDescription`** + **`ENABLE_FIELD_PHOTO_VISION`** on **`POST /knowledge/:id/photo`**. |
 | 2026-05-21 | **§6 Glyph-corruption vision fallback** | `KnowledgeDocumentsService.detectGlyphCorruption` flags pages whose extracted text contains custom-font / LCD-segment glyph corruption (clusters like `,4#9':+$#':`). Flagged pages get `glyph_corruption_likely(<n>)` in `qualityWarnings`, are downgraded from `good` to `degraded`, and — when PDF vision is effective and **`ENABLE_GLYPH_CORRUPTION_VISION=true`** (default) — are enqueued directly into the vision queue, bounded by **`PDF_VISION_MAX_PAGES`**. `maybeEnqueueVisionPagesAfterOcr` also routes them. Vision runs through **`AiService.describeImageBase64ForPdf`** (OpenRouter Gemini Flash with Ollama llava fallback). |
-| 2026-05-21 | **§7 Near-duplicate chunk suppression** | `filterNearDuplicateChunks` skips chunks whose token Jaccard similarity ≥ **`DOC_CHUNK_NEAR_DUPLICATE_JACCARD`** (default **0.92**) against an already-kept chunk; combined with bumping the default **`DOC_EXTRACTION_MAX_CHUNKS`** to **50** and a mojibake repair pass on `pdf-parse` / Tesseract output. |
+| 2026-05-21 | **§7 Near-duplicate chunk suppression** | `filterNearDuplicateChunks` skips chunks whose token Jaccard similarity ≥ **`DOC_CHUNK_NEAR_DUPLICATE_JACCARD`** (default **0.92**) against an already-kept chunk; combined with bumping the default **`DOC_EXTRACTION_MAX_CHUNKS`** to **50** and a mojibake repair pass on `pdf-parse` / OCR output. |
 | 2026-05-19 | **Page split robustness** | Fixed no-form-feed PDFs: `derivePageTexts` now falls back to length-based slicing unless multiple `\f` splits exist; `buildRoutedChunks` now uses the same fallback so all pages participate in routing/extraction (not page 1 only). |
 | 2026-05-11 | **§13 Bull** | PDF aligned with real queue names, processors, `knowledge_document_jobs`, `removeOnComplete`/`removeOnFail`; documented **`GET /knowledge-documents/queues/health`**. |
 | 2026-05-11 | **§14 Feedback** | PDF aligned with **`extraction_feedback_events`**; admin **`/dashboard/admin/extraction-feedback`**; **`?limit=`** on recent API. |
@@ -50,7 +73,7 @@ This block records **what shipped**, **what was suggested in audits**, and **wha
 | **§5 / §10 admin image** | `POST …/page-fix-queue/:itemId/fix-image` (multipart); `replacementImagePath`; vision prefers replacement image over `pdftoppm` for that page; orphan file **deleted** if upload handler throws. |
 | **§17 nav** | `GET /knowledge-documents/admin-pipeline-counts`; sidebar badges (knowledge pending, PDF candidates, page-fix open). |
 | **§3 Machine profiles** | **`POST /machine-profiles`**, **`PATCH /machine-profiles/:id`**, **`GET …/:id/summary`** (admin); UI list + **Manage** → detail with counts + edit. |
-| **§1 OCR / Arabic** | **`tesseract-ocr-data-ara`** in `backend/Dockerfile`; `.env.example` suggests `TESSERACT_LANG=eng+fra+ara`. |
+| **§1 OCR / Arabic** | **`PADDLE_OCR_LANG`** (`latin`, `french`, `arabic`, etc.) on the **`paddle-ocr`** sidecar. |
 | **§18 / §19 / WebSocket** | API tables corrected (`/knowledge/…`, `/knowledge-documents/…`, `/export/…`); DB names (`vector_chunk_hashes`, `extraction_feedback_events`, `knowledge_entries.photoPath`); WebSocket subsection: only **`document:progress`** is implemented today. |
 | **§13 Bull** | Doc aligned with code (`queues.constants`, processors, `knowledge_document_jobs`, `removeOnComplete`/`removeOnFail`); **`GET /knowledge-documents/queues/health`** (admin/superadmin) for Redis PING + per-queue job counts. |
 | **§17 Admin UI** | §17 doc + page-fix image preview + PDF list progress + machine profile detail/summary/PATCH. |
@@ -90,7 +113,7 @@ This block records **what shipped**, **what was suggested in audits**, and **wha
 | Queue system | Bull (backed by Redis) |
 | Cache / Queue broker | Redis |
 | Vector database | Qdrant |
-| OCR engine | Tesseract (CLI via Poppler pdftoppm) |
+| OCR engine | PaddleOCR (HTTP sidecar via Poppler pdftoppm) |
 | Vision model | **LLaVA** via Ollama (default **`OLLAMA_VISION_MODEL=llava:latest`**; override e.g. **`llava:13b`**, **`llama3.2-vision`**) |
 | LLM for extraction | qwen2.5:32b (Ollama; configurable via `OLLAMA_MODEL`) |
 | Embedding model | nomic-embed-text (Ollama) |
@@ -384,7 +407,7 @@ Per-page scoring uses **only** the extracted text for that page (no rendered-pag
 |--------|--------|
 | **Character length** | Under **30** characters (trimmed) → **`unreadable`** immediately (`very_low_text_density`). Under **300** → warning `low_text_density` and a large confidence penalty. Under **1200** → `medium_text_density` and a smaller penalty. |
 | **Symbol ratio** | Share of non-alphanumeric/non-whitespace characters; above **0.35** adds `high_symbol_noise` and reduces confidence. |
-| **Derived `ocrConfidence`** | Starts at **0.9**, adjusted by the rules above, clamped to **[0, 1]**. Until OCR runs, this is a **synthetic** score from the text layer, not Tesseract. |
+| **Derived `ocrConfidence`** | Starts at **0.9**, adjusted by the rules above, clamped to **[0, 1]**. Until OCR runs, this is a **synthetic** score from the text layer, not PaddleOCR. |
 
 After those adjustments (and only when length ≥ 30): confidence **below 0.2** → **`poor`**; **0.2–0.6** → **`degraded`**; **≥ 0.6** → **`good`**. So **`poor`** can occur on longer pages if density/noise is bad; only **`unreadable`** is reserved for the shortest pages.
 
@@ -403,7 +426,7 @@ After those adjustments (and only when length ≥ 30): confidence **below 0.2** 
 
 ### Image-based OCR path (separate from per-page text heuristics above)
 
-When **`ocrPagesFromPdf`** runs (Poppler **`pdftoppm`** at **200 DPI**, then Tesseract), the service **always** runs a **Sharp** preprocessing pass (grayscale, normalize, median, sharpen, threshold) on the rendered PNG, runs Tesseract again, and **keeps whichever run** (raw vs preprocessed) has **higher mean word confidence** from the TSV. The winning mode is stored as **`processingMode`** `raw` or `preprocessed` on the page row. There is **no** separate deskew step in code today.
+When **`ocrPagesFromPdf`** runs (Poppler **`pdftoppm`** at **200 DPI**, then **PaddleOCR**), the service **always** runs a **Sharp** preprocessing pass (grayscale, normalize, median, sharpen, threshold) on the rendered PNG, runs PaddleOCR again, and **keeps whichever run** (raw vs preprocessed) has **higher mean confidence**. The winning mode is stored as **`processingMode`** `raw` or `preprocessed` on the page row. There is **no** separate deskew step in code today.
 
 ### Admin fix queue (unreadable only)
 
@@ -431,27 +454,28 @@ Columns include: **`documentId`**, **`pageNumber`**, **`quality`**, **`ocrConfid
 
 ### Core concept (as implemented)
 
-Text is taken from **`parsePdfWithPoppler`** first; OCR and vision run **asynchronously** on Bull for bounded page sets (extraction **does not wait** for them to finish). **`buildRoutedChunks`** prefers **`ocrText`** when present (including text produced by vision).
+Text is taken from **`parsePdfWithPoppler`** first. When **`PDF_OCR_INLINE_BEFORE_INDEX=true`** (default), OCR runs **before** the first Qdrant index. When **`PDF_PAGE_EXPLAIN_BEFORE_INDEX=true`** (default), **`runPageExplanationPassBeforeIndex`** runs vision with a **page-explanation** prompt on glyph/LCD/menu/diagram/low-text pages (cap **`PDF_PAGE_EXPLAIN_MAX_PAGES`**, default **150**) **before** **`buildRoutedChunks`**. Additional OCR/vision still runs on Bull for enrichment; **`PDF_OCR_AUTO_REINDEX=true`** re-embeds after jobs complete. **`buildRoutedChunks`** skips Poppler-only glyph-corrupted pages that still lack **`ocrText`**.
 
 **Employee 1 — PDF text layer (`parsePdfWithPoppler`)**  
-Whole-document parse; **`derivePageTexts`** + **`savePageAnalysis`** for per-page quality and **`sectionType`**. **`processDocumentExtraction`** then builds chunks from text (and prefers **`ocrText`** when rows already have it). Poppler-backed parsing preserves multilingual UTF-8 text and stable form-feed separators.
+Whole-document parse; **`derivePageTexts`** + **`savePageAnalysis`** for per-page quality and **`sectionType`**. Poppler is the fast draft; glyph-corrupted pages must not reach Qdrant without OCR/vision text.
 
-**Employee 2 — Tesseract OCR (`ocrPagesFromPdf`)**  
-**`renderPdfPageToPng`** (`pdftoppm` at **200 DPI**), Tesseract on raw and **Sharp**-preprocessed PNG; best confidence wins; updates **`knowledge_document_page_analysis`**.
+**Employee 2 — PaddleOCR-VL (`ocrPagesFromPdf`)**  
+**`renderPdfPageToPng`** (DPI from **`PDF_OCR_RENDER_DPI`**, higher for VL), PaddleOCR-VL or classic PaddleOCR sidecar; updates **`knowledge_document_page_analysis.ocrText`**.
 
-- **Auto:** After **`savePageAnalysis`**, if **`ENABLE_PDF_OCR=true`** and **`deepMode`**, enqueue **`OCR_JOB`** for pages with **`quality`** in `degraded` / `poor` / `unreadable`, up to **`PDF_OCR_MAX_PAGES`**. Extraction **continues without waiting** for OCR.
-- **Manual:** **`POST .../knowledge-documents/:id/run-ocr`** → **`runOcrForDocument`** runs OCR **synchronously** for low-quality pages (same cap).
+- **Inline (default):** **`PDF_OCR_INLINE_BEFORE_INDEX`** — synchronous OCR on selected pages before indexing.
+- **Async:** **`OCR_JOB`** when inline is off or for manual **`POST .../run-ocr`**.
+- **Manual:** **`runOcrForDocument`** (broader page selection, **`PDF_OCR_MANUAL_MAX_PAGES`**).
 
-**Employee 3 — Vision (Ollama multimodal)**  
-When **`ENABLE_PDF_VISION=true`** and **`OLLAMA_VISION_MODEL`** is a vision-capable tag (e.g. **`llava:latest`**):
+**Employee 3 — Vision (page explanation)**  
+**`runVisionForDocumentPages`** with **`promptMode: 'page_explanation'`** uses **`buildPageExplanationVisionPrompt`** (menus, tables, wiring, LCD digits). OpenRouter **`OPENROUTER_VISION_MODEL`** (e.g. Gemini Flash) with Ollama **`OLLAMA_VISION_MODEL`** fallback.
 
-- **After OCR:** **`maybeEnqueueVisionPagesAfterOcr`** enqueues **`VISION_JOB`** for pages whose OCR confidence is below **`PDF_VISION_TRIGGER_OCR_CONFIDENCE_BELOW`** (default **0.45**), or OCR text shorter than **`PDF_VISION_MIN_OCR_TEXT_CHARS`**, or **`wiring`** pages with sparse OCR, **or pages flagged with `glyph_corruption_likely`** — capped per enqueue by the effective per-batch cap.
-- **OCR disabled:** if **`ENABLE_PDF_OCR`** is false but vision is on, **`enqueueVisionJob`** runs on the same low-quality page slice (bounded).
-- **Glyph/display fallback (forced vision):** right after **`savePageAnalysis`**, **`processDocumentExtraction`** scans pages for **custom-font / LCD-segment** corruption via **`detectGlyphCorruption`** and also checks per-page fonts using **`pdffonts`** (**`pageUsesDisplayFont`**). Flagged pages are enqueued to vision even when quality is `good`. Selection runs in document batches (**`DOC_BATCH_PAGES`**, default 20), with a per-batch vision cap (**`PDF_VISION_MAX_PAGES_PER_BATCH`**, default 20) to prevent late-page starvation.
-- **`KnowledgeDocumentsVisionQueueProcessor`** calls **`runVisionForDocumentPages`**: renders the page PNG, calls **`AiService.describeImageBase64ForPdf`** (OpenRouter **`OPENROUTER_VISION_MODEL`** e.g. Gemini Flash, with **Ollama `OLLAMA_VISION_MODEL` fallback**), appends or sets **`ocrText`**, sets **`visionUsed: true`**, **`extractionMode: 'vision'`**, **`processingMode: 'region'`**, adds warning **`vision_layer`**.
-- **Manual:** **`POST .../knowledge-documents/:id/run-vision`** (admin) runs vision synchronously on eligible pages.
+- **Before index:** **`runPageExplanationPassBeforeIndex`** when **`PDF_PAGE_EXPLAIN_BEFORE_INDEX=true`** (replaces the older bounded inline-critical vision block when this flag is on).
+- **After OCR (async):** **`maybeEnqueueVisionPagesAfterOcr`**, glyph/display routing, figure vision — bounded by **`PDF_VISION_MAX_PAGES`** / **`PDF_VISION_MAX_PAGES_PER_BATCH`**.
+- **Manual:** **`POST .../run-vision`**.
 
-There is **no** GPU detection gate in code; if the model is missing or errors, warnings **`vision_model_failed`** / **`vision_render_failed`** are stored and processing continues.
+**Field photos (technician knowledge, not PDF):** **`POST /knowledge/:id/photo`** → **`KnowledgeService.describeFieldPhotoForEntry`** → **`photoVisionDescription`**; **`buildIndexText`** includes **`Field photo description:`** for Qdrant when the entry is approved. Toggle: **`ENABLE_FIELD_PHOTO_VISION`**.
+
+There is **no** GPU detection gate in code; failures add **`vision_model_failed`** / **`vision_render_failed`** and processing continues.
 
 ### Queues
 
@@ -688,7 +712,7 @@ Long-running PDF work must not block the HTTP thread. **`ingestAndQueue`** persi
 
 - **Gate:** payload **`{ documentId, trackingJobId? }`**. Updates **`knowledge_documents.status`** to **`gated`**, **`needs_review`**, or **`rejected`**; on accept, queues **extraction**.
 - **Extraction:** payload **`{ documentId, trackingJobId? }`**. Rebuilds **`knowledge_document_page_analysis`**, may enqueue **OCR** for a **bounded** set of low-quality pages when **`ENABLE_PDF_OCR=true`** (see **`PDF_OCR_MAX_PAGES`**, default **10**), or enqueue **vision-only** for a bounded set when OCR is off but vision is enabled. Runs **LLM structured extraction** into **`knowledge_extraction_candidates`**. Then calls **`RagService.indexDocumentChunks`** for **manual PDF chunks** **inside this same job** (not via **`indexing-queue`**). Sets **`status`** to **`done`** or **`partially_indexed`** if chunk indexing throws.
-- **OCR:** payload **`{ documentId, trackingJobId?, pageNumbers: number[] }`**. Tesseract + **`pdftoppm`**; may enqueue **vision** afterward via **`maybeEnqueueVisionPagesAfterOcr`** when vision is enabled and OCR text/confidence is still poor.
+- **OCR:** payload **`{ documentId, trackingJobId?, pageNumbers: number[] }`**. PaddleOCR + **`pdftoppm`**; may enqueue **vision** afterward via **`maybeEnqueueVisionPagesAfterOcr`** when vision is enabled and OCR text/confidence is still poor.
 - **Vision:** payload **`{ documentId, trackingJobId?, pageNumbers: number[] }`**. Merges model output into **`ocrText`** on page rows; failures add **quality warnings** rather than hard-stopping the whole library.
 - **Indexing queue:** payload **`{ documentId, trackingJobId?, knowledgeEntryId, candidateId? }`**. Used when an **extraction candidate is approved** into a **`knowledge_entries`** row — embeds that entry for chat RAG. **Not** used for bulk PDF manual chunk upserts (those run in the **extraction** job).
 
@@ -792,7 +816,7 @@ Never use one model for everything.
 | Gate Tier 2 | nomic-embed-text | When Tier 1 uncertain |
 | Gate Tier 3 + machine detection | qwen2.5:7b-instruct | When Tier 2 uncertain |
 | Structured extraction | qwen2.5:14b-instruct | All accepted docs |
-| OCR | Tesseract 5.x | All non-digital pages |
+| OCR | PaddleOCR (sidecar) | All non-digital pages |
 | Vision / diagram understanding | **`llava:latest`** (default **`OLLAMA_VISION_MODEL`**) or other Ollama vision tags (e.g. **`llama3.2-vision`**) | When **`ENABLE_PDF_VISION`** and page-based rules in §16 (`PDF_VISION_*`) say to run vision after OCR |
 | Embeddings | nomic-embed-text | All chunks before Qdrant insert |
 | RAG retrieval | nomic-embed-text | All chatbot queries |
@@ -876,8 +900,9 @@ Values below are **defaults or sources**; see **`backend/src/knowledge-documents
 |----------|------|
 | **`ENABLE_PDF_OCR`** | Must be **`true`** to enqueue OCR during extraction (`'true'` string, case-insensitive) |
 | **`PDF_OCR_MAX_PAGES`** | Max low-quality pages queued for OCR per extraction run (default **10**) |
-| **`TESSERACT_LANG`** | Tesseract `-l` argument (default **`eng+fra`**) |
-| **`TESSERACT_PATH`** | Binary name or path (default **`tesseract`**) |
+| **`PADDLE_OCR_URL`** | PaddleOCR HTTP base (default **`http://paddle-ocr:8000`**) |
+| **`PADDLE_OCR_LANG`** | Paddle model language (default **`latin`**; also **`en`**, **`french`**, **`arabic`**) |
+| **`PADDLE_OCR_TIMEOUT_MS`** | HTTP timeout per page OCR call (default **120000**) |
 | **`PDFTOPPM_PATH`** | Poppler **`pdftoppm`** (default **`pdftoppm`**) |
 
 **Not used:** **`PDF_OCR_BATCH_SIZE`**, **`PDF_OCR_WORKERS`** — Bull OCR jobs process one payload list per job; concurrency is Nest **`@Process`** default (§13).
@@ -1215,7 +1240,7 @@ Section §20 is the **original product bar** for the PDF knowledge pipeline. The
 | `attribution` | Chatbot always shows source attribution (page, document, technician) | **Partial** | **`sources`** on **`POST /chat/message`** + UI; persisting sources on stored rows still **pending** (Purpose backlog). |
 | `cross-dedup` | Cross-document deduplication prevents duplicate answers | **Partial** | Fingerprint + **`vector_chunk_hashes`** + supersede purge — not full semantic de-duplication of all paraphrases. |
 | `crash-resume` | System recovers automatically from worker crashes without reprocessing from page 1 | **Gap** | Retries / re-queues help; durable per-page checkpoint story not fully specified in code. |
-| `tri-lang-ocr` | French, English, and Arabic PDFs are all extracted correctly | **Partial** | **`TESSERACT_LANG`** can include **`ara`** (Dockerfile data pack); quality still scan-dependent. |
+| `tri-lang-ocr` | French, English, and Arabic PDFs are all extracted correctly | **Partial** | **`PADDLE_OCR_LANG`** (`latin`, `arabic`, etc.); quality still scan-dependent. |
 
 **How to evolve §20:** When you ship a fix that closes a gap, update **`getQaSuccessCriteria()`** in **`knowledge-documents.service.ts`** and this table so the PDF, API, and UI stay aligned.
 

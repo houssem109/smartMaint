@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
@@ -14,7 +14,8 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Edit3, X } from 'lucide-react';
+import { Edit3, X, FileJson, FileSpreadsheet } from 'lucide-react';
+import { downloadCsv, downloadJson } from '@/lib/export-download';
 
 interface KnowledgeDocument {
   id: string;
@@ -69,7 +70,60 @@ interface PageAnalysisRow {
   quality: 'good' | 'degraded' | 'poor' | 'unreadable';
   ocrConfidence: number | null;
   qualityWarnings: string[] | null;
+  extractionMode?: 'text' | 'ocr' | 'vision';
+  visionUsed?: boolean;
+  sectionType?: string | null;
+  ocrText?: string | null;
 }
+
+type PipelineAuditReport = {
+  generatedAt: string;
+  metrics: {
+    totalPages: number;
+    pagesWithOcrText: number;
+    pagesVisionUsed: number;
+    pagesByExtractionMode: Record<string, number>;
+    pagesByQuality: Record<string, number>;
+    visionFailedPages: number;
+    ragChunkCount: number;
+    ragMostlyDotsChunks: number;
+    ragEmbedWorthyChunks: number;
+    candidateTotal: number;
+    candidateApproved: number;
+    candidateRejected: number;
+    approvalRatePercent: number | null;
+  };
+  visionPreference: { enabledEffective: boolean; pdfVisionAdminEnabled: boolean; enabledFromEnv: boolean };
+  chunkAudit: {
+    builtCount: number;
+    afterNearDuplicateCount: number;
+    afterLowValueFilterCount: number;
+    droppedLowValueSamples: Array<{ index: number; preview: string; reason: string }>;
+    note: string;
+  };
+  pages: Array<{
+    pageNumber: number;
+    quality: string;
+    extractionMode: string;
+    visionUsed: boolean;
+    ocrConfidence: number | null;
+    sectionType: string | null;
+    qualityWarnings: string[] | null;
+    ocrTextLength: number;
+    popplerTextLength: number;
+    ocrTextPreview: string;
+    popplerTextPreview: string;
+    ocrText: string | null;
+    hasVisionBlock: boolean;
+  }>;
+  ragChunks: Array<{
+    chunkIndex: number;
+    sectionType: string | null;
+    textPreview: string;
+    text: string;
+    quality: { mostlyDots: boolean; embedWorthy: boolean; alnumRatio: number };
+  }>;
+};
 
 interface PipelineConfigLite {
   vision?: {
@@ -99,6 +153,10 @@ export default function KnowledgeDocDetailsPage() {
   const [savingOfficial, setSavingOfficial] = useState(false);
   const [suggestions, setSuggestions] = useState<MachineNameSuggestion[]>([]);
   const [rejectOthersReason, setRejectOthersReason] = useState('');
+  const [auditReport, setAuditReport] = useState<PipelineAuditReport | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditTab, setAuditTab] = useState<'summary' | 'pages' | 'qdrant'>('summary');
+  const [expandedPage, setExpandedPage] = useState<number | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<KnowledgeExtractionCandidate | null>(null);
@@ -410,8 +468,16 @@ export default function KnowledgeDocDetailsPage() {
     if (!id) return;
     setSaving(true);
     try {
-      const res = await api.post<{ ok: true; processedPages: number }>(`/knowledge-documents/${id}/run-ocr`);
-      toast.success(`OCR started/finished. Pages processed: ${res.data.processedPages}`);
+      const res = await api.post<{
+        ok: true;
+        processedPages: number;
+        pagesSelected?: number;
+        chunksIndexed?: number;
+      }>(`/knowledge-documents/${id}/run-ocr`);
+      const msg =
+        `OCR: ${res.data.processedPages}/${res.data.pagesSelected ?? res.data.processedPages} pages` +
+        (res.data.chunksIndexed != null ? ` · RAG re-indexed (${res.data.chunksIndexed} chunks)` : '');
+      toast.success(msg);
       fetchAll();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to run OCR');
@@ -450,6 +516,20 @@ export default function KnowledgeDocDetailsPage() {
     }
   };
 
+  const handleContinueExtraction = async () => {
+    if (!id) return;
+    setSaving(true);
+    try {
+      await api.post(`/knowledge-documents/${id}/continue-extraction`);
+      toast.success('Extraction resumed — keeps OCR/vision already done');
+      fetchAll();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Continue failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleApproveGate = async () => {
     if (!id) return;
     setSaving(true);
@@ -462,6 +542,83 @@ export default function KnowledgeDocDetailsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const loadAuditReport = async () => {
+    if (!id) return;
+    setAuditLoading(true);
+    try {
+      const res = await api.get<PipelineAuditReport>(`/knowledge-documents/${id}/pipeline-audit-report`, {
+        params: { ragLimit: 2000 },
+      });
+      setAuditReport(res.data);
+      toast.success('Pipeline audit loaded');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to load audit report');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const exportAuditJson = () => {
+    if (!auditReport || !doc) return;
+    downloadJson(auditReport, `pipeline-audit-${doc.id}.json`);
+  };
+
+  const exportAuditExcel = async () => {
+    if (!id || !doc) return;
+    try {
+      const res = await api.get(`/knowledge-documents/${id}/pipeline-audit-export/xlsx`, {
+        params: { ragLimit: 2000 },
+        responseType: 'blob',
+      });
+      const base = (doc.originalName || 'document').replace(/\.pdf$/i, '');
+      const filename = `pipeline-${base}.xlsx`;
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('Excel report downloaded');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to export Excel report');
+    }
+  };
+
+  const exportPagesCsv = () => {
+    if (!auditReport || !doc) return;
+    downloadCsv(
+      auditReport.pages.map((p) => ({
+        pageNumber: p.pageNumber,
+        quality: p.quality,
+        extractionMode: p.extractionMode,
+        visionUsed: p.visionUsed,
+        ocrConfidence: p.ocrConfidence ?? '',
+        sectionType: p.sectionType ?? '',
+        ocrTextLength: p.ocrTextLength,
+        popplerTextLength: p.popplerTextLength,
+        hasVisionBlock: p.hasVisionBlock,
+        qualityWarnings: (p.qualityWarnings ?? []).join('; '),
+        ocrText: p.ocrText ?? '',
+      })),
+      `pages-ocr-vision-${doc.id}.csv`,
+    );
+  };
+
+  const exportQdrantCsv = () => {
+    if (!auditReport || !doc) return;
+    downloadCsv(
+      auditReport.ragChunks.map((c) => ({
+        chunkIndex: c.chunkIndex,
+        sectionType: c.sectionType ?? '',
+        mostlyDots: c.quality.mostlyDots,
+        embedWorthy: c.quality.embedWorthy,
+        alnumRatio: c.quality.alnumRatio,
+        text: c.text,
+      })),
+      `qdrant-chunks-${doc.id}.csv`,
+    );
   };
 
   const handleRejectGate = async () => {
@@ -721,11 +878,16 @@ export default function KnowledgeDocDetailsPage() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {(doc?.status === 'failed' || doc?.status === 'partially_indexed') && (
+                  <Button variant="default" size="sm" onClick={handleContinueExtraction} disabled={saving}>
+                    Continue extraction
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" onClick={handleReindexManual} disabled={saving}>
                   Re-index manual RAG (Qdrant)
                 </Button>
                 <span className="text-xs text-muted-foreground">
-                  Uses current page text (including admin fixes). Bounded like extraction.
+                  Continue = resume after OpenRouter/OCR fail (no re-upload). Re-index = Qdrant only.
                 </span>
               </div>
               {pageAnalysis.length > 0 && (
@@ -781,16 +943,208 @@ export default function KnowledgeDocDetailsPage() {
                   <div className="my-3 h-px bg-border" />
                   <div className="flex flex-wrap items-center gap-2">
                     <Button variant="outline" size="sm" onClick={handleRunOcr} disabled={saving}>
-                      Run OCR (low-quality pages)
+                      Run OCR (VL pages)
                     </Button>
                     <Button variant="outline" size="sm" onClick={handleRunVision} disabled={saving}>
                       Run vision (Ollama)
                     </Button>
                     <span className="text-xs text-muted-foreground">
-                      OCR: Poppler + Tesseract. Vision: ENABLE_PDF_VISION + llava:latest (or OLLAMA_VISION_MODEL).
+                      OCR: Poppler + PaddleOCR-VL (GPU). Vision: ENABLE_PDF_VISION + llava:latest (or OLLAMA_VISION_MODEL).
                     </span>
                   </div>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/50 shadow-sm border-primary/20">
+            <CardHeader>
+              <CardTitle className="text-lg">Pipeline data &amp; export (rapport / jury)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Load a full trace: <strong>before</strong> = page OCR/vision text in PostgreSQL;{' '}
+                <strong>after</strong> = chunks in Qdrant. Download the{' '}
+                <strong>Excel report</strong> for a readable multi-sheet file (summary, pages, search
+                chunks, LLM extraction). After fixes, click <strong>Re-index manual RAG</strong> above.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={loadAuditReport} disabled={auditLoading}>
+                  {auditLoading ? 'Loading…' : 'Load audit report'}
+                </Button>
+                <Button size="sm" variant="default" onClick={exportAuditExcel}>
+                  <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
+                  Excel report (.xlsx)
+                </Button>
+                <Button size="sm" variant="outline" onClick={exportAuditJson} disabled={!auditReport}>
+                  <FileJson className="h-3.5 w-3.5 mr-1" />
+                  JSON (full)
+                </Button>
+                <Button size="sm" variant="outline" onClick={exportPagesCsv} disabled={!auditReport}>
+                  CSV pages
+                </Button>
+                <Button size="sm" variant="outline" onClick={exportQdrantCsv} disabled={!auditReport}>
+                  CSV Qdrant
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link href={`/dashboard/admin/rag-stored-data?documentId=${encodeURIComponent(id || '')}`}>
+                    Global RAG viewer
+                  </Link>
+                </Button>
+              </div>
+
+              {auditReport && (
+                <>
+                  <div className="flex gap-2 border-b border-border/40 pb-2">
+                    {(['summary', 'pages', 'qdrant'] as const).map((tab) => (
+                      <Button
+                        key={tab}
+                        size="sm"
+                        variant={auditTab === tab ? 'default' : 'ghost'}
+                        onClick={() => setAuditTab(tab)}
+                      >
+                        {tab === 'summary' ? 'KPIs' : tab === 'pages' ? 'Pages (before)' : 'Qdrant (after)'}
+                      </Button>
+                    ))}
+                  </div>
+
+                  {auditTab === 'summary' && (
+                    <div className="space-y-3 text-sm">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="rounded-md border p-2">
+                          <div className="text-xs text-muted-foreground">Vision effective</div>
+                          <div className="font-semibold">
+                            {auditReport.visionPreference.enabledEffective ? 'ON' : 'OFF'}
+                          </div>
+                        </div>
+                        <div className="rounded-md border p-2">
+                          <div className="text-xs text-muted-foreground">Pages with vision</div>
+                          <div className="font-semibold">
+                            {auditReport.metrics.pagesVisionUsed} / {auditReport.metrics.totalPages}
+                          </div>
+                        </div>
+                        <div className="rounded-md border p-2">
+                          <div className="text-xs text-muted-foreground">Bad Qdrant chunks (dots)</div>
+                          <div className="font-semibold">{auditReport.metrics.ragMostlyDotsChunks}</div>
+                        </div>
+                        <div className="rounded-md border p-2">
+                          <div className="text-xs text-muted-foreground">Admin approve rate</div>
+                          <div className="font-semibold">
+                            {auditReport.metrics.approvalRatePercent != null
+                              ? `${auditReport.metrics.approvalRatePercent}%`
+                              : '—'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-muted/30 p-3 text-xs">
+                        <div>
+                          Chunk filter: built {auditReport.chunkAudit.builtCount} → dedup{' '}
+                          {auditReport.chunkAudit.afterNearDuplicateCount} → clean{' '}
+                          {auditReport.chunkAudit.afterLowValueFilterCount} (drops TOC dot lines)
+                        </div>
+                        <div className="mt-1 text-muted-foreground">{auditReport.chunkAudit.note}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {auditTab === 'pages' && (
+                    <div className="max-h-[420px] overflow-auto border rounded-md">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Page</TableHead>
+                            <TableHead>Mode</TableHead>
+                            <TableHead>Vision</TableHead>
+                            <TableHead>Quality</TableHead>
+                            <TableHead>OCR len</TableHead>
+                            <TableHead>Poppler len</TableHead>
+                            <TableHead />
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {auditReport.pages.map((p) => (
+                            <Fragment key={p.pageNumber}>
+                              <TableRow>
+                                <TableCell>{p.pageNumber}</TableCell>
+                                <TableCell className="text-xs">{p.extractionMode}</TableCell>
+                                <TableCell>{p.visionUsed ? 'yes' : 'no'}</TableCell>
+                                <TableCell className="text-xs">{p.quality}</TableCell>
+                                <TableCell>{p.ocrTextLength}</TableCell>
+                                <TableCell>{p.popplerTextLength}</TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() =>
+                                      setExpandedPage(expandedPage === p.pageNumber ? null : p.pageNumber)
+                                    }
+                                  >
+                                    {expandedPage === p.pageNumber ? 'Hide' : 'Text'}
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                              {expandedPage === p.pageNumber && (
+                                <TableRow>
+                                  <TableCell colSpan={7}>
+                                    <div className="space-y-2 text-xs">
+                                      <div>
+                                        <span className="font-medium">OCR / VL text</span>
+                                        <pre className="whitespace-pre-wrap max-h-40 overflow-auto bg-muted/20 p-2 rounded mt-1">
+                                          {p.ocrText ||
+                                            '(empty — run OCR with PaddleOCR-VL; Poppler-only text may still exist below)'}
+                                        </pre>
+                                      </div>
+                                      {p.popplerTextLength > 0 && (
+                                        <div>
+                                          <span className="font-medium">Poppler text layer</span>
+                                          <pre className="whitespace-pre-wrap max-h-32 overflow-auto bg-muted/10 p-2 rounded mt-1">
+                                            {p.popplerTextPreview}
+                                            {p.popplerTextLength > (p.popplerTextPreview?.length ?? 0) ? '…' : ''}
+                                          </pre>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </Fragment>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+
+                  {auditTab === 'qdrant' && (
+                    <div className="max-h-[420px] overflow-auto border rounded-md">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>#</TableHead>
+                            <TableHead>Section</TableHead>
+                            <TableHead>OK?</TableHead>
+                            <TableHead>Preview</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {auditReport.ragChunks.slice(0, 200).map((c) => (
+                            <TableRow key={c.chunkIndex}>
+                              <TableCell>{c.chunkIndex}</TableCell>
+                              <TableCell className="text-xs">{c.sectionType ?? '—'}</TableCell>
+                              <TableCell>
+                                {c.quality.mostlyDots ? (
+                                  <Badge variant="destructive">dots</Badge>
+                                ) : (
+                                  <Badge variant="default">ok</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-xs max-w-md truncate">{c.textPreview}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

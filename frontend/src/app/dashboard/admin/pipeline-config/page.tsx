@@ -29,8 +29,14 @@ type PipelineConfig = {
   ocr: {
     enabled: boolean;
     maxPagesPerDocument: number;
-    tessLang: string;
-    tessPath: string;
+    manualMaxPages: number;
+    autoReindex: boolean;
+    inlineBeforeIndex: boolean;
+    renderDpi: number;
+    skipSharpPreprocess: boolean;
+    isVl: boolean;
+    engine: string;
+    paddleOcrUrl: string;
     pdftoppmPath: string;
   };
   vision: {
@@ -43,7 +49,10 @@ type PipelineConfig = {
     figureVisionEnabled: boolean;
     triggerOcrConfidenceBelow: number;
     minOcrTextChars: number;
+    pageExplainBeforeIndex?: boolean;
+    pageExplainMaxPages?: number;
   };
+  fieldPhotos?: { visionEnabled: boolean };
   extraction: {
     maxChunks: number;
     maxCandidatesTotal: number;
@@ -185,13 +194,25 @@ export default function PipelineConfigPage() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">OCR</CardTitle>
+                  <CardTitle className="text-base">OCR (PaddleOCR-VL + GPU)</CardTitle>
+                  <CardDescription>
+                    Poppler renders pages to PNG; <code className="text-xs">paddle-ocr</code> runs PaddleOCR-VL on your
+                    NVIDIA GPU. Rebuild:{' '}
+                    <code className="text-xs">docker compose up -d --build paddle-ocr</code>. Check GPU:{' '}
+                    <code className="text-xs">http://localhost:8008/gpu-check</code>.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-0">
                   <KeyVal k="ENABLE_PDF_OCR" v={cfg.ocr.enabled} />
-                  <KeyVal k="PDF_OCR_MAX_PAGES" v={cfg.ocr.maxPagesPerDocument} />
-                  <KeyVal k="TESSERACT_LANG" v={cfg.ocr.tessLang} />
-                  <KeyVal k="TESSERACT_PATH (default)" v={cfg.ocr.tessPath} />
+                  <KeyVal k="PADDLE_OCR_ENGINE" v={cfg.ocr.engine} />
+                  <KeyVal k="VL mode (isVl)" v={cfg.ocr.isVl} />
+                  <KeyVal k="PDF_OCR_MAX_PAGES (auto)" v={cfg.ocr.maxPagesPerDocument} />
+                  <KeyVal k="PDF_OCR_MANUAL_MAX_PAGES (0=all)" v={cfg.ocr.manualMaxPages} />
+                  <KeyVal k="PDF_OCR_AUTO_REINDEX" v={cfg.ocr.autoReindex} />
+                  <KeyVal k="PDF_OCR_INLINE_BEFORE_INDEX" v={cfg.ocr.inlineBeforeIndex} />
+                  <KeyVal k="PDF_OCR_RENDER_DPI" v={cfg.ocr.renderDpi} />
+                  <KeyVal k="PDF_OCR_SKIP_SHARP_PREPROCESS" v={cfg.ocr.skipSharpPreprocess} />
+                  <KeyVal k="PADDLE_OCR_URL" v={cfg.ocr.paddleOcrUrl} />
                   <KeyVal k="PDFTOPPM_PATH (default)" v={cfg.ocr.pdftoppmPath} />
                 </CardContent>
               </Card>
@@ -239,7 +260,21 @@ export default function PipelineConfigPage() {
                   <KeyVal k="ENABLE_FIGURE_VISION (effective)" v={cfg.vision.figureVisionEnabled} />
                   <KeyVal k="PDF_VISION_TRIGGER_OCR_CONFIDENCE_BELOW" v={cfg.vision.triggerOcrConfidenceBelow} />
                   <KeyVal k="PDF_VISION_MIN_OCR_TEXT_CHARS" v={cfg.vision.minOcrTextChars} />
+                  <KeyVal k="PDF_PAGE_EXPLAIN_BEFORE_INDEX" v={cfg.vision.pageExplainBeforeIndex ?? true} />
+                  <KeyVal k="PDF_PAGE_EXPLAIN_MAX_PAGES" v={cfg.vision.pageExplainMaxPages ?? 150} />
                   <KeyVal k="OLLAMA_VISION_MODEL (effective)" v={cfg.ollama.visionModel} />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Field photos (technician entries)</CardTitle>
+                  <CardDescription>
+                    On photo upload, vision writes <code className="text-xs">photoVisionDescription</code> for Qdrant.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-0">
+                  <KeyVal k="ENABLE_FIELD_PHOTO_VISION" v={cfg.fieldPhotos?.visionEnabled ?? true} />
                 </CardContent>
               </Card>
 
