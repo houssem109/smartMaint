@@ -39,6 +39,10 @@ export class Conversation {
   @Column({ nullable: true })
   senderId: string;
 
+  /** Techo widget thread id (client-generated) for long chat memory across sessions. */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  threadId: string | null;
+
   @CreateDateColumn()
   timestamp: Date;
 }

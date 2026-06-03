@@ -4,6 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { MessageCircle, X, Send, Plus, XCircle, Edit2, ImagePlus } from 'lucide-react';
 import { useChatStore, type ChatSource } from '@/store/chat-store';
+
+/** Hide internal wizard markers from stored/server messages shown in the UI. */
+function displayChatContent(content: string): string {
+  return content
+    .replace(/^\[TICKET_WIZARD:[^\]]+\]\n?/, '')
+    .replace(/^\[TICKET_INQUIRY:[^\]]+\]\n?/, '')
+    .replace(/^\[TICKET_ACTION:[^\]]+\]\n?/, '')
+    .replace(/^\[CONV_WRAP:[^\]]+\]\n?/, '')
+    .trim();
+}
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -29,6 +39,8 @@ export default function TechoChatWidget() {
     updateMessage,
     updateNextAssistantMessage,
     setThreadArchived,
+    setThreadMessages,
+    ensureUserScope,
   } = useChatStore();
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -46,15 +58,20 @@ export default function TechoChatWidget() {
   const shouldShow =
     !!user && pathname?.startsWith('/dashboard') && !pathname.startsWith('/dashboard/admin/history');
 
+  // Each user gets their own chat threads (same browser, different login).
+  useEffect(() => {
+    if (user?.id) ensureUserScope(user.id);
+  }, [user?.id, ensureUserScope]);
+
   // Ensure at least one thread exists when opening
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !user?.id) return;
     if (!activeThreadId) {
       if (threads.length > 0) {
         // Restore first existing thread as active after refresh
         setActiveThread(threads[0].id);
       } else {
-        const id = createThread();
+        const id = createThread(undefined, user.id);
         // Techo greeting for new thread
         addMessage(id, {
           role: 'assistant',
@@ -62,7 +79,7 @@ export default function TechoChatWidget() {
         });
       }
     }
-  }, [isOpen, activeThreadId, threads, createThread, addMessage, setActiveThread, greeting]);
+  }, [isOpen, activeThreadId, threads, createThread, addMessage, setActiveThread, greeting, user?.id]);
 
   const activeMessages = activeThreadId ? messagesByThread[activeThreadId] || [] : [];
   const activeThread = threads.find((t) => t.id === activeThreadId) || null;
@@ -73,6 +90,36 @@ export default function TechoChatWidget() {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [activeMessages.length, isOpen]);
+
+  // Hydrate thread from server when DB has more than localStorage (long memory).
+  useEffect(() => {
+    if (!activeThreadId || !user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{
+          threadId: string;
+          turns: { role: 'user' | 'assistant'; content: string }[];
+        }>(`/chat/thread/${encodeURIComponent(activeThreadId)}/history`);
+        if (cancelled || !res.data?.turns?.length) return;
+        const local = useChatStore.getState().messagesByThread[activeThreadId] || [];
+        // Only hydrate if server history is longer AND first user message belongs to this login
+        if (res.data.turns.length <= local.length) return;
+        const hydrated = res.data.turns.map((t, i) => ({
+          id: `srv-${activeThreadId}-${i}-${t.role}`,
+          role: t.role,
+          content: displayChatContent(t.content),
+          createdAt: Date.now() - (res.data.turns.length - i) * 1000,
+        }));
+        setThreadMessages(activeThreadId, hydrated);
+      } catch {
+        // Server history optional until migration is applied
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeThreadId, user, setThreadMessages]);
 
   if (!shouldShow) return null;
 
@@ -116,13 +163,13 @@ export default function TechoChatWidget() {
       // History = everything BEFORE that message
       const idx = activeMessages.findIndex((m) => m.id === editingMessageId);
       const base = idx > 0 ? activeMessages.slice(0, idx) : [];
-      historyPayload = base.map((m) => ({
+      historyPayload = base.slice(-100).map((m) => ({
         role: m.role === 'assistant' ? 'assistant' : ('user' as const),
         content: m.content,
       }));
     } else {
-      // Normal send: history is whole conversation
-      historyPayload = activeMessages.map((m) => ({
+      // Normal send: last 100 turns (backend keeps up to CHAT_HISTORY_MAX_TURNS)
+      historyPayload = activeMessages.slice(-100).map((m) => ({
         role: m.role === 'assistant' ? 'assistant' : ('user' as const),
         content: m.content,
       }));
@@ -141,15 +188,34 @@ export default function TechoChatWidget() {
       const res = await api.post<{
         reply: string;
         ticketId?: string | null;
+        ticketCreated?: boolean;
+        archiveThread?: boolean;
         sources?: ChatSource[];
       }>('/chat/message', {
         message: text,
+        threadId: activeThreadId,
         ticketId: currentTicketId,
         history: historyPayload,
+        allowTicketCreation: true,
         ...(imagePayload ? { imageBase64: imagePayload } : {}),
       });
       const replyText = res.data.reply || '…';
       const sources = Array.isArray(res.data.sources) ? res.data.sources : undefined;
+      if (res.data.ticketCreated && res.data.ticketId) {
+        window.dispatchEvent(
+          new CustomEvent('smartmaint-ticket-created', { detail: { ticketId: res.data.ticketId } }),
+        );
+      }
+      if (res.data.archiveThread && activeThreadId) {
+        setThreadArchived(activeThreadId, true);
+      } else if (
+        activeThreadId &&
+        /see you on the floor|à bientôt sur le floor|glad I could help|content d'avoir pu aider/i.test(
+          replyText,
+        )
+      ) {
+        setThreadArchived(activeThreadId, true);
+      }
 
       if (isEditing && editingMessageId) {
         // Replace Techo's answer after this user message
@@ -203,7 +269,7 @@ export default function TechoChatWidget() {
   };
 
   const handleNewConversation = () => {
-    const id = createThread();
+    const id = createThread(undefined, user?.id);
     addMessage(id, {
       role: 'assistant',
       content: greeting,
@@ -333,7 +399,7 @@ export default function TechoChatWidget() {
                         : 'rounded-lg bg-muted px-3 py-1.5 text-sm text-foreground break-words'
                     }
                   >
-                    {m.content}
+                    {displayChatContent(m.content)}
                     {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
                       <details className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
                         <summary className="cursor-pointer select-none font-medium text-foreground/80">

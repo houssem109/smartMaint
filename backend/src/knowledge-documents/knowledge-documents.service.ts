@@ -83,6 +83,13 @@ import {
 import { parsePdfWithPoppler } from './pdf-text.util';
 import { chunkQualityFlags, isLowValueChunkText } from './pdf-chunk-quality.util';
 import {
+  extractVisionPreferredPageText,
+  formatPageChunkPrefix,
+  isDiagramHeavyDocument,
+  shouldReplacePageTextWithVision,
+  shouldSkipPopplerOnlyForRow,
+} from './pdf-page-index-text.util';
+import {
   buildPipelineAuditExcelBuffer,
   pipelineAuditExcelFilename,
 } from './pipeline-audit-export.util';
@@ -1443,6 +1450,11 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     const allowedScripts = this.allowedScriptsFor(docLanguage);
 
     const explanationMode = opts?.promptMode === 'page_explanation';
+    const pageRowsForDoc = await this.pageAnalysisRepository.find({
+      where: { documentId },
+      order: { pageNumber: 'ASC' },
+    });
+    const diagramHeavyDoc = isDiagramHeavyDocument(pageRowsForDoc);
     const scriptGuard =
       `The document language is ${langLabel}. Transcribe ONLY in ${langLabel} (and standard ASCII numerals/symbols).\n` +
       `Do NOT insert characters from other scripts unless clearly visible on the page in that script.\n`;
@@ -1463,9 +1475,19 @@ export class KnowledgeDocumentsService implements OnModuleInit {
 
     const processOne = async (pageNumber: number): Promise<boolean> => {
       const usesDisplayFont = displayFontPages.has(pageNumber);
+      const pageRow = pageRowsForDoc.find((r) => r.pageNumber === pageNumber);
+      const schematicPage =
+        diagramHeavyDoc ||
+        pageRow?.quality === 'unreadable' ||
+        pageRow?.quality === 'poor' ||
+        pageRow?.sectionType === 'wiring';
       const visionPrompt = explanationMode
-        ? baseVisionPrompt + buildPageExplanationVisionPrompt(langLabel, usesDisplayFont)
+        ? baseVisionPrompt +
+          buildPageExplanationVisionPrompt(langLabel, usesDisplayFont, { schematicPage })
         : baseVisionPrompt +
+          (schematicPage
+            ? '\nThis page is an electrical schematic or MCC circuit diagram. Describe components, terminals, wire IDs, and connections in plain searchable text.'
+            : '') +
           (usesDisplayFont
             ? '\nThis page uses seven-segment/LCD readouts. Transcribe display digits and short codes EXACTLY (examples: 0, 10, 20, ULoc, C). ' +
               'When symbols represent keys/buttons, use canonical labels: UP_ARROW, DOWN_ARROW, ON_OFF_BUTTON.'
@@ -1482,7 +1504,7 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           const pngBuf = await sharp(replacementAbs).png().toBuffer();
           b64 = pngBuf.toString('base64');
         } else {
-          const dpi = usesDisplayFont ? 380 : 200;
+          const dpi = usesDisplayFont ? 380 : schematicPage ? 300 : 200;
           const pngPath = await this.renderPdfPageToPng(doc.filePath, pageNumber, workDir, dpi);
           b64 = readFileSync(pngPath).toString('base64');
         }
@@ -1514,7 +1536,12 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       const warnings = Array.isArray(row?.qualityWarnings) ? [...(row!.qualityWarnings as string[])] : [];
       const warnedGlyph = warnings.some((w) => String(w).startsWith('glyph_corruption_likely'));
       const previousGlyphCorrupted = this.detectGlyphCorruption(previous).corrupted;
-      const shouldReplaceRawWithVision = usesDisplayFont || warnedGlyph || previousGlyphCorrupted;
+      const shouldReplaceRawWithVision = shouldReplacePageTextWithVision(row, previous, {
+        usesDisplayFont,
+        warnedGlyph,
+        previousGlyphCorrupted,
+        minGoodChars: this.getMinGoodOcrCharsForVisionSkip(),
+      });
       const merged = shouldReplaceRawWithVision
         ? description
         : previous.length > 0
@@ -1527,6 +1554,9 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         if (!warnings.includes('vision_layer')) warnings.push('vision_layer');
       }
 
+      const qualityAfterVision =
+        row?.quality === 'unreadable' || row?.quality === 'poor' ? ('degraded' as const) : row?.quality;
+
       await this.pageAnalysisRepository.update(
         { documentId, pageNumber },
         {
@@ -1535,6 +1565,8 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           extractionMode: 'vision',
           processingMode: 'region',
           qualityWarnings: warnings,
+          ...(qualityAfterVision ? { quality: qualityAfterVision } : {}),
+          ...(schematicPage && row?.sectionType !== 'wiring' ? { sectionType: 'wiring' } : {}),
         },
       );
       return true;
@@ -1890,10 +1922,11 @@ export class KnowledgeDocumentsService implements OnModuleInit {
   }
 
   private pageLikelyHasDiagram(pageText: string): boolean {
-    const t = String(pageText || '');
+    const t = String(pageText || '').trim();
+    if (!t || t.length < 40) return true;
     return (
       /\bfig(?:ure|\.)\s*\d+/i.test(t) ||
-      /(sch[ée]ma|schematic|diagram|wiring|raccordement|c[âa]blage|dimensions)/i.test(t)
+      /(sch[ée]ma|schematic|diagram|wiring|raccordement|c[âa]blage|dimensions|mcc|ladder|circuit)/i.test(t)
     );
   }
 
@@ -2748,6 +2781,13 @@ export class KnowledgeDocumentsService implements OnModuleInit {
               pageTexts,
               glyphCorruptedPages: glyphCorrupted,
             });
+            if (explainBeforeIndex) {
+              // Vision explains schematics better than OCR; skip unreadable pages here.
+              toOcr = toOcr.filter((p) => {
+                const row = rows.find((r) => r.pageNumber === p);
+                return row?.quality !== 'unreadable';
+              });
+            }
             if (canResumePages) {
               toOcr = this.filterPageNumbersNeedingOcr(rows, toOcr);
             }
@@ -3436,6 +3476,7 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     // with a fallback when pdf-parse does not include form-feed separators.
     const pages = this.splitTextIntoPageBuckets(text, pageRows.length);
     const chunks: string[] = [];
+    const minGoodChars = this.getMinGoodOcrCharsForVisionSkip();
     for (let i = 0; i < pageRows.length; i++) {
       const row = pageRows[i];
       const rawPageText = (pages[i] ?? '').trim();
@@ -3447,22 +3488,20 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       if (!hasOcr && rawGlyphCorrupted) {
         continue;
       }
-      // Prefer OCR/vision text when present. If OCR text contains a mixed
-      // "raw + vision" payload and raw text looks glyph-corrupted, keep only
-      // the vision block to avoid polluting chunks with unreadable symbols.
-      let pageText = (hasOcr ? row!.ocrText! : rawPageText).trim();
-      if (pageText.includes('--- Vision description ---')) {
-        const [rawPart, ...visionParts] = pageText.split('--- Vision description ---');
-        const visionOnly = visionParts.join('--- Vision description ---').trim();
-        const rawLikelyCorrupted =
-          this.detectGlyphCorruption(String(rawPart || '')).corrupted ||
-          (row?.qualityWarnings ?? []).some((w) => String(w).startsWith('glyph_corruption_likely'));
-        if (visionOnly && rawLikelyCorrupted) {
-          pageText = visionOnly;
-        }
+      if (shouldSkipPopplerOnlyForRow(row, rawPageText, hasOcr, minGoodChars)) {
+        continue;
       }
+      let pageText = extractVisionPreferredPageText(
+        hasOcr ? row!.ocrText! : rawPageText,
+        rawPageText,
+        row,
+        rawGlyphCorrupted,
+      ).trim();
       if (!pageText) continue;
       const st = row?.sectionType ?? this.detectSectionType(pageText);
+      const pageNumber = row?.pageNumber ?? i + 1;
+      const prefix = formatPageChunkPrefix(pageNumber, st, !!row?.visionUsed);
+      pageText = `${prefix}\n${pageText}`;
 
       if (st === 'fault_table' || st === 'alarm_list') {
         // Try line-based splitting for tables/lists.

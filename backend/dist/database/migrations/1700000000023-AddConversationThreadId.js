@@ -1,0 +1,24 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AddConversationThreadId1700000000023 = void 0;
+class AddConversationThreadId1700000000023 {
+    constructor() {
+        this.name = 'AddConversationThreadId1700000000023';
+    }
+    async up(queryRunner) {
+        await queryRunner.query(`
+      ALTER TABLE "conversations"
+      ADD COLUMN IF NOT EXISTS "threadId" varchar(128) NULL
+    `);
+        await queryRunner.query(`
+      CREATE INDEX IF NOT EXISTS "IDX_conversations_threadId_timestamp"
+      ON "conversations" ("threadId", "timestamp")
+    `);
+    }
+    async down(queryRunner) {
+        await queryRunner.query(`DROP INDEX IF EXISTS "public"."IDX_conversations_threadId_timestamp"`);
+        await queryRunner.query(`ALTER TABLE "conversations" DROP COLUMN IF EXISTS "threadId"`);
+    }
+}
+exports.AddConversationThreadId1700000000023 = AddConversationThreadId1700000000023;
+//# sourceMappingURL=1700000000023-AddConversationThreadId.js.map

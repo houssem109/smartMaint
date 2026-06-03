@@ -17,7 +17,25 @@ export function getPdfPageExplanationMode(): 'full' | 'concise' | 'transcribe' {
   return 'concise';
 }
 
-export function buildPageExplanationVisionPrompt(langLabel: string, usesDisplayFont: boolean): string {
+/** Extra instructions when the page is mostly schematic (MCC, wiring, ladder). */
+export function buildSchematicVisionPromptSuffix(): string {
+  return (
+    '\nThis page is primarily an electrical schematic or MCC circuit diagram.\n' +
+    'Describe it for a maintenance technician searching this manual later:\n' +
+    '- Sheet title, drawing number, revision if visible.\n' +
+    '- Major components: contactors, relays, fuses, terminals, motors, PLC I/O, disconnects.\n' +
+    '- Wire/circuit identifiers (e.g. K1, M1, F1, TB1, L1/L2/L3, 24VDC).\n' +
+    '- Connections: what feeds what, interlocks, safety chains, control vs power paths.\n' +
+    '- Any fault/alarm labels, setpoints, or notes on the drawing.\n' +
+    'Use plain searchable text — not a vague summary.'
+  );
+}
+
+export function buildPageExplanationVisionPrompt(
+  langLabel: string,
+  usesDisplayFont: boolean,
+  opts?: { schematicPage?: boolean },
+): string {
   const mode = getPdfPageExplanationMode();
   const lcd =
     usesDisplayFont
@@ -28,7 +46,8 @@ export function buildPageExplanationVisionPrompt(langLabel: string, usesDisplayF
     return (
       `Transcribe this industrial manual page in ${langLabel} only. Plain text, no markdown.\n` +
       'Headings, table rows, fault codes, menu labels — preserve structure. One short line for diagrams if needed.' +
-      lcd
+      lcd +
+      (opts?.schematicPage ? buildSchematicVisionPromptSuffix() : '')
     );
   }
 
@@ -37,7 +56,8 @@ export function buildPageExplanationVisionPrompt(langLabel: string, usesDisplayF
       `Transcribe this manual page in ${langLabel}. Plain text, no markdown.\n` +
       'Include headings, tables (row by row), fault codes, menu items. For diagrams: one short paragraph on components/connections.\n' +
       'Do NOT write a long narrative — related pages share context; search needs keywords, not essays.' +
-      lcd
+      lcd +
+      (opts?.schematicPage ? buildSchematicVisionPromptSuffix() : '')
     );
   }
 
@@ -50,7 +70,8 @@ export function buildPageExplanationVisionPrompt(langLabel: string, usesDisplayF
     '3) For wiring diagrams or schematics, describe components, terminals, connections, and identifiers.\n' +
     '4) For HMI/menu screenshots, list each menu option and what the operator sees.\n' +
     '5) Keep the explanation complete but concise — this text will power search and chat.' +
-    lcd
+    lcd +
+    (opts?.schematicPage ? buildSchematicVisionPromptSuffix() : '')
   );
 }
 

@@ -51,6 +51,10 @@ __decorate([
     __metadata("design:type", String)
 ], Conversation.prototype, "senderId", void 0);
 __decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 128, nullable: true }),
+    __metadata("design:type", String)
+], Conversation.prototype, "threadId", void 0);
+__decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)
 ], Conversation.prototype, "timestamp", void 0);

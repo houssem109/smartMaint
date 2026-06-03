@@ -99,6 +99,37 @@ let TicketsService = class TicketsService {
             .take(limit);
         return likeQb.getMany();
     }
+    async searchAccessibleTickets(userId, userRole, query, limit = 5) {
+        const q = (query ?? '').trim();
+        if (!q)
+            return [];
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        if (uuidRe.test(q)) {
+            try {
+                const one = await this.findOne(q, userId, userRole);
+                return one ? [one] : [];
+            }
+            catch {
+                return [];
+            }
+        }
+        const safeQ = q.replace(/[%_]/g, ' ').trim();
+        if (!safeQ)
+            return [];
+        const like = `%${safeQ}%`;
+        const qb = this.ticketsRepository
+            .createQueryBuilder('ticket')
+            .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
+            .leftJoinAndSelect('ticket.createdBy', 'createdBy')
+            .where('ticket.isDeleted = false');
+        if (userRole === user_entity_1.UserRole.WORKER) {
+            qb.andWhere('ticket.createdById = :userId', { userId });
+        }
+        qb.andWhere('(LOWER(ticket.title) LIKE LOWER(:like) OR LOWER(ticket.description) LIKE LOWER(:like) OR CAST(ticket.id AS text) LIKE :like)', { like })
+            .orderBy('ticket.createdAt', 'DESC')
+            .take(Math.min(10, limit));
+        return qb.getMany();
+    }
     async findOne(id, userId, userRole) {
         const ticket = await this.ticketsRepository.findOne({
             where: { id, isDeleted: false },

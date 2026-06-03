@@ -17,6 +17,8 @@ const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const ai_service_1 = require("./ai.service");
+const chat_memory_util_1 = require("./chat-memory.util");
+const order_techo_service_1 = require("../order-techo/order-techo.service");
 const tickets_service_1 = require("../tickets/tickets.service");
 const rag_service_1 = require("./rag.service");
 const knowledge_service_1 = require("../knowledge/knowledge.service");
@@ -26,6 +28,10 @@ const conversation_entity_1 = require("../tickets/entities/conversation.entity")
 const ticket_entity_1 = require("../tickets/entities/ticket.entity");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+const ticket_wizard_util_1 = require("./ticket-wizard.util");
+const ticket_inquiry_util_1 = require("./ticket-inquiry.util");
+const ticket_action_util_1 = require("./ticket-action.util");
+const conversation_wrap_util_1 = require("./conversation-wrap.util");
 class ChatHistoryItemDto {
 }
 __decorate([
@@ -43,6 +49,12 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     __metadata("design:type", String)
 ], ChatMessageDto.prototype, "message", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(128),
+    __metadata("design:type", String)
+], ChatMessageDto.prototype, "threadId", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsOptional)(),
@@ -65,19 +77,139 @@ __decorate([
     __metadata("design:type", Boolean)
 ], ChatMessageDto.prototype, "allowTicketCreation", void 0);
 let ChatController = class ChatController {
-    constructor(aiService, ticketsService, ragService, knowledgeService, conversationRepository) {
+    constructor(aiService, orderTechoService, ticketsService, ragService, knowledgeService, conversationRepository) {
         this.aiService = aiService;
+        this.orderTechoService = orderTechoService;
         this.ticketsService = ticketsService;
         this.ragService = ragService;
         this.knowledgeService = knowledgeService;
         this.conversationRepository = conversationRepository;
+        this.ticketWizardByKey = new Map();
+        this.ticketInquiryContextByKey = new Map();
+        this.ticketActionByKey = new Map();
     }
     async sendMessage(body, req) {
-        const { message, ticketId, history, imageBase64 } = body;
+        const { message, ticketId, history, imageBase64, threadId } = body;
         const allowTicketCreation = body.allowTicketCreation !== false;
         const user = req.user;
         if (!message || !message.trim()) {
             return { reply: "Please enter a message so I can help you.", ticketId, sources: [] };
+        }
+        const clientHistory = history?.map((h) => ({
+            role: h.role === 'assistant' ? 'assistant' : 'user',
+            content: h.content,
+        })) ?? [];
+        const serverHistory = threadId
+            ? await this.loadThreadHistory(user.id, threadId, (0, chat_memory_util_1.getChatHistoryMaxTurns)())
+            : [];
+        const mergedHistory = (0, chat_memory_util_1.trimHistoryForModel)((0, chat_memory_util_1.mergeChatHistories)(clientHistory, serverHistory));
+        const ticketWizardKey = this.ticketDraftKey(user.id, threadId);
+        const ticketInquiryKey = this.ticketInquiryKey(user.id, threadId);
+        const hasCachedInquiry = this.ticketInquiryContextByKey.has(ticketInquiryKey);
+        const hasPendingAction = this.ticketActionByKey.has(ticketInquiryKey);
+        const userHistoryText = mergedHistory
+            .filter((h) => h.role === 'user')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const wrapLang = (0, ticket_wizard_util_1.detectWizardLang)(message.trim(), userHistoryText);
+        const wrapName = this.getFriendlyUserName(user.email);
+        const wrapReply = this.maybeHandleConversationWrap({
+            message: message.trim(),
+            history: mergedHistory,
+            lang: wrapLang,
+            name: wrapName,
+        });
+        if (wrapReply) {
+            if (wrapReply.archiveThread) {
+                this.ticketInquiryContextByKey.delete(ticketInquiryKey);
+                this.ticketActionByKey.delete(ticketInquiryKey);
+                this.ticketWizardByKey.delete(ticketWizardKey);
+            }
+            await this.persistConversation(user.id, ticketId ?? null, message.trim(), wrapReply.persistReply ?? wrapReply.reply, threadId);
+            return {
+                reply: wrapReply.reply,
+                ticketId,
+                sources: [],
+                archiveThread: wrapReply.archiveThread,
+            };
+        }
+        const earlyAction = await this.maybeHandleTicketAction({
+            user,
+            message: message.trim(),
+            history: mergedHistory,
+            threadId,
+        });
+        if (earlyAction) {
+            this.ticketWizardByKey.delete(ticketWizardKey);
+            await this.persistConversation(user.id, earlyAction.ticketId ?? ticketId ?? null, message.trim(), earlyAction.persistReply ?? earlyAction.reply, threadId);
+            return {
+                reply: earlyAction.reply,
+                ticketId: earlyAction.ticketId ?? ticketId,
+                sources: [],
+                ticketUpdated: earlyAction.ticketUpdated,
+                archiveThread: earlyAction.archiveThread,
+            };
+        }
+        const earlyInquiry = await this.maybeHandleTicketInquiry({
+            user,
+            message: message.trim(),
+            linkedTicket: null,
+            history: mergedHistory,
+            threadId,
+        });
+        if (earlyInquiry) {
+            this.ticketWizardByKey.delete(ticketWizardKey);
+            await this.persistConversation(user.id, earlyInquiry.ticketId ?? ticketId ?? null, message.trim(), earlyInquiry.persistReply ?? earlyInquiry.reply, threadId);
+            return {
+                reply: earlyInquiry.reply,
+                ticketId: earlyInquiry.ticketId ?? ticketId,
+                sources: [],
+            };
+        }
+        if (allowTicketCreation &&
+            this.shouldEnterTicketCreationFlow(message.trim(), mergedHistory, ticketWizardKey, hasCachedInquiry)) {
+            const ticketCreation = await this.maybeHandleTicketCreationFlow({
+                user,
+                message: message.trim(),
+                history: mergedHistory,
+                threadId,
+            });
+            if (ticketCreation) {
+                await this.persistConversation(user.id, ticketCreation.ticketId ?? ticketId ?? null, message.trim(), ticketCreation.persistReply ?? ticketCreation.reply, threadId);
+                return {
+                    reply: ticketCreation.reply,
+                    ticketId: ticketCreation.ticketId ?? ticketId,
+                    sources: [],
+                    ticketCreated: Boolean(ticketCreation.ticketId),
+                    ticketWizard: Boolean(ticketCreation.wizardStep),
+                };
+            }
+            if ((0, ticket_wizard_util_1.shouldStartTicketWizard)(message.trim(), mergedHistory)) {
+                const userHistoryText = mergedHistory
+                    .filter((h) => h.role === 'user')
+                    .map((h) => h.content)
+                    .join('\n');
+                const lang = (0, ticket_wizard_util_1.detectWizardLang)(message.trim(), userHistoryText);
+                const name = this.getFriendlyUserName(user.email);
+                const reply = (0, ticket_wizard_util_1.wizardAskTitle)(name, lang);
+                const persistReply = (0, ticket_wizard_util_1.tagWizardReply)('await_title', reply);
+                const session = { step: 'await_title', draft: {}, lang };
+                this.ticketWizardByKey.set(ticketWizardKey, { session, updatedAt: Date.now() });
+                await this.persistConversation(user.id, ticketId ?? null, message.trim(), persistReply, threadId);
+                return { reply, ticketId, sources: [], ticketWizard: true };
+            }
+        }
+        const orderTechoReply = await this.orderTechoService.handleMessage(user.id, message.trim(), mergedHistory, threadId);
+        if (orderTechoReply) {
+            await this.persistConversation(user.id, ticketId ?? null, message.trim(), orderTechoReply.reply, threadId);
+            return {
+                reply: orderTechoReply.reply,
+                ticketId,
+                sources: [],
+                orderMode: orderTechoReply.mode,
+                orderNumber: orderTechoReply.orderNumber,
+                detectedError: orderTechoReply.detectedError,
+            };
         }
         const visionOn = String(process.env.ENABLE_CHAT_IMAGE_VISION ?? 'true').toLowerCase() !== 'false';
         let userMessageContent = message.trim();
@@ -112,52 +244,40 @@ let ChatController = class ChatController {
                 effectiveTicketId = linkedTicket.id;
             }
         }
-        if (allowTicketCreation) {
-            const ticketCreation = await this.maybeHandleTicketCreationFlow({
-                user,
-                message,
-                history,
-            });
-            if (ticketCreation) {
-                await this.persistConversation(user.id, effectiveTicketId ?? ticketCreation.ticketId ?? null, message, ticketCreation.reply);
-                return {
-                    reply: ticketCreation.reply,
-                    ticketId: ticketCreation.ticketId ?? effectiveTicketId,
-                    sources: [],
-                };
-            }
-        }
         const listIntentReply = await this.maybeHandleTicketListQuestion({
             user,
             message,
         });
         if (listIntentReply) {
-            await this.persistConversation(user.id, effectiveTicketId ?? null, message, listIntentReply);
+            await this.persistConversation(user.id, effectiveTicketId ?? null, message, listIntentReply, threadId);
             return {
                 reply: listIntentReply,
                 ticketId: effectiveTicketId,
                 sources: [],
             };
         }
-        const statusIntentReply = await this.maybeHandleTicketStatusQuestion({
+        const inquiryReply = await this.maybeHandleTicketInquiry({
             user,
-            message,
+            message: message.trim(),
             linkedTicket,
-            history,
+            history: mergedHistory,
+            threadId,
         });
-        if (statusIntentReply) {
-            await this.persistConversation(user.id, effectiveTicketId ?? null, message, statusIntentReply);
+        if (inquiryReply) {
+            this.ticketWizardByKey.delete(ticketWizardKey);
+            await this.persistConversation(user.id, inquiryReply.ticketId ?? effectiveTicketId ?? null, message.trim(), inquiryReply.persistReply ?? inquiryReply.reply, threadId);
             return {
-                reply: statusIntentReply,
-                ticketId: effectiveTicketId,
+                reply: inquiryReply.reply,
+                ticketId: inquiryReply.ticketId ?? effectiveTicketId,
                 sources: [],
             };
         }
         const systemPrompt = this.aiService.getSystemPrompt();
-        const historyMessages = history?.map((h) => ({
+        const historyMessages = mergedHistory.map((h) => ({
             role: h.role === 'assistant' ? 'assistant' : 'user',
             content: h.content,
-        })) ?? [];
+        }));
+        const memorySummary = (0, chat_memory_util_1.buildConversationMemorySummary)(mergedHistory);
         const retrievalQuery = linkedTicket
             ? `${message}\n\nTicket title: ${linkedTicket.title}\nTicket description: ${linkedTicket.description}`
             : message;
@@ -215,6 +335,7 @@ let ChatController = class ChatController {
         const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'system', content: userContextMessage },
+            ...(memorySummary ? [{ role: 'system', content: memorySummary }] : []),
             ...historyMessages,
             { role: 'system', content: ragSystemMessage },
             {
@@ -223,7 +344,7 @@ let ChatController = class ChatController {
             },
         ];
         const reply = await this.aiService.chat(messages);
-        await this.persistConversation(user.id, effectiveTicketId ?? null, message, reply);
+        await this.persistConversation(user.id, effectiveTicketId ?? null, message, reply, threadId);
         const sources = [
             ...ragResults.map((r) => ({
                 kind: 'pdf_chunk',
@@ -273,20 +394,49 @@ let ChatController = class ChatController {
         }
         return b64;
     }
-    async persistConversation(userId, ticketId, userMessage, aiReply) {
+    async persistConversation(userId, ticketId, userMessage, aiReply, threadId) {
+        const tid = threadId?.trim() || null;
         const userEntry = this.conversationRepository.create({
             ticketId: ticketId ?? null,
+            threadId: tid,
             message: userMessage,
             senderType: conversation_entity_1.SenderType.USER,
             senderId: userId,
         });
         const aiEntry = this.conversationRepository.create({
             ticketId: ticketId ?? null,
+            threadId: tid,
             message: aiReply,
             senderType: conversation_entity_1.SenderType.AI,
             senderId: null,
         });
         await this.conversationRepository.save([userEntry, aiEntry]);
+    }
+    async loadThreadHistory(userId, threadId, limit) {
+        const tid = threadId.trim();
+        if (!tid)
+            return [];
+        const owned = await this.conversationRepository.exist({
+            where: { threadId: tid, senderId: userId, senderType: conversation_entity_1.SenderType.USER },
+        });
+        if (!owned)
+            return [];
+        const rows = await this.conversationRepository.find({
+            where: { threadId: tid },
+            order: { timestamp: 'ASC' },
+            take: Math.min(500, limit * 2),
+        });
+        const turns = rows
+            .map((r) => ({
+            role: r.senderType === conversation_entity_1.SenderType.AI ? 'assistant' : 'user',
+            content: String(r.message ?? ''),
+        }))
+            .filter((t) => t.content.trim().length > 0);
+        return (0, chat_memory_util_1.trimHistoryForModel)(turns, limit);
+    }
+    async threadHistory(threadId, req) {
+        const turns = await this.loadThreadHistory(req.user.id, threadId, (0, chat_memory_util_1.getChatHistoryMaxTurns)());
+        return { threadId, turns };
     }
     extractTicketIdFromMessage(message) {
         const m = message.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i);
@@ -307,72 +457,234 @@ let ChatController = class ChatController {
         ].filter(Boolean);
         return lines.join('\n');
     }
-    async maybeHandleTicketCreationFlow(params) {
-        const { user, message, history } = params;
-        const lower = message.toLowerCase();
-        const triggerWords = [
-            'create ticket',
-            'open ticket',
-            'new ticket',
-            'submit ticket',
-            'raise ticket',
-            'make ticket',
-            'report incident',
-            'problem report',
-            'create an issue',
-            'creer ticket',
-            'créer ticket',
-            'ouvrir ticket',
-        ];
-        const maybeTicketFlow = triggerWords.some((w) => lower.includes(w)) ||
-            (history ?? []).some((h) => /ticket\s+(details|title|description|priority|category)|before i create/i.test(h.content));
-        if (!maybeTicketFlow)
-            return null;
-        const recentHistory = (history ?? []).slice(-10);
-        const convo = recentHistory
-            .map((h) => `${h.role.toUpperCase()}: ${h.content}`)
-            .concat(`USER: ${message}`)
+    ticketDraftKey(userId, threadId) {
+        const tid = threadId?.trim();
+        return tid ? `${userId}:${tid}` : userId;
+    }
+    wizardReply(step, text, extra) {
+        return {
+            reply: text,
+            persistReply: (0, ticket_wizard_util_1.tagWizardReply)(step, text),
+            wizardStep: step,
+            ticketId: extra?.ticketId,
+        };
+    }
+    isTicketCreationConfirmation(message, inProgress = false) {
+        const t = message.trim().toLowerCase();
+        if (inProgress &&
+            /^(yes|yeah|yep|ye|ok|okay|sure|oui|confirm|confirmed|go ahead|proceed|do it|create it|yes create|créer|valider)/i.test(t)) {
+            return true;
+        }
+        return (/\b(yes|yeah|yep|ye|ok|okay|sure|confirm|confirmed|go ahead|proceed|do it|create it|please create|oui)\b/.test(t) && /\b(create|ticket|créer|confirme|valider)\b/.test(t));
+    }
+    userAskedForTicketInHistory(history) {
+        return (history ?? []).some((h) => h.role === 'user' &&
+            /create.*ticket|créer.*ticket|open ticket|new ticket|report.*(incident|problem)|signaler|make.*ticket|faire un ticket/i.test(h.content ?? ''));
+    }
+    isTicketDraftInProgress(history) {
+        return (0, ticket_wizard_util_1.isTicketWizardActiveInHistory)(history);
+    }
+    shouldEnterTicketCreationFlow(message, history, wizardKey, hasCachedInquiry) {
+        if ((0, ticket_inquiry_util_1.shouldProcessTicketInquiry)(message, history, hasCachedInquiry))
+            return false;
+        if ((0, conversation_wrap_util_1.isAwaitingMissionDoneConfirm)(history))
+            return false;
+        if ((0, ticket_inquiry_util_1.isAwaitingTicketLookupQuery)(history))
+            return false;
+        if ((0, ticket_inquiry_util_1.hasRecentTicketInquiryContext)(history) && !(0, ticket_wizard_util_1.isBareTicketTrigger)(message) && !(0, ticket_wizard_util_1.isTicketWizardTrigger)(message)) {
+            return false;
+        }
+        if (wizardKey && this.ticketWizardByKey.has(wizardKey))
+            return true;
+        if ((0, ticket_wizard_util_1.shouldStartTicketWizard)(message, history))
+            return true;
+        if ((0, ticket_wizard_util_1.isConfirmCreate)(message) && this.isTicketDraftInProgress(history))
+            return true;
+        if ((0, ticket_wizard_util_1.wantsTicketImprovement)(message) && this.isTicketDraftInProgress(history))
+            return true;
+        if ((0, ticket_wizard_util_1.acceptsEnhancement)(message) && this.isTicketDraftInProgress(history))
+            return true;
+        if (this.isTicketDraftInProgress(history))
+            return true;
+        return false;
+    }
+    shouldUseLlmTicketIntent(message) {
+        if (String(process.env.TICKET_INTENT_LLM ?? 'true').toLowerCase() === 'false')
+            return false;
+        return (message.trim().length >= 15 &&
+            /\b(problem|issue|broken|machine|line|help|ticket|panne|arrêt|stopped|not work|hmi|fault|alarm)\b/i.test(message));
+    }
+    async detectTicketIntentWithLlm(message, history) {
+        const recent = (history ?? [])
+            .slice(-8)
+            .map((h) => `${h.role}: ${h.content}`)
             .join('\n');
-        const extractionPrompt = `You extract ticket-creation intent and fields from a chat.\n` +
-            `Return JSON only (no markdown) with this exact schema:\n` +
-            `{"intent":"create_ticket"|"other","canCreateNow":boolean,"missingFields":string[],"followUpQuestion":string,"ticket":{"title":string,"description":string,"category":"software"|"hardware"|"electrical"|"mechanical"|"it"|"plumbing"|"task"|"other","priority":"low"|"medium"|"high"|"critical","subcategory":string,"machine":string,"area":string}}\n` +
+        const prompt = `Classify the latest user message in a factory maintenance chat.\n` +
+            `Should the app start a TICKET CREATION wizard (user reports equipment/plant trouble or wants a ticket logged)?\n` +
+            `Reply JSON only: {"start_ticket_wizard":boolean,"entry":"explicit"|"problem_report"|"none"}\n` +
             `Rules:\n` +
-            `- canCreateNow=true only if title and description are both sufficiently clear.\n` +
-            `- If user asks to create/open a ticket but details are missing, intent must be create_ticket and provide one concise followUpQuestion.\n` +
-            `- Keep missingFields among: title, description, category, priority, machine, area, subcategory.\n` +
-            `- If not creating ticket now, set intent="other".\n` +
-            `Conversation:\n${convo}`;
-        let parsed = null;
+            `- true: create/open ticket, report incident, machine down, not working, production stopped, log this issue.\n` +
+            `- false: general how-to, manuals, order numbers only, off-topic.\n` +
+            `Chat:\n${recent}\n\nLatest user message: ${message}`;
         try {
-            const raw = await this.aiService.chatPdf([{ role: 'user', content: extractionPrompt }], {
-                model: process.env.OPENROUTER_MODEL || undefined,
-            });
-            parsed = this.safeParseJson(raw);
+            const raw = await this.aiService.chat([{ role: 'user', content: prompt }]);
+            const parsed = this.safeParseJson(raw);
+            if (parsed?.start_ticket_wizard === true) {
+                const entry = parsed.entry === 'problem_report' ? 'problem_report' : 'explicit_ticket';
+                return {
+                    kind: entry,
+                    suggestedTitle: (0, ticket_wizard_util_1.extractTitleFromProblemReport)(message),
+                    confidence: 'medium',
+                };
+            }
         }
         catch {
-            parsed = null;
         }
-        if (!parsed || parsed.intent !== 'create_ticket')
+        return null;
+    }
+    async resolveTicketCreationIntent(message, history) {
+        let intent = (0, ticket_wizard_util_1.analyzeTicketCreationIntent)(message, history);
+        if (intent.kind === 'none' && this.shouldUseLlmTicketIntent(message)) {
+            const llm = await this.detectTicketIntentWithLlm(message, history);
+            if (llm)
+                intent = llm;
+        }
+        return intent;
+    }
+    beginWizardFromIntent(intent, msg, name, lang) {
+        if (intent.kind === 'none' || intent.kind === 'wizard_continue')
             return null;
-        const draft = (parsed.ticket ?? {});
-        const title = typeof draft.title === 'string' ? draft.title.trim() : '';
-        const description = typeof draft.description === 'string' ? draft.description.trim() : '';
-        if (!parsed.canCreateNow || !title || !description) {
-            const question = typeof parsed.followUpQuestion === 'string' && parsed.followUpQuestion.trim().length > 0
-                ? parsed.followUpQuestion.trim()
-                : 'I can create the ticket for you. What title and detailed problem description should I use?';
-            const name = this.getFriendlyUserName(user.email);
+        const session = {
+            step: 'await_title',
+            draft: {},
+            lang,
+            entryKind: intent.kind === 'problem_report' ? 'problem_report' : 'explicit_ticket',
+        };
+        if (intent.kind === 'problem_report') {
+            const structured = (0, ticket_wizard_util_1.parseStructuredTicketInput)(msg);
+            const suggested = intent.suggestedTitle
+                ? (0, ticket_wizard_util_1.sanitizeTicketTitle)(intent.suggestedTitle)
+                : undefined;
+            if (structured.title || suggested) {
+                session.draft.title = structured.title || suggested;
+                if (structured.description)
+                    session.draft.description = structured.description;
+                else if (msg.length >= 35)
+                    session.draft.description = msg;
+                if (structured.machine)
+                    session.draft.machine = structured.machine;
+                if (structured.area)
+                    session.draft.area = structured.area;
+                if (session.draft.description && (session.draft.machine || session.draft.area)) {
+                    session.step = 'await_confirm';
+                    this.enrichWizardDraft(session.draft);
+                    return {
+                        session,
+                        reply: this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, lang)),
+                    };
+                }
+                if (session.draft.description) {
+                    session.step = 'await_location';
+                    return {
+                        session,
+                        reply: this.wizardReply('await_location', (0, ticket_wizard_util_1.wizardAskLocation)(lang)),
+                    };
+                }
+                session.step = 'await_description';
+                return {
+                    session,
+                    reply: this.wizardReply('await_description', (0, ticket_wizard_util_1.wizardAckTitleAskDescription)(name, session.draft.title, lang)),
+                };
+            }
             return {
-                reply: `${name ? `${name}, ` : ''}Before I create the ticket: ${question}`,
+                session,
+                reply: this.wizardReply('await_title', (0, ticket_wizard_util_1.wizardStartFromProblemReport)(name, lang, msg)),
             };
         }
-        const category = this.normalizeTicketCategory(draft.category);
-        const priority = this.normalizeTicketPriority(draft.priority);
+        if ((0, ticket_wizard_util_1.isBareTicketTrigger)(msg) || (0, ticket_wizard_util_1.isTriggerOnlyPhrase)(msg)) {
+            return { session, reply: this.wizardReply('await_title', (0, ticket_wizard_util_1.wizardAskTitle)(name, lang)) };
+        }
+        return { session };
+    }
+    mergeTicketDraft(existing, next) {
+        return {
+            ...existing,
+            ...Object.fromEntries(Object.entries(next).filter(([, v]) => typeof v === 'string' && v.trim().length > 0)),
+        };
+    }
+    extractTicketFieldsHeuristic(history, message) {
+        const blob = [
+            ...(history ?? []).filter((h) => h.role === 'user').map((h) => h.content),
+            message,
+        ].join('\n');
+        const title = blob.match(/(?:title|titre)\s*:\s*(.+)/i)?.[1]?.trim() ||
+            blob.match(/(?:title|titre)\s+is\s+(.+)/i)?.[1]?.trim();
+        const description = blob.match(/(?:description|détails|details)\s*:\s*([\s\S]+?)(?=\n(?:priority|priorité|machine|area|category|$))/i)?.[1]?.trim() ||
+            blob.match(/(?:description|détails|details)\s*:\s*(.+)/i)?.[1]?.trim();
+        const machine = blob.match(/(?:machine)\s*:\s*(.+)/i)?.[1]?.trim();
+        const area = blob.match(/(?:area|zone)\s*:\s*(.+)/i)?.[1]?.trim();
+        const priority = blob.match(/(?:priority|priorité)\s*:\s*(\w+)/i)?.[1]?.trim();
+        const category = blob.match(/(?:category|catégorie)\s*:\s*(\w+)/i)?.[1]?.trim();
+        return {
+            title: title || undefined,
+            description: description || undefined,
+            machine,
+            area,
+            priority: priority,
+            category: category,
+        };
+    }
+    extractConversationalTicketFields(history, message) {
+        const heuristic = this.extractTicketFieldsHeuristic(history, message);
+        if (heuristic.title?.trim() && heuristic.description?.trim())
+            return heuristic;
+        const shortConfirm = /^(yes|yeah|yep|ye|ok|okay|sure|oui|confirm|confirmed|go ahead|proceed|do it|create it|yes create|créer|valider)\b/i;
+        const userMsgs = [
+            ...(history ?? []).filter((h) => h.role === 'user').map((h) => String(h.content ?? '').trim()),
+            message.trim(),
+        ].filter((m) => m.length > 0 && !shortConfirm.test(m));
+        const createIdx = userMsgs.findIndex((m) => /create.*ticket|créer.*ticket|open ticket|new ticket|report.*(incident|problem)|signaler|make.*ticket/i.test(m));
+        let detailMsgs = createIdx >= 0 ? userMsgs.slice(createIdx + 1) : userMsgs;
+        if (detailMsgs.length === 0 && createIdx >= 0) {
+            const stripped = userMsgs[createIdx]
+                .replace(/^(please\s+)?(create|open|make|créer)\s+(a\s+)?(un\s+)?ticket\s*(for|about|pour)?\s*/i, '')
+                .trim();
+            if (stripped.length >= 8)
+                detailMsgs = [stripped];
+        }
+        const assistantBlob = (history ?? [])
+            .filter((h) => h.role === 'assistant')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const fromAssistant = {
+            title: assistantBlob.match(/(?:title|titre)\s*[:=]\s*["']?([^"'\n]+)/i)?.[1]?.trim() ||
+                assistantBlob.match(/\*\*title\*\*\s*[:=]?\s*(.+)/i)?.[1]?.trim(),
+            description: assistantBlob.match(/(?:description|summary|détails)\s*[:=]\s*["']?([\s\S]+?)(?=\n(?:priority|machine|\*\*|$))/i)?.[1]?.trim() ||
+                assistantBlob.match(/\*\*description\*\*\s*[:=]?\s*([\s\S]+?)(?=\n\*\*|$)/i)?.[1]?.trim(),
+        };
+        const blob = detailMsgs.join('\n').trim();
+        if (blob.length < 8) {
+            return {
+                ...heuristic,
+                title: heuristic.title || fromAssistant.title,
+                description: heuristic.description || fromAssistant.description,
+            };
+        }
+        const lines = blob.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+        const title = heuristic.title ||
+            fromAssistant.title ||
+            (lines[0].length > 100 ? `${lines[0].slice(0, 97)}...` : lines[0]);
+        const description = heuristic.description || fromAssistant.description || (lines.length > 1 ? lines.slice(1).join('\n') : blob);
+        return { ...heuristic, title, description, machine: heuristic.machine, area: heuristic.area };
+    }
+    async createTicketFromDraft(user, draft) {
+        const title = String(draft.title ?? '').trim();
+        const description = String(draft.description ?? '').trim();
         const createDto = {
             title,
             description,
-            category,
-            priority,
+            category: this.normalizeTicketCategory(draft.category),
+            priority: this.normalizeTicketPriority(draft.priority),
             source: ticket_entity_1.TicketSource.WEB,
             subcategory: typeof draft.subcategory === 'string' ? draft.subcategory.trim() || undefined : undefined,
             machine: typeof draft.machine === 'string' ? draft.machine.trim() || undefined : undefined,
@@ -381,33 +693,509 @@ let ChatController = class ChatController {
         const created = await this.ticketsService.create(createDto, user.id);
         const name = this.getFriendlyUserName(user.email);
         return {
+            ticketId: created.id,
             reply: `${name ? `${name}, ` : ''}I created ticket "${created.title}" successfully.\n` +
                 `Ticket ID: ${created.id}\n` +
                 `Priority: ${created.priority}\n` +
                 `Category: ${created.category}`,
-            ticketId: created.id,
         };
     }
-    async maybeHandleTicketStatusQuestion(params) {
-        const { user, message, linkedTicket, history } = params;
-        if (!this.isTicketStatusQuestion(message))
+    enrichWizardDraft(draft) {
+        const title = String(draft.title ?? '');
+        const description = String(draft.description ?? '');
+        if (!draft.category)
+            draft.category = (0, ticket_wizard_util_1.inferCategoryFromText)(title, description);
+        if (!draft.priority)
+            draft.priority = (0, ticket_wizard_util_1.inferPriorityFromText)(title, description);
+    }
+    async suggestTicketEnhancement(session) {
+        const { draft, lang } = session;
+        const prompt = lang === 'fr'
+            ? `Tu aides un technicien à améliorer la description d'un ticket maintenance.\n` +
+                `Titre: ${draft.title}\nDescription: ${draft.description}\nMachine: ${draft.machine ?? '—'}\nZone: ${draft.area ?? '—'}\n` +
+                `Propose 2 à 4 points courts OU un paragraphe amélioré (max 100 mots) pour que le technicien comprenne vite. Pas de JSON.`
+            : `You help a maintenance technician improve a ticket description.\n` +
+                `Title: ${draft.title}\nDescription: ${draft.description}\nMachine: ${draft.machine ?? '—'}\nArea: ${draft.area ?? '—'}\n` +
+                `Give 2-4 short bullet points OR one improved paragraph (max 100 words) so the assigned technician understands quickly. Plain text only.`;
+        try {
+            const text = await this.aiService.chat([{ role: 'user', content: prompt }]);
+            return text.trim().slice(0, 1200);
+        }
+        catch {
+            return lang === 'fr'
+                ? '- Heure exacte du début du problème\n- Symptômes visibles sur l’écran ou la machine\n- Impact production (ligne arrêtée, débit, etc.)'
+                : '- Exact time the issue started\n- What you see on the screen or machine\n- Production impact (line stopped, rate, etc.)';
+        }
+    }
+    recoverWizardSessionFromHistory(history, message, lang) {
+        const assistantText = (history ?? [])
+            .filter((h) => h.role === 'assistant')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const title = assistantText.match(/(?:Titre|Title)\s*:\s*(.+)/i)?.[1]?.trim() ||
+            (0, ticket_wizard_util_1.parseStructuredTicketInput)(message).title;
+        const description = assistantText.match(/(?:Description)\s*:\s*([\s\S]+?)(?=\n(?:Machine|Area|Zone|Catégorie|Category)|━)/i)?.[1]?.trim();
+        const machine = assistantText.match(/(?:Machine)\s*:\s*(.+)/i)?.[1]?.trim();
+        const area = assistantText.match(/(?:Zone|Area)\s*:\s*(.+)/i)?.[1]?.trim() ||
+            assistantText.match(/(?:Area)\s*:\s*(.+)/i)?.[1]?.trim();
+        if (assistantText.includes('Ticket summary') || assistantText.includes('Récapitulatif')) {
+            return {
+                step: 'await_confirm',
+                draft: {
+                    title: title ? (0, ticket_wizard_util_1.sanitizeTicketTitle)(title) : undefined,
+                    description,
+                    machine: machine && machine !== '—' ? machine : undefined,
+                    area: area && area !== '—' ? area : undefined,
+                },
+                lang,
+            };
+        }
+        if (/tell me more|donnez plus de détails/i.test(assistantText)) {
+            return { step: 'await_description', draft: { title: title ? (0, ticket_wizard_util_1.sanitizeTicketTitle)(title) : undefined }, lang };
+        }
+        if (/which machine|quelle machine/i.test(assistantText)) {
+            return {
+                step: 'await_location',
+                draft: { title: title ? (0, ticket_wizard_util_1.sanitizeTicketTitle)(title) : undefined, description },
+                lang,
+            };
+        }
+        return null;
+    }
+    async finalizeWizardTicket(user, session, wizardKey) {
+        const name = this.getFriendlyUserName(user.email);
+        this.enrichWizardDraft(session.draft);
+        try {
+            const created = await this.createTicketFromDraft(user, session.draft);
+            this.ticketWizardByKey.delete(wizardKey);
+            const ticket = await this.ticketsService.findOne(created.ticketId, user.id, user.role);
+            return {
+                ticketId: created.ticketId,
+                ...this.attachMissionDoneIfTaskComplete((0, ticket_wizard_util_1.wizardCreatedReply)(name, {
+                    id: ticket.id,
+                    title: ticket.title,
+                    priority: String(ticket.priority),
+                    category: String(ticket.category),
+                }, session.lang), session.lang, name),
+            };
+        }
+        catch (e) {
+            const msg = e?.message ? String(e.message) : 'Unknown error';
+            return {
+                reply: session.lang === 'fr'
+                    ? `Impossible de créer le ticket : ${msg}`
+                    : `Could not create the ticket: ${msg}`,
+            };
+        }
+    }
+    async maybeHandleTicketCreationFlow(params) {
+        const { user, message, history, threadId } = params;
+        const wizardKey = this.ticketDraftKey(user.id, threadId);
+        if (!this.shouldEnterTicketCreationFlow(message, history, wizardKey))
             return null;
-        if (linkedTicket) {
-            return this.renderTicketStatusReply(linkedTicket);
+        const userHistoryText = (history ?? [])
+            .filter((h) => h.role === 'user')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const detectedLang = (0, ticket_wizard_util_1.detectWizardLang)(message, userHistoryText);
+        const name = this.getFriendlyUserName(user.email);
+        const msg = message.trim();
+        let entry = this.ticketWizardByKey.get(wizardKey);
+        const stepFromHistory = (0, ticket_wizard_util_1.getWizardStepFromHistory)(history);
+        if (!entry && stepFromHistory) {
+            entry = {
+                session: {
+                    step: stepFromHistory,
+                    draft: (0, ticket_wizard_util_1.parseDraftFromSummaryHistory)(history),
+                    lang: detectedLang,
+                },
+                updatedAt: Date.now(),
+            };
+            this.ticketWizardByKey.set(wizardKey, entry);
         }
-        const title = this.extractTicketTitleCandidate(message, history);
-        if (!title) {
-            return 'I can check that for you. Please share the ticket title (or ticket ID) you want me to verify.';
+        const intent = await this.resolveTicketCreationIntent(msg, history);
+        if (!entry && intent.kind !== 'none' && intent.kind !== 'wizard_continue') {
+            const started = this.beginWizardFromIntent(intent, msg, name, detectedLang);
+            if (started) {
+                entry = { session: started.session, updatedAt: Date.now() };
+                this.ticketWizardByKey.set(wizardKey, entry);
+                if (started.reply)
+                    return started.reply;
+            }
         }
-        const rows = await this.ticketsService.findByTitleForRole(user.id, user.role, title, 3);
-        if (rows.length === 0) {
-            return `I could not find a ticket with title "${title}" in your accessible tickets.`;
+        if (!entry) {
+            const recovered = this.recoverWizardSessionFromHistory(history, msg, detectedLang);
+            if (recovered) {
+                entry = { session: recovered, updatedAt: Date.now() };
+                this.ticketWizardByKey.set(wizardKey, entry);
+            }
         }
-        if (rows.length === 1) {
-            return this.renderTicketStatusReply(rows[0]);
+        if (!entry)
+            return null;
+        const session = entry.session;
+        if (!session.lang)
+            session.lang = detectedLang;
+        const lang = session.lang;
+        if ((0, ticket_wizard_util_1.isWizardCancel)(msg)) {
+            this.ticketWizardByKey.delete(wizardKey);
+            return { reply: (0, ticket_wizard_util_1.wizardCancelled)(session.lang), wizardStep: undefined };
         }
-        const lines = rows.map((t) => `- ${t.title} (${t.id.slice(0, 8)}...) -> ${t.status}`);
-        return `I found multiple matching tickets:\n${lines.join('\n')}\nTell me the ticket ID and I will check one exactly.`;
+        const structured = (0, ticket_wizard_util_1.parseStructuredTicketInput)(msg);
+        const touch = () => this.ticketWizardByKey.set(wizardKey, { session, updatedAt: Date.now() });
+        switch (session.step) {
+            case 'await_title': {
+                if ((0, ticket_wizard_util_1.isTriggerOnlyPhrase)(msg)) {
+                    touch();
+                    return this.wizardReply('await_title', (0, ticket_wizard_util_1.wizardAskTitle)(name, session.lang));
+                }
+                if (structured.title) {
+                    session.draft.title = structured.title;
+                    if (structured.description)
+                        session.draft.description = structured.description;
+                    if (structured.machine)
+                        session.draft.machine = structured.machine;
+                    if (structured.area)
+                        session.draft.area = structured.area;
+                }
+                else if (/\bdescription\s*:/i.test(msg)) {
+                    touch();
+                    const ask = session.lang === 'fr'
+                        ? `${name ? `${name}, ` : ''}Commençons par un titre court — on verra le détail juste après.`
+                        : `${name ? `${name}, ` : ''}Let's start with a short title first — we'll add details in the next step.`;
+                    return this.wizardReply('await_title', ask);
+                }
+                else {
+                    const title = (0, ticket_wizard_util_1.sanitizeTicketTitle)(msg);
+                    if (title.length < 3 || (0, ticket_wizard_util_1.isTriggerOnlyPhrase)(title)) {
+                        touch();
+                        return this.wizardReply('await_title', (0, ticket_wizard_util_1.wizardInvalidTitle)(session.lang));
+                    }
+                    session.draft.title = title;
+                }
+                if (session.draft.description && (session.draft.machine || session.draft.area)) {
+                    session.step = 'await_confirm';
+                    this.enrichWizardDraft(session.draft);
+                    touch();
+                    return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+                }
+                if (session.draft.description) {
+                    session.step = 'await_location';
+                    touch();
+                    return this.wizardReply('await_location', (0, ticket_wizard_util_1.wizardAskLocation)(session.lang));
+                }
+                session.step = 'await_description';
+                touch();
+                return this.wizardReply('await_description', (0, ticket_wizard_util_1.wizardAckTitleAskDescription)(name, session.draft.title, session.lang));
+            }
+            case 'await_description': {
+                const desc = structured.description || msg;
+                if (desc.length < 12) {
+                    touch();
+                    return this.wizardReply('await_description', (0, ticket_wizard_util_1.wizardInvalidDescription)(session.lang));
+                }
+                session.draft.description = desc;
+                if (structured.machine)
+                    session.draft.machine = structured.machine;
+                if (structured.area)
+                    session.draft.area = structured.area;
+                if (session.draft.machine || session.draft.area) {
+                    session.step = 'await_confirm';
+                    this.enrichWizardDraft(session.draft);
+                    touch();
+                    return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+                }
+                session.step = 'await_location';
+                touch();
+                return this.wizardReply('await_location', (0, ticket_wizard_util_1.wizardAskLocation)(session.lang));
+            }
+            case 'await_location': {
+                const loc = (0, ticket_wizard_util_1.parseMachineAndArea)(msg);
+                if (!loc.machine && !loc.area) {
+                    touch();
+                    return this.wizardReply('await_location', (0, ticket_wizard_util_1.wizardInvalidLocation)(session.lang));
+                }
+                if (loc.machine)
+                    session.draft.machine = loc.machine;
+                if (loc.area)
+                    session.draft.area = loc.area;
+                session.step = 'await_confirm';
+                this.enrichWizardDraft(session.draft);
+                touch();
+                return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+            }
+            case 'await_confirm': {
+                if ((0, ticket_wizard_util_1.isConfirmCreate)(msg)) {
+                    return this.finalizeWizardTicket(user, session, wizardKey);
+                }
+                if ((0, ticket_wizard_util_1.wantsTicketImprovement)(msg)) {
+                    const suggestion = await this.suggestTicketEnhancement(session);
+                    session.pendingEnhancement = suggestion;
+                    session.step = 'await_suggestion_accept';
+                    touch();
+                    const enhanceText = (0, ticket_wizard_util_1.wizardEnhancementIntro)(session.lang) + suggestion + (0, ticket_wizard_util_1.wizardAskAcceptEnhancement)(session.lang);
+                    return this.wizardReply('await_suggestion_accept', enhanceText);
+                }
+                if (msg.length > 12 && !(0, ticket_wizard_util_1.isTicketWizardTrigger)(msg)) {
+                    session.draft.description = `${session.draft.description}\n${msg}`.trim();
+                    touch();
+                    return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+                }
+                touch();
+                return this.wizardReply('await_confirm', `${(0, ticket_wizard_util_1.wizardRemindConfirm)(session.lang)}\n\n${(0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang)}`);
+            }
+            case 'await_suggestion_accept': {
+                if ((0, ticket_wizard_util_1.acceptsEnhancement)(msg) && session.pendingEnhancement) {
+                    session.draft.description = `${session.draft.description}\n\n${session.pendingEnhancement}`.trim();
+                    session.pendingEnhancement = undefined;
+                    session.step = 'await_confirm';
+                    touch();
+                    return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+                }
+                if ((0, ticket_wizard_util_1.isConfirmCreate)(msg)) {
+                    return this.finalizeWizardTicket(user, session, wizardKey);
+                }
+                if (msg.length > 10) {
+                    session.draft.description = `${session.draft.description}\n${msg}`.trim();
+                    session.pendingEnhancement = undefined;
+                    session.step = 'await_confirm';
+                    touch();
+                    return this.wizardReply('await_confirm', (0, ticket_wizard_util_1.buildTicketSummary)(session.draft, session.lang));
+                }
+                touch();
+                return this.wizardReply('await_suggestion_accept', (0, ticket_wizard_util_1.wizardRemindConfirm)(session.lang));
+            }
+            default:
+                return null;
+        }
+    }
+    maybeHandleConversationWrap(params) {
+        const { message, history, lang, name } = params;
+        if (!(0, conversation_wrap_util_1.shouldProcessConversationWrap)(message, history))
+            return null;
+        if ((0, conversation_wrap_util_1.isAwaitingMissionDoneConfirm)(history)) {
+            if ((0, conversation_wrap_util_1.isMissionCompleteConfirmation)(message) ||
+                (0, conversation_wrap_util_1.isUserRequestingConversationEnd)(message) ||
+                (0, conversation_wrap_util_1.isConversationEndUserMessage)(message)) {
+                const farewell = (0, conversation_wrap_util_1.buildFarewellReply)(name, lang);
+                return { reply: farewell, archiveThread: true };
+            }
+            if ((0, conversation_wrap_util_1.isMissionCompleteDeclined)(message)) {
+                return { reply: (0, conversation_wrap_util_1.buildMissionContinuesReply)(lang) };
+            }
+            return {
+                reply: lang === 'fr'
+                    ? 'Répondez « oui » pour terminer ou « non » pour continuer.'
+                    : 'Reply "yes" to finish or "no" to keep chatting.',
+            };
+        }
+        if ((0, conversation_wrap_util_1.isUserRequestingConversationEnd)(message)) {
+            const confirm = (0, conversation_wrap_util_1.buildEndConversationConfirm)(name, lang);
+            return {
+                reply: (0, conversation_wrap_util_1.stripWrapMarker)(confirm),
+                persistReply: (0, conversation_wrap_util_1.tagWrapReply)(confirm),
+            };
+        }
+        return null;
+    }
+    attachMissionDoneIfTaskComplete(reply, lang, name) {
+        return (0, conversation_wrap_util_1.appendMissionDonePrompt)(reply, lang, name);
+    }
+    ticketInquiryKey(userId, threadId) {
+        const tid = threadId?.trim();
+        return tid ? `${userId}:${tid}` : userId;
+    }
+    async resolveTicketForAction(user, ctxKey, message, history) {
+        const cached = this.ticketInquiryContextByKey.get(ctxKey);
+        if (cached?.ticketId) {
+            try {
+                return await this.ticketsService.findOne(cached.ticketId, user.id, user.role);
+            }
+            catch {
+                this.ticketInquiryContextByKey.delete(ctxKey);
+            }
+        }
+        const searchQ = (0, ticket_inquiry_util_1.extractTicketSearchQuery)(message, history) ||
+            (0, ticket_inquiry_util_1.findRecentTicketSearchTermFromHistory)(history);
+        if (!searchQ)
+            return null;
+        const rows = await this.ticketsService.searchAccessibleTickets(user.id, user.role, searchQ, 5);
+        if (rows.length !== 1)
+            return null;
+        return rows[0];
+    }
+    async maybeHandleTicketAction(params) {
+        const { user, message, history, threadId } = params;
+        const ctxKey = this.ticketInquiryKey(user.id, threadId);
+        const hasTicketContext = this.ticketInquiryContextByKey.has(ctxKey);
+        const pending = this.ticketActionByKey.get(ctxKey);
+        if (!(0, ticket_action_util_1.shouldProcessTicketAction)(message, history, Boolean(pending), hasTicketContext)) {
+            return null;
+        }
+        if ((0, conversation_wrap_util_1.isAwaitingMissionDoneConfirm)(history) && (0, conversation_wrap_util_1.isMissionCompleteConfirmation)(message)) {
+            return null;
+        }
+        const userHistoryText = (history ?? [])
+            .filter((h) => h.role === 'user')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const lang = (0, ticket_wizard_util_1.detectWizardLang)(message, userHistoryText);
+        if ((0, ticket_action_util_1.isActionCancellation)(message)) {
+            this.ticketActionByKey.delete(ctxKey);
+            return { reply: (0, ticket_action_util_1.buildActionCancelledReply)(lang) };
+        }
+        const awaitingConfirm = pending || (0, ticket_action_util_1.isAwaitingTicketActionConfirm)(history);
+        if (awaitingConfirm && (0, ticket_action_util_1.isActionConfirmation)(message)) {
+            const action = pending?.action ??
+                (() => {
+                    const key = (0, ticket_action_util_1.parseActionKeyFromHistory)(history);
+                    return key ? this.ticketActionByKey.get(key)?.action : undefined;
+                })();
+            if (!action) {
+                return {
+                    reply: lang === 'fr'
+                        ? 'Je ne retrouve plus l’action en attente. Reformulez ce que vous voulez faire.'
+                        : 'I lost track of the pending action. Please say what you want to do again.',
+                };
+            }
+            try {
+                if (action.kind === 'delete') {
+                    await this.ticketsService.remove(action.ticketId, user.id, user.role);
+                    this.ticketInquiryContextByKey.delete(ctxKey);
+                }
+                else {
+                    const updated = await this.ticketsService.update(action.ticketId, action.updates, user.id, user.role);
+                    this.ticketInquiryContextByKey.set(ctxKey, {
+                        ticketId: updated.id,
+                        title: updated.title,
+                        updatedAt: Date.now(),
+                    });
+                }
+                this.ticketActionByKey.delete(ctxKey);
+                const name = this.getFriendlyUserName(user.email);
+                const wrapped = this.attachMissionDoneIfTaskComplete((0, ticket_action_util_1.buildActionSuccessReply)(action, lang), lang, name);
+                return {
+                    reply: wrapped.reply,
+                    persistReply: wrapped.persistReply,
+                    ticketId: action.ticketId,
+                    ticketUpdated: true,
+                };
+            }
+            catch (e) {
+                this.ticketActionByKey.delete(ctxKey);
+                const msg = e?.message ? String(e.message) : 'Unknown error';
+                return { reply: (0, ticket_action_util_1.buildActionErrorReply)(msg, lang) };
+            }
+        }
+        if (awaitingConfirm && !(0, ticket_action_util_1.isActionConfirmation)(message)) {
+            const action = pending?.action;
+            if (action) {
+                const remind = lang === 'fr'
+                    ? 'Répondez « oui » pour confirmer ou « annuler » pour abandonner.'
+                    : 'Reply "yes" to confirm or "cancel" to abort.';
+                const confirm = (0, ticket_action_util_1.buildActionConfirmPrompt)(action, lang);
+                return {
+                    reply: `${remind}\n\n${confirm}`,
+                    persistReply: (0, ticket_action_util_1.tagActionConfirmReply)(ctxKey, confirm),
+                    ticketId: action.ticketId,
+                };
+            }
+        }
+        const parsed = (0, ticket_action_util_1.parseTicketActionIntent)(message);
+        if (!parsed.kind) {
+            if (/\b(can't you|cant you|why can't|pourquoi.*pas)\b.*\b(close|fermer|delete|update)\b/i.test(message)) {
+                const ticket = await this.resolveTicketForAction(user, ctxKey, message, history);
+                if (ticket) {
+                    return {
+                        reply: lang === 'fr'
+                            ? `Oui — je peux le faire pour « ${ticket.title} ». Dites par exemple « ferme le ticket » et je vous demanderai de confirmer.`
+                            : `Yes — I can do that for "${ticket.title}". Say something like "close the ticket" and I'll ask you to confirm.`,
+                        ticketId: ticket.id,
+                    };
+                }
+            }
+            return null;
+        }
+        const ticket = await this.resolveTicketForAction(user, ctxKey, message, history);
+        if (!ticket) {
+            return { reply: (0, ticket_action_util_1.buildNoTicketForActionReply)(lang) };
+        }
+        const action = {
+            kind: parsed.kind,
+            ticketId: ticket.id,
+            ticketTitle: ticket.title,
+            updates: parsed.updates,
+            lang,
+            summary: lang === 'fr' ? parsed.summaryFr : parsed.summaryEn,
+        };
+        this.ticketActionByKey.set(ctxKey, { action, updatedAt: Date.now() });
+        const confirmText = (0, ticket_action_util_1.buildActionConfirmPrompt)(action, lang);
+        return {
+            reply: confirmText,
+            persistReply: (0, ticket_action_util_1.tagActionConfirmReply)(ctxKey, confirmText),
+            ticketId: ticket.id,
+        };
+    }
+    async maybeHandleTicketInquiry(params) {
+        const { user, message, linkedTicket, history, threadId } = params;
+        const ctxKey = this.ticketInquiryKey(user.id, threadId);
+        const hasCached = this.ticketInquiryContextByKey.has(ctxKey);
+        if (!(0, ticket_inquiry_util_1.shouldProcessTicketInquiry)(message, history, hasCached))
+            return null;
+        const userHistoryText = (history ?? [])
+            .filter((h) => h.role === 'user')
+            .map((h) => h.content ?? '')
+            .join('\n');
+        const lang = (0, ticket_wizard_util_1.detectWizardLang)(message, userHistoryText);
+        const aspect = (0, ticket_inquiry_util_1.extractTicketInquiryAspect)(message);
+        let ticket = linkedTicket;
+        if (!ticket) {
+            const cached = this.ticketInquiryContextByKey.get(ctxKey);
+            const searchQ = (0, ticket_inquiry_util_1.extractTicketSearchQuery)(message, history);
+            const followUpOnly = !searchQ &&
+                (0, ticket_inquiry_util_1.isTicketInquiryFollowUp)(message) &&
+                (cached?.ticketId || (0, ticket_inquiry_util_1.hasRecentTicketInquiryContext)(history));
+            if (followUpOnly && cached) {
+                try {
+                    ticket = await this.ticketsService.findOne(cached.ticketId, user.id, user.role);
+                }
+                catch {
+                    this.ticketInquiryContextByKey.delete(ctxKey);
+                }
+            }
+            else if (followUpOnly && !cached) {
+                const term = (0, ticket_inquiry_util_1.extractTicketSearchQuery)(message, history);
+                if (term) {
+                    const rows = await this.ticketsService.searchAccessibleTickets(user.id, user.role, term, 5);
+                    if (rows.length === 1)
+                        ticket = rows[0];
+                }
+            }
+            else if (searchQ) {
+                const rows = await this.ticketsService.searchAccessibleTickets(user.id, user.role, searchQ, 5);
+                if (rows.length === 0) {
+                    return { reply: (0, ticket_inquiry_util_1.formatNoTicketReply)(searchQ, lang) };
+                }
+                if (rows.length > 1) {
+                    return { reply: (0, ticket_inquiry_util_1.formatMultipleTicketsReply)(rows, lang) };
+                }
+                ticket = rows[0];
+            }
+        }
+        if (!ticket) {
+            const need = (0, ticket_inquiry_util_1.formatNeedQueryReply)(lang);
+            return { reply: (0, ticket_inquiry_util_1.stripInquiryMarker)(need), persistReply: need };
+        }
+        this.ticketInquiryContextByKey.set(ctxKey, {
+            ticketId: ticket.id,
+            title: ticket.title,
+            updatedAt: Date.now(),
+        });
+        const reply = (0, ticket_inquiry_util_1.formatTicketInquiryReply)(ticket, aspect, lang);
+        return {
+            reply,
+            persistReply: (0, ticket_inquiry_util_1.tagInquiryReply)('found', reply),
+            ticketId: ticket.id,
+        };
     }
     async maybeHandleTicketListQuestion(params) {
         const { user, message } = params;
@@ -468,59 +1256,6 @@ let ChatController = class ChatController {
         if (/\blow\b|\bbasse\b/.test(lowerMessage))
             return ticket_entity_1.TicketPriority.LOW;
         return null;
-    }
-    isTicketStatusQuestion(message) {
-        const m = (message ?? '').toLowerCase();
-        return ((m.includes('ticket') && (m.includes('open') || m.includes('status') || m.includes('closed'))) ||
-            /is\s+.*ticket.*open|ticket.*open\s+or\s+not|ticket.*status/i.test(message) ||
-            /ticket.*ouvert|statut.*ticket/i.test(message));
-    }
-    extractTicketTitleCandidate(message, history) {
-        const tryExtract = (text) => {
-            if (!text)
-                return null;
-            const patterns = [
-                /ticket\s+with\s+title\s+["']?(.+?)["']?$/i,
-                /ticket\s+(?:named|called)\s+["']?(.+?)["']?$/i,
-                /title\s*[:=]\s*["']?(.+?)["']?$/i,
-                /ticket\s+title\s+["']?(.+?)["']?$/i,
-            ];
-            for (const p of patterns) {
-                const m = text.match(p);
-                if (m?.[1]?.trim())
-                    return m[1].trim();
-            }
-            const bare = text.trim();
-            if (bare.length >= 5 &&
-                bare.length <= 180 &&
-                !/[?]/.test(bare) &&
-                !/\b(open|closed|status|show|list|count|create|ticket id)\b/i.test(bare)) {
-                return bare.replace(/^["']|["']$/g, '').trim();
-            }
-            return null;
-        };
-        const fromCurrent = tryExtract(message);
-        if (fromCurrent)
-            return fromCurrent;
-        const canUseHistoryTitle = /\b(it|this ticket|that ticket|ce ticket|cet ticket)\b/i.test(message) ||
-            /\b(open or not|status\??)\b/i.test(message);
-        if (!canUseHistoryTitle) {
-            return null;
-        }
-        const hist = (history ?? []).filter((h) => h.role === 'user').slice().reverse();
-        for (const h of hist) {
-            const t = tryExtract(h.content);
-            if (t)
-                return t;
-        }
-        return null;
-    }
-    renderTicketStatusReply(ticket) {
-        const assigned = ticket.assignedTo?.fullName || ticket.assignedToId || 'Unassigned';
-        return (`Yes — I found the ticket "${ticket.title}".\n` +
-            `Status: ${ticket.status}\n` +
-            `Priority: ${ticket.priority}\n` +
-            `Assigned to: ${assigned}`);
     }
     safeParseJson(raw) {
         if (!raw || typeof raw !== 'string')
@@ -597,6 +1332,15 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], ChatController.prototype, "history", null);
 __decorate([
+    (0, common_1.Get)('thread/:threadId/history'),
+    (0, swagger_1.ApiOperation)({ summary: 'Load persisted Techo messages for a conversation thread' }),
+    __param(0, (0, common_1.Param)('threadId')),
+    __param(1, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], ChatController.prototype, "threadHistory", null);
+__decorate([
     (0, common_1.Get)('my-history'),
     (0, swagger_1.ApiOperation)({ summary: 'Get all chat messages for current user (any ticket or general chat)' }),
     __param(0, (0, common_1.Request)()),
@@ -609,8 +1353,9 @@ exports.ChatController = ChatController = __decorate([
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Controller)('chat'),
-    __param(4, (0, typeorm_1.InjectRepository)(conversation_entity_1.Conversation)),
+    __param(5, (0, typeorm_1.InjectRepository)(conversation_entity_1.Conversation)),
     __metadata("design:paramtypes", [ai_service_1.AiService,
+        order_techo_service_1.OrderTechoService,
         tickets_service_1.TicketsService,
         rag_service_1.RagService,
         knowledge_service_1.KnowledgeService,

@@ -42,6 +42,10 @@ export const useAuthStore = create<AuthState>()(
           document.cookie = 'userRole=; path=/; max-age=0';
         }
         set({ user: null, token: null, isAuthenticated: false });
+        // Techo chat is per-user — do not leak conversations across accounts on same browser
+        import('@/store/chat-store').then(({ useChatStore }) => {
+          useChatStore.getState().clearAll();
+        });
       },
     }),
     {

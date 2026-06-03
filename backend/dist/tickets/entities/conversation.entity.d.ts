@@ -11,5 +11,6 @@ export declare class Conversation {
     message: string;
     senderType: SenderType;
     senderId: string;
+    threadId: string | null;
     timestamp: Date;
 }

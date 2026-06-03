@@ -1,10 +1,12 @@
 {
-  "/dashboard/admin/database-inventory/page": "app/dashboard/admin/database-inventory/page.js",
   "/dashboard/admin/knowledge-docs/[id]/page": "app/dashboard/admin/knowledge-docs/[id]/page.js",
   "/dashboard/admin/knowledge-docs/page": "app/dashboard/admin/knowledge-docs/page.js",
   "/dashboard/admin/knowledge/page": "app/dashboard/admin/knowledge/page.js",
   "/dashboard/admin/page": "app/dashboard/admin/page.js",
-  "/dashboard/admin/problems-solutions-export/page": "app/dashboard/admin/problems-solutions-export/page.js",
   "/dashboard/admin/rag-stored-data/page": "app/dashboard/admin/rag-stored-data/page.js",
+  "/dashboard/admin/tickets-export/page": "app/dashboard/admin/tickets-export/page.js",
+  "/dashboard/admin/tickets/page": "app/dashboard/admin/tickets/page.js",
+  "/dashboard/admin/users/page": "app/dashboard/admin/users/page.js",
+  "/dashboard/tickets/[id]/page": "app/dashboard/tickets/[id]/page.js",
   "/page": "app/page.js"
 }

@@ -132,6 +132,7 @@ services:
       - ./backend:/app
       - /app/node_modules
       - ./backend/uploads:/app/uploads
+      - ./backend/data/order-techo:/app/data/order-techo:ro
     depends_on:
       postgres:
         condition: service_healthy

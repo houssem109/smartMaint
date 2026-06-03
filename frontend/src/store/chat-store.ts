@@ -29,14 +29,19 @@ export interface ChatThread {
 }
 
 interface ChatState {
+  /** User id that owns persisted threads (prevents sharing chat between accounts on same browser). */
+  ownerUserId: string | null;
   isOpen: boolean;
   isSending: boolean;
   threads: ChatThread[];
   activeThreadId: string | null;
   messagesByThread: Record<string, ChatMessage[]>;
+  /** Clear chat when a different user logs in on this device. */
+  ensureUserScope: (userId: string) => void;
+  clearAll: () => void;
   open: () => void;
   close: () => void;
-  createThread: (title?: string) => string;
+  createThread: (title?: string, userId?: string) => string;
   setActiveThread: (id: string) => void;
   addMessage: (threadId: string, msg: Omit<ChatMessage, 'id' | 'createdAt'>) => void;
   updateMessage: (threadId: string, messageId: string, content: string) => void;
@@ -50,22 +55,47 @@ interface ChatState {
   resetThread: (threadId: string) => void;
   deleteThread: (id: string) => void;
   setThreadArchived: (id: string, archived: boolean) => void;
+  /** Replace thread messages (e.g. hydrate from server history). */
+  setThreadMessages: (threadId: string, messages: ChatMessage[]) => void;
 }
 
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
+      ownerUserId: null,
       isOpen: false,
       isSending: false,
       threads: [],
       activeThreadId: null,
       messagesByThread: {},
+      ensureUserScope: (userId: string) => {
+        const state = get();
+        if (state.ownerUserId === userId) return;
+        set({
+          ownerUserId: userId,
+          isOpen: false,
+          isSending: false,
+          threads: [],
+          activeThreadId: null,
+          messagesByThread: {},
+        });
+      },
+      clearAll: () =>
+        set({
+          ownerUserId: null,
+          isOpen: false,
+          isSending: false,
+          threads: [],
+          activeThreadId: null,
+          messagesByThread: {},
+        }),
       open: () => set({ isOpen: true }),
       close: () => set({ isOpen: false }),
-      createThread: (title?: string) => {
+      createThread: (title?: string, userId?: string) => {
         const state = get();
         const index = state.threads.length + 1;
-        const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const prefix = userId ? `${userId.slice(0, 8)}-` : '';
+        const id = `${prefix}${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const threadTitle = title || `Conversation ${index}`;
         const createdAt = Date.now();
         set({
@@ -160,12 +190,20 @@ export const useChatStore = create<ChatState>()(
         set((state) => ({
           threads: state.threads.map((t) => (t.id === id ? { ...t, archived } : t)),
         })),
+      setThreadMessages: (threadId: string, messages: ChatMessage[]) =>
+        set((state) => ({
+          messagesByThread: {
+            ...state.messagesByThread,
+            [threadId]: messages,
+          },
+        })),
     }),
     {
       name: 'techo-chat-storage',
       storage: createJSONStorage(() => localStorage),
       // Optional: limit what we persist (skip isOpen/isSending flags)
       partialize: (state) => ({
+        ownerUserId: state.ownerUserId,
         threads: state.threads,
         activeThreadId: state.activeThreadId,
         messagesByThread: state.messagesByThread,

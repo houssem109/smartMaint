@@ -17,6 +17,7 @@ const conversation_entity_1 = require("../tickets/entities/conversation.entity")
 const tickets_module_1 = require("../tickets/tickets.module");
 const knowledge_module_1 = require("../knowledge/knowledge.module");
 const rag_module_1 = require("./rag.module");
+const order_techo_module_1 = require("../order-techo/order-techo.module");
 let AiModule = class AiModule {
 };
 exports.AiModule = AiModule;
@@ -28,6 +29,7 @@ exports.AiModule = AiModule = __decorate([
             tickets_module_1.TicketsModule,
             (0, common_1.forwardRef)(() => knowledge_module_1.KnowledgeModule),
             rag_module_1.RagModule,
+            (0, common_1.forwardRef)(() => order_techo_module_1.OrderTechoModule),
         ],
         controllers: [ai_controller_1.AiController, chat_controller_1.ChatController],
         providers: [ai_service_1.AiService],

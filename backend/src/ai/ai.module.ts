@@ -8,6 +8,7 @@ import { Conversation } from '../tickets/entities/conversation.entity';
 import { TicketsModule } from '../tickets/tickets.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { RagModule } from './rag.module';
+import { OrderTechoModule } from '../order-techo/order-techo.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RagModule } from './rag.module';
     TicketsModule,
     forwardRef(() => KnowledgeModule),
     RagModule,
+    forwardRef(() => OrderTechoModule),
   ],
   controllers: [AiController, ChatController],
   providers: [AiService],

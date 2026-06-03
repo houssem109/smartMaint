@@ -18,6 +18,7 @@ export declare class TicketsService {
         assignedToId?: string;
     }): Promise<Ticket[]>;
     findByTitleForRole(userId: string, userRole: UserRole, title: string, limit?: number): Promise<Ticket[]>;
+    searchAccessibleTickets(userId: string, userRole: UserRole, query: string, limit?: number): Promise<Ticket[]>;
     findOne(id: string, userId: string, userRole: UserRole): Promise<Ticket>;
     update(id: string, updateTicketDto: UpdateTicketDto, userId: string, userRole: UserRole): Promise<Ticket>;
     remove(id: string, userId: string, userRole: UserRole): Promise<void>;
