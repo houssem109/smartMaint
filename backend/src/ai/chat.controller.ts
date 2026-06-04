@@ -22,7 +22,7 @@ import { TicketsService } from '../tickets/tickets.service';
 import { RagService } from './rag.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { Conversation, SenderType } from '../tickets/entities/conversation.entity';
 import { CreateTicketDto } from '../tickets/dto/create-ticket.dto';
 import {
@@ -40,14 +40,19 @@ import {
   analyzeTicketCreationIntent,
   buildTicketSummary,
   detectWizardLang,
+  buildTestTicketDraft,
   extractTitleFromProblemReport,
+  findCreatedTicketInHistory,
   getWizardStepFromHistory,
+  isWizardSupersededByCreatedTicket,
   inferCategoryFromText,
   inferPriorityFromText,
+  isAwaitingWizardUserInput,
   isBareTicketTrigger,
   isConfirmCreate,
   isTicketWizardActiveInHistory,
   isTicketWizardTrigger,
+  isTestTicketRequest,
   isTriggerOnlyPhrase,
   isWizardCancel,
   parseDraftFromSummaryHistory,
@@ -120,6 +125,22 @@ import {
   stripWrapMarker,
   tagWrapReply,
 } from './conversation-wrap.util';
+import { TicketIntentRouterService } from './ticket-intent-router.service';
+import {
+  buildRouterClarifyReply,
+  routeImpliesTicketAction,
+  routeImpliesTicketCreate,
+  routeImpliesTicketLookup,
+  routeImpliesWizardContinue,
+  shouldClarifyInsteadOfLoop,
+  type TechoTurnRoute,
+} from './ticket-intent-router.util';
+import {
+  deriveThreadTitleHeuristic,
+  isGenericThreadTitle,
+  sanitizeThreadTitle,
+} from './thread-title.util';
+import { suggestThreadTitle } from './thread-title.service';
 
 class ChatHistoryItemDto {
   @IsString()
@@ -184,6 +205,7 @@ export class ChatController {
 
   constructor(
     private readonly aiService: AiService,
+    private readonly ticketIntentRouter: TicketIntentRouterService,
     private readonly orderTechoService: OrderTechoService,
     private readonly ticketsService: TicketsService,
     private readonly ragService: RagService,
@@ -222,6 +244,28 @@ export class ChatController {
     const ticketInquiryKey = this.ticketInquiryKey(user.id, threadId);
     const hasCachedInquiry = this.ticketInquiryContextByKey.has(ticketInquiryKey);
     const hasPendingAction = this.ticketActionByKey.has(ticketInquiryKey);
+    const cachedTicket = this.ticketInquiryContextByKey.get(ticketInquiryKey);
+    const pendingActionEntry = this.ticketActionByKey.get(ticketInquiryKey);
+    const wizardEntry = this.ticketWizardByKey.get(ticketWizardKey);
+
+    const turnRoute = await this.ticketIntentRouter.classifyTurn({
+      message: message.trim(),
+      history: mergedHistory,
+      lastTicket: cachedTicket
+        ? { id: cachedTicket.ticketId, title: cachedTicket.title }
+        : null,
+      pendingActionKind: pendingActionEntry?.action.kind ?? null,
+      wizardStep:
+        wizardEntry?.session.step ?? getWizardStepFromHistory(mergedHistory) ?? null,
+      hasCachedTicket: hasCachedInquiry,
+    });
+
+    const wizardInProgress =
+      !isWizardSupersededByCreatedTicket(mergedHistory) &&
+      (this.ticketWizardByKey.has(ticketWizardKey) ||
+        isTicketWizardActiveInHistory(mergedHistory) ||
+        isAwaitingWizardUserInput(mergedHistory) ||
+        routeImpliesWizardContinue(turnRoute));
 
     const userHistoryText = mergedHistory
       .filter((h) => h.role === 'user')
@@ -264,6 +308,8 @@ export class ChatController {
       message: message.trim(),
       history: mergedHistory,
       threadId,
+      turnRoute,
+      forceProcess: routeImpliesTicketAction(turnRoute),
     });
     if (earlyAction) {
       this.ticketWizardByKey.delete(ticketWizardKey);
@@ -282,6 +328,73 @@ export class ChatController {
         archiveThread: earlyAction.archiveThread,
       };
     }
+    if (
+      routeImpliesTicketAction(turnRoute) &&
+      cachedTicket &&
+      shouldClarifyInsteadOfLoop(turnRoute)
+    ) {
+      const clarify = buildRouterClarifyReply(turnRoute, wrapLang, cachedTicket);
+      await this.persistConversation(user.id, cachedTicket.ticketId, message.trim(), clarify, threadId);
+      return { reply: clarify, ticketId: cachedTicket.ticketId, sources: [] };
+    }
+
+    // Ticket creation wizard takes priority over lookup when already in progress.
+    if (allowTicketCreation && wizardInProgress) {
+      const ticketCreation = await this.maybeHandleTicketCreationFlow({
+        user,
+        message: message.trim(),
+        history: mergedHistory,
+        threadId,
+        turnRoute,
+      });
+      if (ticketCreation) {
+        await this.persistConversation(
+          user.id,
+          ticketCreation.ticketId ?? ticketId ?? null,
+          message.trim(),
+          ticketCreation.persistReply ?? ticketCreation.reply,
+          threadId,
+        );
+        return {
+          reply: ticketCreation.reply,
+          ticketId: ticketCreation.ticketId ?? ticketId,
+          sources: [],
+          ticketCreated: Boolean(ticketCreation.ticketId),
+          ticketWizard: Boolean(ticketCreation.wizardStep),
+        };
+      }
+    }
+
+    if (
+      isTicketActionIntent(message.trim()) ||
+      routeImpliesTicketAction(turnRoute)
+    ) {
+      const postWizardAction = await this.maybeHandleTicketAction({
+        user,
+        message: message.trim(),
+        history: mergedHistory,
+        threadId,
+        turnRoute,
+        forceProcess: true,
+      });
+      if (postWizardAction) {
+        this.ticketWizardByKey.delete(ticketWizardKey);
+        await this.persistConversation(
+          user.id,
+          postWizardAction.ticketId ?? ticketId ?? null,
+          message.trim(),
+          postWizardAction.persistReply ?? postWizardAction.reply,
+          threadId,
+        );
+        return {
+          reply: postWizardAction.reply,
+          ticketId: postWizardAction.ticketId ?? ticketId,
+          sources: [],
+          ticketUpdated: postWizardAction.ticketUpdated,
+          archiveThread: postWizardAction.archiveThread,
+        };
+      }
+    }
 
     // Ticket lookup (existing tickets) before create wizard — avoids "HMI frozen" starting a new ticket.
     const earlyInquiry = await this.maybeHandleTicketInquiry({
@@ -290,6 +403,11 @@ export class ChatController {
       linkedTicket: null,
       history: mergedHistory,
       threadId,
+      turnRoute,
+      forceProcess:
+        routeImpliesTicketLookup(turnRoute) &&
+        !wizardInProgress &&
+        !routeImpliesWizardContinue(turnRoute),
     });
     if (earlyInquiry) {
       this.ticketWizardByKey.delete(ticketWizardKey);
@@ -310,7 +428,13 @@ export class ChatController {
     // Ticket wizard before order mode so "yes create it" is not swallowed by order heuristics.
     if (
       allowTicketCreation &&
-      this.shouldEnterTicketCreationFlow(message.trim(), mergedHistory, ticketWizardKey, hasCachedInquiry)
+      this.shouldEnterTicketCreationFlow(
+        message.trim(),
+        mergedHistory,
+        ticketWizardKey,
+        hasCachedInquiry,
+        turnRoute,
+      )
     ) {
       // Context-aware: explicit ticket request, problem report, or wizard already in progress.
       const ticketCreation = await this.maybeHandleTicketCreationFlow({
@@ -318,6 +442,7 @@ export class ChatController {
         message: message.trim(),
         history: mergedHistory,
         threadId,
+        turnRoute,
       });
       if (ticketCreation) {
         await this.persistConversation(
@@ -661,6 +786,83 @@ export class ChatController {
     return { threadId, turns };
   }
 
+  @Get('threads')
+  @ApiOperation({ summary: 'List Techo conversation threads for the current user' })
+  async listThreads(@Request() req) {
+    const userId = req.user.id;
+
+    const rows = await this.conversationRepository
+      .createQueryBuilder('c')
+      .select('c.threadId', 'threadId')
+      .addSelect('MIN(c.timestamp)', 'startedAt')
+      .addSelect('MAX(c.timestamp)', 'lastMessageAt')
+      .addSelect('COUNT(*)', 'messageCount')
+      .where('c.senderId = :userId', { userId })
+      .andWhere('c.threadId IS NOT NULL')
+      .andWhere("c.threadId <> ''")
+      .groupBy('c.threadId')
+      .orderBy('MAX(c.timestamp)', 'DESC')
+      .limit(100)
+      .getRawMany<{
+        threadId: string;
+        startedAt: Date;
+        lastMessageAt: Date;
+        messageCount: string;
+      }>();
+
+    const threadIds = rows.map((r) => r.threadId).filter(Boolean);
+    const titleByThread = new Map<string, string>();
+
+    if (threadIds.length > 0) {
+      const msgRows = await this.conversationRepository.find({
+        where: { threadId: In(threadIds) },
+        order: { timestamp: 'ASC' },
+        take: 500,
+      });
+
+      const turnsByThread = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
+      for (const row of msgRows) {
+        const tid = row.threadId?.trim();
+        if (!tid) continue;
+        const list = turnsByThread.get(tid) ?? [];
+        if (list.length >= 14) continue;
+        list.push({
+          role: row.senderType === SenderType.AI ? 'assistant' : 'user',
+          content: String(row.message ?? ''),
+        });
+        turnsByThread.set(tid, list);
+      }
+
+      for (const tid of threadIds) {
+        const turns = turnsByThread.get(tid) ?? [];
+        const derived = deriveThreadTitleHeuristic(turns);
+        if (derived && !isGenericThreadTitle(derived)) {
+          titleByThread.set(tid, derived);
+        }
+      }
+    }
+
+    const threads = rows.map((r) => ({
+      threadId: r.threadId,
+      title: titleByThread.get(r.threadId) || 'New chat',
+      lastMessageAt: new Date(r.lastMessageAt).toISOString(),
+      messageCount: Number(r.messageCount) || 0,
+    }));
+
+    return { threads };
+  }
+
+  @Post('thread/:threadId/suggest-title')
+  @ApiOperation({ summary: 'Suggest a short title for a Techo conversation thread' })
+  async suggestThreadTitle(@Param('threadId') threadId: string, @Request() req) {
+    const turns = await this.loadThreadHistory(req.user.id, threadId, 20);
+    const title = await suggestThreadTitle(
+      (messages) => this.aiService.chat(messages),
+      turns,
+    );
+    return { threadId, title: title ? sanitizeThreadTitle(title) : null };
+  }
+
   private extractTicketIdFromMessage(message: string): string | undefined {
     const m = message.match(
       /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
@@ -738,7 +940,11 @@ export class ChatController {
     history?: ChatHistoryItemDto[],
     wizardKey?: string,
     hasCachedInquiry?: boolean,
+    turnRoute?: TechoTurnRoute | null,
   ): boolean {
+    if (routeImpliesWizardContinue(turnRoute ?? null)) return true;
+    if (routeImpliesTicketCreate(turnRoute ?? null)) return true;
+    if (isTicketWizardActiveInHistory(history) || isAwaitingWizardUserInput(history)) return true;
     if (shouldProcessTicketInquiry(message, history, hasCachedInquiry)) return false;
     if (isAwaitingMissionDoneConfirm(history)) return false;
     if (isAwaitingTicketLookupQuery(history)) return false;
@@ -800,9 +1006,23 @@ export class ChatController {
   private async resolveTicketCreationIntent(
     message: string,
     history?: ChatHistoryItemDto[],
+    turnRoute?: TechoTurnRoute | null,
   ): Promise<TicketIntentResult> {
+    if (routeImpliesTicketCreate(turnRoute ?? null)) {
+      const problemLike =
+        message.trim().length >= 20 &&
+        /\b(problem|issue|broken|down|stopped|panne|arrêt|fault|alarm|hmi|machine|not work)/i.test(
+          message,
+        );
+      return {
+        kind: problemLike ? 'problem_report' : 'explicit_ticket',
+        suggestedTitle: extractTitleFromProblemReport(message),
+        confidence: 'medium',
+      };
+    }
+
     let intent = analyzeTicketCreationIntent(message, history);
-    if (intent.kind === 'none' && this.shouldUseLlmTicketIntent(message)) {
+    if (intent.kind === 'none' && this.shouldUseLlmTicketIntent(message) && !turnRoute) {
       const llm = await this.detectTicketIntentWithLlm(message, history);
       if (llm) intent = llm;
     }
@@ -1038,6 +1258,8 @@ export class ChatController {
     message: string,
     lang: 'en' | 'fr',
   ): TicketWizardSession | null {
+    if (isWizardSupersededByCreatedTicket(history)) return null;
+    if (isTicketActionIntent(message)) return null;
     const assistantText = (history ?? [])
       .filter((h) => h.role === 'assistant')
       .map((h) => h.content ?? '')
@@ -1064,8 +1286,11 @@ export class ChatController {
         lang,
       };
     }
-    if (/tell me more|donnez plus de détails/i.test(assistantText)) {
+    if (/tell me more|donnez plus de détails|what else should maintenance know/i.test(assistantText)) {
       return { step: 'await_description', draft: { title: title ? sanitizeTicketTitle(title) : undefined }, lang };
+    }
+    if (/in a few words, what(?:'|')?s going on|en quelques mots/i.test(assistantText)) {
+      return { step: 'await_title', draft: {}, lang };
     }
     if (/which machine|quelle machine/i.test(assistantText)) {
       return {
@@ -1081,6 +1306,7 @@ export class ChatController {
     user: { id: string; email?: string; role?: string },
     session: TicketWizardSession,
     wizardKey: string,
+    threadId?: string,
   ): Promise<{ reply: string; ticketId?: string; persistReply?: string }> {
     const name = this.getFriendlyUserName(user.email);
     this.enrichWizardDraft(session.draft);
@@ -1092,6 +1318,12 @@ export class ChatController {
         user.id,
         user.role as UserRole,
       );
+      const inquiryKey = this.ticketInquiryKey(user.id, threadId);
+      this.ticketInquiryContextByKey.set(inquiryKey, {
+        ticketId: ticket.id,
+        title: ticket.title,
+        updatedAt: Date.now(),
+      });
       return {
         ticketId: created.ticketId,
         ...this.attachMissionDoneIfTaskComplete(
@@ -1125,15 +1357,28 @@ export class ChatController {
     message: string;
     history?: ChatHistoryItemDto[];
     threadId?: string;
+    turnRoute?: TechoTurnRoute | null;
   }): Promise<{
     reply: string;
     ticketId?: string;
     persistReply?: string;
     wizardStep?: TicketWizardStep;
   } | null> {
-    const { user, message, history, threadId } = params;
+    const { user, message, history, threadId, turnRoute } = params;
     const wizardKey = this.ticketDraftKey(user.id, threadId);
-    if (!this.shouldEnterTicketCreationFlow(message, history, wizardKey)) return null;
+    const ticketInquiryKey = this.ticketInquiryKey(user.id, threadId);
+    const hasCachedInquiry = this.ticketInquiryContextByKey.has(ticketInquiryKey);
+    if (
+      !this.shouldEnterTicketCreationFlow(
+        message,
+        history,
+        wizardKey,
+        hasCachedInquiry,
+        turnRoute,
+      )
+    ) {
+      return null;
+    }
 
     const userHistoryText = (history ?? [])
       .filter((h) => h.role === 'user')
@@ -1158,7 +1403,7 @@ export class ChatController {
       this.ticketWizardByKey.set(wizardKey, entry);
     }
 
-    const intent = await this.resolveTicketCreationIntent(msg, history);
+    const intent = await this.resolveTicketCreationIntent(msg, history, turnRoute);
     if (!entry && intent.kind !== 'none' && intent.kind !== 'wizard_continue') {
       const started = this.beginWizardFromIntent(intent, msg, name, detectedLang);
       if (started) {
@@ -1187,6 +1432,11 @@ export class ChatController {
       return { reply: wizardCancelled(session.lang), wizardStep: undefined };
     }
 
+    if (isTicketActionIntent(msg)) {
+      this.ticketWizardByKey.delete(wizardKey);
+      return null;
+    }
+
     const structured = parseStructuredTicketInput(msg);
     const touch = () => this.ticketWizardByKey.set(wizardKey, { session, updatedAt: Date.now() });
 
@@ -1195,6 +1445,13 @@ export class ChatController {
         if (isTriggerOnlyPhrase(msg)) {
           touch();
           return this.wizardReply('await_title', wizardAskTitle(name, session.lang));
+        }
+        if (isTestTicketRequest(msg)) {
+          Object.assign(session.draft, buildTestTicketDraft());
+          session.step = 'await_confirm';
+          this.enrichWizardDraft(session.draft);
+          touch();
+          return this.wizardReply('await_confirm', buildTicketSummary(session.draft, session.lang));
         }
         if (structured.title) {
           session.draft.title = structured.title;
@@ -1257,6 +1514,10 @@ export class ChatController {
       }
 
       case 'await_location': {
+        if (isTicketActionIntent(msg)) {
+          this.ticketWizardByKey.delete(wizardKey);
+          return null;
+        }
         const loc = parseMachineAndArea(msg);
         if (!loc.machine && !loc.area) {
           touch();
@@ -1271,8 +1532,12 @@ export class ChatController {
       }
 
       case 'await_confirm': {
+        if (isTicketActionIntent(msg)) {
+          this.ticketWizardByKey.delete(wizardKey);
+          return null;
+        }
         if (isConfirmCreate(msg)) {
-          return this.finalizeWizardTicket(user, session, wizardKey);
+          return this.finalizeWizardTicket(user, session, wizardKey, threadId);
         }
         if (wantsTicketImprovement(msg)) {
           const suggestion = await this.suggestTicketEnhancement(session);
@@ -1283,7 +1548,7 @@ export class ChatController {
             wizardEnhancementIntro(session.lang) + suggestion + wizardAskAcceptEnhancement(session.lang);
           return this.wizardReply('await_suggestion_accept', enhanceText);
         }
-        if (msg.length > 12 && !isTicketWizardTrigger(msg)) {
+        if (msg.length > 12 && !isTicketWizardTrigger(msg) && !isTicketActionIntent(msg)) {
           session.draft.description = `${session.draft.description}\n${msg}`.trim();
           touch();
           return this.wizardReply('await_confirm', buildTicketSummary(session.draft, session.lang));
@@ -1304,7 +1569,7 @@ export class ChatController {
           return this.wizardReply('await_confirm', buildTicketSummary(session.draft, session.lang));
         }
         if (isConfirmCreate(msg)) {
-          return this.finalizeWizardTicket(user, session, wizardKey);
+          return this.finalizeWizardTicket(user, session, wizardKey, threadId);
         }
         if (msg.length > 10) {
           session.draft.description = `${session.draft.description}\n${msg}`.trim();
@@ -1393,6 +1658,18 @@ export class ChatController {
         this.ticketInquiryContextByKey.delete(ctxKey);
       }
     }
+    const created = findCreatedTicketInHistory(history);
+    if (created?.id) {
+      try {
+        return await this.ticketsService.findOne(
+          created.id,
+          user.id,
+          user.role as UserRole,
+        );
+      } catch {
+        /* fall through */
+      }
+    }
     const searchQ =
       extractTicketSearchQuery(message, history) ||
       findRecentTicketSearchTermFromHistory(history);
@@ -1412,6 +1689,8 @@ export class ChatController {
     message: string;
     history?: ChatHistoryItemDto[];
     threadId?: string;
+    turnRoute?: TechoTurnRoute | null;
+    forceProcess?: boolean;
   }): Promise<{
     reply: string;
     ticketId?: string;
@@ -1419,19 +1698,19 @@ export class ChatController {
     ticketUpdated?: boolean;
     archiveThread?: boolean;
   } | null> {
-    const { user, message, history, threadId } = params;
+    const { user, message, history, threadId, turnRoute, forceProcess } = params;
     const ctxKey = this.ticketInquiryKey(user.id, threadId);
     const hasTicketContext = this.ticketInquiryContextByKey.has(ctxKey);
     const pending = this.ticketActionByKey.get(ctxKey);
 
-    if (
-      !shouldProcessTicketAction(
-        message,
-        history,
-        Boolean(pending),
-        hasTicketContext,
-      )
-    ) {
+    const shouldRun =
+      shouldProcessTicketAction(message, history, Boolean(pending), hasTicketContext) ||
+      Boolean(
+        forceProcess &&
+          (hasTicketContext || findCreatedTicketInHistory(history)),
+      );
+
+    if (!shouldRun) {
       return null;
     }
     if (isAwaitingMissionDoneConfirm(history) && isMissionCompleteConfirmation(message)) {
@@ -1518,8 +1797,23 @@ export class ChatController {
       }
     }
 
-    const parsed = parseTicketActionIntent(message);
+    let parsed = parseTicketActionIntent(message);
+    if (!parsed.kind && turnRoute?.action) {
+      parsed = parseTicketActionIntent(`${turnRoute.action} the ticket`);
+    }
     if (!parsed.kind) {
+      if (hasTicketContext && /\b(delete|remove|close|update|change|open|supprimer|fermer)\b/i.test(message)) {
+        const ticket = await this.resolveTicketForAction(user, ctxKey, message, history);
+        if (ticket) {
+          return {
+            reply:
+              lang === 'fr'
+                ? `Je ne suis pas sûr de ce que vous voulez faire sur « ${ticket.title} ». Dites par exemple « supprime le ticket » ou « ferme le ticket » et je vous demanderai de confirmer.`
+                : `I'm not sure what you want to do with "${ticket.title}". Try "delete the ticket" or "close the ticket" and I'll ask you to confirm.`,
+            ticketId: ticket.id,
+          };
+        }
+      }
       if (/\b(can't you|cant you|why can't|pourquoi.*pas)\b.*\b(close|fermer|delete|update)\b/i.test(message)) {
         const ticket = await this.resolveTicketForAction(user, ctxKey, message, history);
         if (ticket) {
@@ -1564,12 +1858,22 @@ export class ChatController {
     linkedTicket: Ticket | null;
     history?: ChatHistoryItemDto[];
     threadId?: string;
+    turnRoute?: TechoTurnRoute | null;
+    forceProcess?: boolean;
   }): Promise<{ reply: string; ticketId?: string; persistReply?: string } | null> {
-    const { user, message, linkedTicket, history, threadId } = params;
+    const { user, message, linkedTicket, history, threadId, turnRoute, forceProcess } = params;
+    if (isTicketWizardActiveInHistory(history) || isAwaitingWizardUserInput(history)) return null;
     const ctxKey = this.ticketInquiryKey(user.id, threadId);
     const hasCached = this.ticketInquiryContextByKey.has(ctxKey);
 
-    if (!shouldProcessTicketInquiry(message, history, hasCached)) return null;
+    if (!shouldProcessTicketInquiry(message, history, hasCached) && !forceProcess) return null;
+
+    if (
+      hasCached &&
+      (isTicketActionIntent(message) || isAwaitingTicketActionConfirm(history))
+    ) {
+      return null;
+    }
 
     const userHistoryText = (history ?? [])
       .filter((h) => h.role === 'user')
@@ -1582,7 +1886,9 @@ export class ChatController {
 
     if (!ticket) {
       const cached = this.ticketInquiryContextByKey.get(ctxKey);
-      const searchQ = extractTicketSearchQuery(message, history);
+      const searchQ =
+        turnRoute?.searchQuery ||
+        extractTicketSearchQuery(message, history);
       const followUpOnly =
         !searchQ &&
         isTicketInquiryFollowUp(message) &&

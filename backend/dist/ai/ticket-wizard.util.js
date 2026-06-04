@@ -12,7 +12,12 @@ exports.isBareTicketTrigger = isBareTicketTrigger;
 exports.isTriggerOnlyPhrase = isTriggerOnlyPhrase;
 exports.tagWizardReply = tagWizardReply;
 exports.stripWizardMarker = stripWizardMarker;
+exports.inferWizardStepFromAssistantText = inferWizardStepFromAssistantText;
+exports.isWizardPromptMessage = isWizardPromptMessage;
+exports.isAwaitingWizardUserInput = isAwaitingWizardUserInput;
 exports.getWizardStepFromHistory = getWizardStepFromHistory;
+exports.isTestTicketRequest = isTestTicketRequest;
+exports.buildTestTicketDraft = buildTestTicketDraft;
 exports.parseDraftFromSummaryHistory = parseDraftFromSummaryHistory;
 exports.detectWizardLang = detectWizardLang;
 exports.isWizardCancel = isWizardCancel;
@@ -24,7 +29,6 @@ exports.sanitizeTicketTitle = sanitizeTicketTitle;
 exports.parseMachineAndArea = parseMachineAndArea;
 exports.inferCategoryFromText = inferCategoryFromText;
 exports.inferPriorityFromText = inferPriorityFromText;
-exports.isTicketWizardActiveInHistory = isTicketWizardActiveInHistory;
 exports.wizardAskTitle = wizardAskTitle;
 exports.wizardStartFromProblemReport = wizardStartFromProblemReport;
 exports.wizardAckTitleAskDescription = wizardAckTitleAskDescription;
@@ -34,6 +38,9 @@ exports.wizardInvalidTitle = wizardInvalidTitle;
 exports.wizardInvalidDescription = wizardInvalidDescription;
 exports.wizardInvalidLocation = wizardInvalidLocation;
 exports.wizardCancelled = wizardCancelled;
+exports.findCreatedTicketInHistory = findCreatedTicketInHistory;
+exports.isWizardSupersededByCreatedTicket = isWizardSupersededByCreatedTicket;
+exports.isTicketWizardActiveInHistory = isTicketWizardActiveInHistory;
 exports.wizardCreatedReply = wizardCreatedReply;
 exports.wizardRemindConfirm = wizardRemindConfirm;
 exports.wizardEnhancementIntro = wizardEnhancementIntro;
@@ -209,18 +216,83 @@ function tagWizardReply(step, text) {
 function stripWizardMarker(text) {
     return text.replace(/^\[TICKET_WIZARD:[^\]]+\]\n?/, '').trim();
 }
+function inferWizardStepFromAssistantText(content) {
+    const c = stripWizardMarker(content);
+    if (/in a few words, what(?:'|')?s going on|en quelques mots|c(?:'|')est quoi le problème|what should we call it|comment voulez-vous intituler/i.test(c)) {
+        return 'await_title';
+    }
+    if (/what else should maintenance know|qu(?:'|')est-ce que vous pouvez ajouter|tell me more about what happened|donnez plus de détails/i.test(c)) {
+        return 'await_description';
+    }
+    if (/which machine or area|quelle machine ou quelle zone|machine or area is this/i.test(c)) {
+        return 'await_location';
+    }
+    if (/ticket summary|récapitulatif du ticket|here(?:'|')?s the ticket i(?:'|')?m going to create|voici le ticket que je vais créer|before i create|avant de créer/i.test(c) ||
+        /━━/.test(c)) {
+        return 'await_confirm';
+    }
+    return null;
+}
+function isWizardPromptMessage(content) {
+    return inferWizardStepFromAssistantText(content) !== null;
+}
+function isAwaitingWizardUserInput(history) {
+    if (!history?.length)
+        return false;
+    if (isWizardSupersededByCreatedTicket(history))
+        return false;
+    let lastWizardIdx = -1;
+    for (let i = 0; i < history.length; i++) {
+        const h = history[i];
+        if (h.role === 'assistant') {
+            const raw = h.content ?? '';
+            if (exports.TICKET_WIZARD_MARKER_RE.test(raw) || isWizardPromptMessage(raw)) {
+                lastWizardIdx = i;
+            }
+        }
+    }
+    if (lastWizardIdx < 0)
+        return false;
+    for (let i = lastWizardIdx + 1; i < history.length; i++) {
+        if (history[i].role === 'user')
+            return false;
+    }
+    return true;
+}
 function getWizardStepFromHistory(history) {
     if (!history?.length)
+        return null;
+    if (isWizardSupersededByCreatedTicket(history))
         return null;
     for (let i = history.length - 1; i >= 0; i--) {
         const h = history[i];
         if (h.role !== 'assistant')
             continue;
-        const m = String(h.content ?? '').match(exports.TICKET_WIZARD_MARKER_RE);
+        const raw = String(h.content ?? '');
+        const m = raw.match(exports.TICKET_WIZARD_MARKER_RE);
         if (m)
             return m[1];
+        const inferred = inferWizardStepFromAssistantText(raw);
+        if (inferred)
+            return inferred;
     }
     return null;
+}
+function isTestTicketRequest(message) {
+    const m = message.trim().toLowerCase();
+    return (/\b(for test|test ticket|just a test|just for test|testing only|ticket for test|only for test)\b/.test(m) ||
+        /\bcreate.*test\b.*\bticket\b/.test(m) ||
+        /\bticket\b.*\bfor test\b/.test(m));
+}
+function buildTestTicketDraft() {
+    return {
+        title: 'Test maintenance ticket',
+        description: 'Automated test ticket created via Techo. No actual production issue — safe to close or delete after verification.',
+        machine: 'Test machine',
+        area: 'Test area',
+        category: ticket_entity_1.TicketCategory.OTHER,
+        priority: ticket_entity_1.TicketPriority.LOW,
+    };
 }
 function parseDraftFromSummaryHistory(history) {
     const assistantText = (history ?? [])
@@ -371,14 +443,6 @@ function inferPriorityFromText(title, description) {
     }
     return ticket_entity_1.TicketPriority.MEDIUM;
 }
-function isTicketWizardActiveInHistory(history) {
-    if (!history?.length)
-        return false;
-    if (getWizardStepFromHistory(history))
-        return true;
-    const text = history.map((h) => h.content ?? '').join('\n');
-    return (/what problem are you reporting|quel problème|tell me more about what happened|décrivez ce qui s'est passé|which machine or area|quelle machine|ticket summary|récapitulatif du ticket|before i create this ticket|avant de créer ce ticket|would you like me to add this/i.test(text) || history.some((h) => h.role === 'assistant' && /━━|ticket summary|récapitulatif/i.test(h.content ?? '')));
-}
 function friendlyName(name) {
     return name?.trim() ? `${name.trim()}, ` : '';
 }
@@ -460,6 +524,62 @@ function wizardCancelled(lang) {
     return lang === 'fr'
         ? "Pas de souci — j’ai annulé le brouillon. Dites-moi quand vous voulez recommencer."
         : "No problem — I cancelled the draft. Just say when you'd like to start again.";
+}
+const CREATED_TICKET_RE = /(?:All set|C['']est fait|I created ticket|ticket.*(?:is created|créé))/i;
+const CREATED_TICKET_ID_RE = /(?:Reference|Référence|Ticket ID)\s*:\s*([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/i;
+const CREATED_TICKET_TITLE_RE = /ticket\s+[«""]([^»""\n]+)[»""]\s+(?:is created|créé)|I created ticket\s+[«""]([^»""\n]+)[»""]/i;
+function findCreatedTicketInHistory(history) {
+    if (!history?.length)
+        return null;
+    for (let i = history.length - 1; i >= 0; i--) {
+        const h = history[i];
+        if (h.role !== 'assistant')
+            continue;
+        const c = stripWizardMarker(h.content ?? '');
+        if (!CREATED_TICKET_RE.test(c))
+            continue;
+        const id = c.match(CREATED_TICKET_ID_RE)?.[1];
+        const title = c.match(CREATED_TICKET_TITLE_RE)?.[1]?.trim() ||
+            c.match(CREATED_TICKET_TITLE_RE)?.[2]?.trim() ||
+            c.match(/ticket\s+"([^"\n]+)"\s+is created/i)?.[1]?.trim();
+        if (id) {
+            return { id, title: title || 'Ticket' };
+        }
+    }
+    return null;
+}
+function isWizardSupersededByCreatedTicket(history) {
+    if (!history?.length)
+        return false;
+    let lastWizardIdx = -1;
+    let lastCreatedIdx = -1;
+    for (let i = 0; i < history.length; i++) {
+        const h = history[i];
+        if (h.role !== 'assistant')
+            continue;
+        const raw = h.content ?? '';
+        const c = stripWizardMarker(raw);
+        if (exports.TICKET_WIZARD_MARKER_RE.test(raw) ||
+            isWizardPromptMessage(c) ||
+            /Here(?:'|')?s the ticket I(?:'|')?ll create|Voici le ticket que je vais créer|ticket summary|récapitulatif du ticket/i.test(c)) {
+            lastWizardIdx = i;
+        }
+        if (CREATED_TICKET_RE.test(c) && CREATED_TICKET_ID_RE.test(c)) {
+            lastCreatedIdx = i;
+        }
+    }
+    return lastCreatedIdx >= 0 && lastCreatedIdx > lastWizardIdx;
+}
+function isTicketWizardActiveInHistory(history) {
+    if (!history?.length)
+        return false;
+    if (isWizardSupersededByCreatedTicket(history))
+        return false;
+    if (getWizardStepFromHistory(history))
+        return true;
+    if (isAwaitingWizardUserInput(history))
+        return true;
+    return history.some((h) => h.role === 'assistant' && isWizardPromptMessage(h.content ?? ''));
 }
 function wizardCreatedReply(name, created, lang) {
     if (lang === 'fr') {

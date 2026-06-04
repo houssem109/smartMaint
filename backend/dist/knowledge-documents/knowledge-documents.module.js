@@ -15,7 +15,6 @@ const knowledge_extraction_candidate_entity_1 = require("./entities/knowledge-ex
 const machine_name_suggestion_entity_1 = require("./entities/machine-name-suggestion.entity");
 const knowledge_document_page_analysis_entity_1 = require("./entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("./entities/knowledge-document-job.entity");
-const admin_page_fix_queue_entity_1 = require("./entities/admin-page-fix-queue.entity");
 const extraction_feedback_event_entity_1 = require("./entities/extraction-feedback-event.entity");
 const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const pipeline_preferences_entity_1 = require("./entities/pipeline-preferences.entity");
@@ -43,7 +42,6 @@ exports.KnowledgeDocumentsModule = KnowledgeDocumentsModule = __decorate([
                 machine_name_suggestion_entity_1.MachineNameSuggestion,
                 knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis,
                 knowledge_document_job_entity_1.KnowledgeDocumentJob,
-                admin_page_fix_queue_entity_1.AdminPageFixQueueItem,
                 extraction_feedback_event_entity_1.ExtractionFeedbackEvent,
                 audit_log_entity_1.AuditLog,
                 knowledge_entry_entity_1.KnowledgeEntry,

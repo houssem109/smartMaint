@@ -89,14 +89,6 @@ const sections: {
     cta: 'Knowledge + use Techo chat',
   },
   {
-    id: 'fix',
-    title: 'Admin page fix queue',
-    description: 'Unreadable pages needing typed replacement text.',
-    href: '/dashboard/admin/page-fix-queue',
-    icon: ListChecks,
-    cta: 'Page fix queue',
-  },
-  {
     id: '16',
     title: 'Pipeline environment',
     description:
@@ -146,7 +138,7 @@ const sections: {
     id: '19',
     title: 'Database tables',
     description:
-      'PostgreSQL tables for PDF ingestion, page analysis, jobs, vectors, machine names, page-fix queue, and chat-related FKs. Admin table + API inventory.',
+      'PostgreSQL tables for PDF ingestion, page analysis, jobs, vectors, machine names, and chat-related FKs. Admin table + API inventory.',
     href: '/dashboard/admin/database-inventory',
     icon: Database,
     cta: 'DB inventory',

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "SmartMaint PostgreSQL",
+      "Group": "SmartMaint",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "smartmaint_db",
+      "Username": "smartmaint",
+      "SSLMode": "prefer"
+    }
+  }
+}

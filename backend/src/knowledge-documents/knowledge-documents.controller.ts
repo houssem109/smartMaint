@@ -30,7 +30,7 @@ import { diskStorage } from 'multer';
 import { extname, join } from 'path';
 import { existsSync, mkdirSync, unlinkSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { getKnowledgePdfMaxBytes, getKnowledgePdfUploadDir, getPageFixImageMaxBytes, getPageFixImageUploadDir, ensurePageFixImageUploadDir } from './pdf-ingestion.config';
+import { getKnowledgePdfMaxBytes, getKnowledgePdfUploadDir } from './pdf-ingestion.config';
 import type { Express } from 'express';
 import { IsOptional, IsString } from 'class-validator';
 import {
@@ -69,11 +69,6 @@ class GateDecisionDto {
   @IsOptional()
   @IsString()
   reason?: string;
-}
-
-class AdminFixTextDto {
-  @IsString()
-  text: string;
 }
 
 @ApiTags('Knowledge Documents')
@@ -380,25 +375,10 @@ export class KnowledgeDocumentsController {
     return this.knowledgeDocumentsService.getDocumentStatus(id);
   }
 
-  @Get('page-fix-queue')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'List unreadable pages waiting for admin fix' })
-  async pageFixQueue() {
-    return this.knowledgeDocumentsService.listPageFixQueue();
-  }
-
-  @Get('page-fix-queue/:itemId/replacement-image')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'Serve replacement page image for admin preview (JPEG/PNG/WebP)' })
-  async pageFixReplacementImage(@Param('itemId') itemId: string) {
-    const { data, contentType } = await this.knowledgeDocumentsService.getPageFixReplacementImage(itemId);
-    return new StreamableFile(data, { type: contentType });
-  }
-
   @Get('admin-pipeline-counts')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({
-    summary: 'Counts for admin nav: open page-fix items + pending extraction candidates',
+    summary: 'Counts for admin nav: pending PDF extraction candidates',
   })
   adminPipelineCounts() {
     return this.knowledgeDocumentsService.getAdminPipelineSummary();
@@ -484,67 +464,6 @@ export class KnowledgeDocumentsController {
     const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 200;
     const limit = Number.isFinite(parsed) ? parsed : 200;
     return this.knowledgeDocumentsService.listRecentExtractionFeedback(limit);
-  }
-
-  @Post('page-fix-queue/:itemId/fix-text')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'Admin manually fixes unreadable page by typing text' })
-  async fixUnreadableText(@Param('itemId') itemId: string, @Body() body: AdminFixTextDto, @Request() req) {
-    return this.knowledgeDocumentsService.fixPageWithText(itemId, body.text, req.user.id);
-  }
-
-  @Post('page-fix-queue/:itemId/fix-image')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Upload a replacement page image; runs PDF vision on it (requires ENABLE_PDF_VISION)',
-  })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: getPageFixImageMaxBytes() },
-      fileFilter: (_req, file, cb) => {
-        const ok = /^image\/(jpeg|png|webp)$/i.test(file.mimetype);
-        cb(ok ? null : new BadRequestException('Only JPEG, PNG, or WebP images are allowed'), ok);
-      },
-      storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          cb(null, ensurePageFixImageUploadDir());
-        },
-        filename: (_req, file, cb) => {
-          cb(null, `${uuidv4()}${extname(file.originalname).toLowerCase() || '.jpg'}`);
-        },
-      }),
-    }),
-  )
-  async fixUnreadableImage(
-    @Param('itemId') itemId: string,
-    @UploadedFile() file: Express.Multer.File | undefined,
-    @Request() req,
-  ) {
-    if (!file?.path) throw new BadRequestException('file is required');
-    const rel = join(getPageFixImageUploadDir(), file.filename).replace(/\\/g, '/');
-    try {
-      return await this.knowledgeDocumentsService.fixPageWithReplacementImage(
-        itemId,
-        file.path,
-        rel,
-        req.user.id,
-      );
-    } catch (err) {
-      try {
-        if (file.path && existsSync(file.path)) unlinkSync(file.path);
-      } catch {
-        // ignore
-      }
-      throw err;
-    }
-  }
-
-  @Post('page-fix-queue/:itemId/dismiss')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'Dismiss unreadable page (not useful)' })
-  async dismissFixQueueItem(@Param('itemId') itemId: string, @Request() req) {
-    return this.knowledgeDocumentsService.dismissFixQueueItem(itemId, req.user.id);
   }
 
   @Post(':id/run-ocr')

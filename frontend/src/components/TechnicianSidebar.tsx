@@ -13,6 +13,7 @@ import {
   Bell,
   BookOpenText,
   FileText,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -27,6 +28,7 @@ const navItems = [
   { href: '/dashboard/technician/ticket-requests', label: 'Request Tickets', icon: ClipboardPlus },
   { href: '/dashboard/technician/knowledge', label: 'Knowledge base', icon: BookOpenText },
   { href: '/dashboard/technician/knowledge-pdfs', label: 'PDF manuals', icon: FileText },
+  { href: '/dashboard/techo', label: 'Techo chat', icon: MessageCircle },
   { href: '/dashboard/technician/notifications', label: 'Notifications', icon: Bell },
 ];
 

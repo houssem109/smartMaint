@@ -2,20 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { MessageCircle, X, Send, Plus, XCircle, Edit2, ImagePlus } from 'lucide-react';
+import { MessageCircle, X, Send, Plus, Edit2, ImagePlus, Maximize2 } from 'lucide-react';
 import { useChatStore, type ChatSource } from '@/store/chat-store';
-
-/** Hide internal wizard markers from stored/server messages shown in the UI. */
-function displayChatContent(content: string): string {
-  return content
-    .replace(/^\[TICKET_WIZARD:[^\]]+\]\n?/, '')
-    .replace(/^\[TICKET_INQUIRY:[^\]]+\]\n?/, '')
-    .replace(/^\[TICKET_ACTION:[^\]]+\]\n?/, '')
-    .replace(/^\[CONV_WRAP:[^\]]+\]\n?/, '')
-    .trim();
-}
+import { displayChatContent } from '@/lib/techo-chat-display';
+import {
+  deriveThreadTitleFromMessages,
+  getThreadDisplayTitle,
+  pickWidgetRecentThreads,
+} from '@/lib/techo-thread-title';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -35,12 +32,12 @@ export default function TechoChatWidget() {
     isSending,
     setSending,
     resetThread,
-    deleteThread,
     updateMessage,
     updateNextAssistantMessage,
     setThreadArchived,
     setThreadMessages,
     ensureUserScope,
+    autoTitleThread,
   } = useChatStore();
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -56,7 +53,10 @@ export default function TechoChatWidget() {
 
   // Only show for authenticated users inside dashboard
   const shouldShow =
-    !!user && pathname?.startsWith('/dashboard') && !pathname.startsWith('/dashboard/admin/history');
+    !!user &&
+    pathname?.startsWith('/dashboard') &&
+    !pathname.startsWith('/dashboard/admin/history') &&
+    !pathname.startsWith('/dashboard/techo');
 
   // Each user gets their own chat threads (same browser, different login).
   useEffect(() => {
@@ -84,6 +84,29 @@ export default function TechoChatWidget() {
   const activeMessages = activeThreadId ? messagesByThread[activeThreadId] || [] : [];
   const activeThread = threads.find((t) => t.id === activeThreadId) || null;
   const isArchived = !!activeThread?.archived;
+  const activeDisplayTitle = activeThread
+    ? getThreadDisplayTitle(activeThread, activeMessages)
+    : 'New chat';
+  const recentTabs = pickWidgetRecentThreads(threads, messagesByThread, activeThreadId);
+  const hiddenTabCount = Math.max(0, threads.length - recentTabs.length);
+
+  const refreshThreadTitle = async (threadId: string) => {
+    const msgs = useChatStore.getState().messagesByThread[threadId] ?? [];
+    const local = deriveThreadTitleFromMessages(msgs);
+    if (local) autoTitleThread(threadId, local);
+    const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
+    if (thread && !/^(conversation\s*\d+|saved conversation|new chat|techo chat|chat|untitled)$/i.test(thread.title.trim())) {
+      return;
+    }
+    try {
+      const res = await api.post<{ title: string | null }>(
+        `/chat/thread/${encodeURIComponent(threadId)}/suggest-title`,
+      );
+      if (res.data?.title) autoTitleThread(threadId, res.data.title);
+    } catch {
+      /* optional */
+    }
+  };
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -112,6 +135,8 @@ export default function TechoChatWidget() {
           createdAt: Date.now() - (res.data.turns.length - i) * 1000,
         }));
         setThreadMessages(activeThreadId, hydrated);
+        const derived = deriveThreadTitleFromMessages(hydrated);
+        if (derived) autoTitleThread(activeThreadId, derived);
       } catch {
         // Server history optional until migration is applied
       }
@@ -223,6 +248,7 @@ export default function TechoChatWidget() {
       } else {
         addMessage(activeThreadId, { role: 'assistant', content: replyText, sources });
       }
+      void refreshThreadTitle(activeThreadId);
     } catch (err: any) {
       console.error('Techo chat error', err);
       if (activeThreadId) {
@@ -276,10 +302,6 @@ export default function TechoChatWidget() {
     });
   };
 
-  const handleDeleteThread = (id: string) => {
-    deleteThread(id);
-  };
-
   const handleEditFromMessage = (id: string, content: string) => {
     setEditingMessageId(id);
     setInput(content);
@@ -311,43 +333,39 @@ export default function TechoChatWidget() {
                 <div className="h-7 w-7 rounded-full bg-primary/90 flex items-center justify-center text-primary-foreground text-xs font-bold">
                   T
                 </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold leading-none">Techo</span>
-                  <span className="text-[11px] text-muted-foreground">SmartMaint assistant</span>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-sm font-semibold leading-none truncate max-w-[11rem]">
+                    {activeDisplayTitle}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">Techo · SmartMaint</span>
                 </div>
               </div>
-              {/* Tabs */}
-              <div className="mt-1 flex items-center gap-1">
-                {/* Tabs in 2-column grid with vertical scroll when there are many */}
-                <div className="flex-1 max-h-20 overflow-y-auto pr-1">
-                  <div className="grid grid-cols-2 gap-1">
-                    {threads.map((t, index) => (
-                      <div
-                        key={t.id}
-                        className={`group inline-flex items-center rounded-full border text-[11px] whitespace-nowrap overflow-hidden ${
-                          t.id === activeThreadId
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-transparent text-muted-foreground border-border hover:bg-muted'
-                        } ${t.archived ? 'opacity-60 line-through' : ''}`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setActiveThread(t.id)}
-                          className="px-2 py-0.5 text-ellipsis overflow-hidden text-left"
-                        >
-                          {t.title || `Conversation ${index + 1}`}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteThread(t.id)}
-                          className="pr-1.5 pl-0.5 py-0.5 text-[10px] opacity-60 hover:opacity-100"
-                          title="Delete conversation"
-                        >
-                          <XCircle className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+              {/* Recent conversation tabs (last few only) */}
+              <div className="mt-1 flex items-center gap-1 min-w-0">
+                <div className="flex flex-1 gap-1 min-w-0 overflow-x-auto">
+                  {recentTabs.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setActiveThread(t.id)}
+                      title={getThreadDisplayTitle(t, messagesByThread[t.id])}
+                      className={`shrink-0 max-w-[7rem] truncate rounded-full border px-2 py-0.5 text-[10px] ${
+                        t.id === activeThreadId
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-transparent text-muted-foreground border-border hover:bg-muted'
+                      } ${t.archived ? 'opacity-60' : ''}`}
+                    >
+                      {getThreadDisplayTitle(t, messagesByThread[t.id])}
+                    </button>
+                  ))}
+                  {hiddenTabCount > 0 && (
+                    <Link
+                      href="/dashboard/techo"
+                      className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted whitespace-nowrap"
+                    >
+                      +{hiddenTabCount} more
+                    </Link>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -360,6 +378,14 @@ export default function TechoChatWidget() {
               </div>
             </div>
             <div className="flex items-center gap-1.5">
+              <Link
+                href="/dashboard/techo"
+                className="h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center"
+                title="Open full conversations page"
+                aria-label="Open full conversations page"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </Link>
               {activeThread && (
                 <button
                   type="button"

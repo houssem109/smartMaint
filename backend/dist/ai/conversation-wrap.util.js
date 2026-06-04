@@ -103,7 +103,7 @@ function buildMissionDoneQuestion(name, lang) {
     if (lang === 'fr') {
         return `${name ? `${name}, ` : ''}Besoin d'autre chose, ou votre mission est terminée ?`;
     }
-    return `${name ? `${name}, ` : ''}Anything else I can help with, or you are done?`;
+    return `${name ? `${name}, ` : ''}Anything else I can help with, or is your mission done?`;
 }
 function buildFarewellReply(name, lang) {
     if (lang === 'fr') {

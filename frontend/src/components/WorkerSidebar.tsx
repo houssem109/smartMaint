@@ -12,6 +12,7 @@ import {
   Settings,
   Bell,
   BookOpen,
+  MessageCircle,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 
@@ -23,6 +24,7 @@ interface WorkerSidebarProps {
 const navItems = [
   { href: '/dashboard/worker', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/worker/knowledge', label: 'Knowledge Base', icon: BookOpen },
+  { href: '/dashboard/techo', label: 'Techo chat', icon: MessageCircle },
   { href: '/dashboard/worker/notifications', label: 'Notifications', icon: Bell },
 ];
 

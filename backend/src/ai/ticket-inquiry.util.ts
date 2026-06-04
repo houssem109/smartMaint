@@ -1,5 +1,10 @@
 import { Ticket } from '../tickets/entities/ticket.entity';
-import { isBareTicketTrigger, isTicketWizardTrigger } from './ticket-wizard.util';
+import {
+  isAwaitingWizardUserInput,
+  isBareTicketTrigger,
+  isTicketWizardActiveInHistory,
+  isTicketWizardTrigger,
+} from './ticket-wizard.util';
 import { isAwaitingTicketActionConfirm, isTicketActionIntent } from './ticket-action.util';
 import {
   isAwaitingMissionDoneConfirm,
@@ -146,6 +151,7 @@ export function shouldProcessTicketInquiry(
   history?: { role: string; content: string }[],
   hasCachedTicket?: boolean,
 ): boolean {
+  if (isTicketWizardActiveInHistory(history) || isAwaitingWizardUserInput(history)) return false;
   if (isTicketActionIntent(message) || isAwaitingTicketActionConfirm(history)) return false;
   if (isAwaitingMissionDoneConfirm(history)) return false;
   if (isConversationEndUserMessage(message)) return false;

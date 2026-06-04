@@ -128,6 +128,8 @@ function extractBareSearchQuery(message) {
     return bare;
 }
 function shouldProcessTicketInquiry(message, history, hasCachedTicket) {
+    if ((0, ticket_wizard_util_1.isTicketWizardActiveInHistory)(history) || (0, ticket_wizard_util_1.isAwaitingWizardUserInput)(history))
+        return false;
     if ((0, ticket_action_util_1.isTicketActionIntent)(message) || (0, ticket_action_util_1.isAwaitingTicketActionConfirm)(history))
         return false;
     if ((0, conversation_wrap_util_1.isAwaitingMissionDoneConfirm)(history))

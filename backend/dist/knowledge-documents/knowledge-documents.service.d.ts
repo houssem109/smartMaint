@@ -6,7 +6,6 @@ import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
 import { PipelinePreferences } from './entities/pipeline-preferences.entity';
-import { AdminPageFixQueueItem } from './entities/admin-page-fix-queue.entity';
 import { ExtractionFeedbackEvent } from './entities/extraction-feedback-event.entity';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AiService } from '../ai/ai.service';
@@ -23,7 +22,6 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     private readonly machineNameSuggestionsRepository;
     private readonly pageAnalysisRepository;
     private readonly knowledgeDocumentJobRepository;
-    private readonly adminPageFixQueueRepository;
     private readonly extractionFeedbackRepository;
     private readonly auditLogRepository;
     private readonly pipelinePreferencesRepository;
@@ -41,7 +39,7 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     private workProfileEmbedding;
     private nonWorkProfileEmbedding;
     private pdfVisionAdminEnabled;
-    constructor(knowledgeDocumentsRepository: Repository<KnowledgeDocument>, extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>, machineNameSuggestionsRepository: Repository<MachineNameSuggestion>, pageAnalysisRepository: Repository<KnowledgeDocumentPageAnalysis>, knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>, adminPageFixQueueRepository: Repository<AdminPageFixQueueItem>, extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>, auditLogRepository: Repository<AuditLog>, pipelinePreferencesRepository: Repository<PipelinePreferences>, gateQueue: Queue, extractionQueue: Queue, indexingQueue: Queue, ocrQueue: Queue, visionQueue: Queue, knowledgeService: KnowledgeService, aiService: AiService, ragService: RagService, machineProfilesService: MachineProfilesService, documentProgressGateway: DocumentProgressGateway);
+    constructor(knowledgeDocumentsRepository: Repository<KnowledgeDocument>, extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>, machineNameSuggestionsRepository: Repository<MachineNameSuggestion>, pageAnalysisRepository: Repository<KnowledgeDocumentPageAnalysis>, knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>, extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>, auditLogRepository: Repository<AuditLog>, pipelinePreferencesRepository: Repository<PipelinePreferences>, gateQueue: Queue, extractionQueue: Queue, indexingQueue: Queue, ocrQueue: Queue, visionQueue: Queue, knowledgeService: KnowledgeService, aiService: AiService, ragService: RagService, machineProfilesService: MachineProfilesService, documentProgressGateway: DocumentProgressGateway);
     onModuleInit(): Promise<void>;
     private loadPdfVisionAdminPreference;
     private isEffectivePdfVision;
@@ -198,8 +196,6 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         pdfUpload: {
             maxBytes: number;
             uploadDir: string;
-            pageFixImageMaxBytes: number;
-            pageFixImageUploadDir: string;
         };
         gate: {
             tier1AcceptAbove: number;
@@ -372,32 +368,13 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         tags?: string;
     }): Promise<KnowledgeExtractionCandidate>;
     rejectExtractionCandidate(candidateId: string, adminId: string, reason?: string): Promise<KnowledgeExtractionCandidate>;
-    listPageFixQueue(): Promise<AdminPageFixQueueItem[]>;
-    getPageFixReplacementImage(itemId: string): Promise<{
-        data: Buffer;
-        contentType: string;
-    }>;
     listRecentExtractionFeedback(limit?: number): Promise<ExtractionFeedbackEvent[]>;
-    fixPageWithText(itemId: string, text: string, adminId: string): Promise<{
-        ok: true;
-    }>;
-    dismissFixQueueItem(itemId: string, adminId: string): Promise<{
-        ok: true;
-    }>;
     reindexManualChunksForDocument(documentId: string): Promise<{
         ok: true;
         chunksIndexed: number;
     }>;
-    private reindexManualChunksAfterPageFixBestEffort;
     getAdminPipelineSummary(): Promise<{
-        pageFixOpen: number;
         extractionCandidatesPending: number;
-    }>;
-    private assertReplacementImageMagicBytes;
-    private resolveReplacementPageImageAbs;
-    fixPageWithReplacementImage(itemId: string, absoluteUploadedPath: string, relativePathForDb: string, adminId: string): Promise<{
-        ok: true;
-        visionPages: number;
     }>;
     updateMachineName(documentId: string, machineName: string, _adminId: string): Promise<KnowledgeDocument>;
     listMachineNameSuggestions(documentId: string): Promise<MachineNameSuggestion[]>;

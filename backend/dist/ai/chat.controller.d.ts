@@ -5,6 +5,7 @@ import { RagService } from './rag.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { Repository } from 'typeorm';
 import { Conversation } from '../tickets/entities/conversation.entity';
+import { TicketIntentRouterService } from './ticket-intent-router.service';
 declare class ChatHistoryItemDto {
     role: 'user' | 'assistant';
     content: string;
@@ -19,6 +20,7 @@ declare class ChatMessageDto {
 }
 export declare class ChatController {
     private readonly aiService;
+    private readonly ticketIntentRouter;
     private readonly orderTechoService;
     private readonly ticketsService;
     private readonly ragService;
@@ -27,7 +29,7 @@ export declare class ChatController {
     private readonly ticketWizardByKey;
     private readonly ticketInquiryContextByKey;
     private readonly ticketActionByKey;
-    constructor(aiService: AiService, orderTechoService: OrderTechoService, ticketsService: TicketsService, ragService: RagService, knowledgeService: KnowledgeService, conversationRepository: Repository<Conversation>);
+    constructor(aiService: AiService, ticketIntentRouter: TicketIntentRouterService, orderTechoService: OrderTechoService, ticketsService: TicketsService, ragService: RagService, knowledgeService: KnowledgeService, conversationRepository: Repository<Conversation>);
     sendMessage(body: ChatMessageDto, req: any): Promise<{
         reply: string;
         ticketId: string;
@@ -115,6 +117,18 @@ export declare class ChatController {
             role: "user" | "assistant";
             content: string;
         }[];
+    }>;
+    listThreads(req: any): Promise<{
+        threads: {
+            threadId: string;
+            title: string;
+            lastMessageAt: string;
+            messageCount: number;
+        }[];
+    }>;
+    suggestThreadTitle(threadId: string, req: any): Promise<{
+        threadId: string;
+        title: string;
     }>;
     private extractTicketIdFromMessage;
     private buildTicketContext;

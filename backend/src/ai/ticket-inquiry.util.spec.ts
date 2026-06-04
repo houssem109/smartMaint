@@ -64,5 +64,25 @@ describe('ticket-inquiry.util', () => {
   it('does not treat reopen request as inquiry follow-up', () => {
     expect(shouldProcessTicketInquiry('can u update it like make it open ?', [], true)).toBe(false);
     expect(shouldProcessTicketInquiry('open it again', [], true)).toBe(false);
+    expect(shouldProcessTicketInquiry('can delete it', [], true)).toBe(false);
+    expect(shouldProcessTicketInquiry('can you delete it?', [], true)).toBe(false);
+  });
+
+  it('does not treat wizard follow-up as ticket search after prior inquiry', () => {
+    const history = [
+      { role: 'user' as const, content: 'is ticket open or closed' },
+      {
+        role: 'assistant' as const,
+        content: '[TICKET_INQUIRY:found]\nTicket "HMI frozen" is open.',
+      },
+      { role: 'user' as const, content: 'ok try to create ticket' },
+      {
+        role: 'assistant' as const,
+        content:
+          "Admin, Sure — I can open a ticket for you. In a few words, what's going on?",
+      },
+    ];
+    expect(shouldProcessTicketInquiry('machine X dont work', history)).toBe(false);
+    expect(extractBareSearchQuery('machine X dont work')).toBe('machine X dont work');
   });
 });

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
+  MessageCircle,
   LayoutDashboard,
   Users,
   Ticket,
@@ -18,7 +19,6 @@ import {
   FileText,
   Workflow,
   ClipboardList,
-  ListChecks,
   SlidersHorizontal,
   BookMarked,
   Table2,
@@ -35,7 +35,7 @@ interface AdminSidebarProps {
   onToggle: () => void;
 }
 
-type BadgeKey = 'knowledge' | 'pdfCandidates' | 'pageFix';
+type BadgeKey = 'knowledge' | 'pdfCandidates';
 
 const navItems: {
   href: string;
@@ -49,17 +49,17 @@ const navItems: {
   { href: '/dashboard/admin/tickets', label: 'Tickets', icon: Ticket },
   { href: '/dashboard/admin/tickets-export', label: 'Tickets export', icon: Download },
   { href: '/dashboard/admin/history', label: 'History', icon: Clock },
+  { href: '/dashboard/techo', label: 'Techo chat', icon: MessageCircle },
   { href: '/dashboard/admin/knowledge', label: 'Knowledge base', icon: BookOpenText, badgeKey: 'knowledge' },
   { href: '/dashboard/admin/knowledge-docs', label: 'PDF Library', icon: FileText, badgeKey: 'pdfCandidates' },
-  //{ href: '/dashboard/admin/extraction-feedback', label: 'Extraction feedback', icon: ClipboardList },
-  //{ href: '/dashboard/admin/pipeline-config', label: 'Pipeline env', icon: SlidersHorizontal },
+  { href: '/dashboard/admin/extraction-feedback', label: 'Extraction feedback', icon: ClipboardList },
+  { href: '/dashboard/admin/pipeline-config', label: 'Pipeline env', icon: SlidersHorizontal },
   { href: '/dashboard/admin/database-inventory', label: 'DB schema', icon: Table2 },
-  //{ href: '/dashboard/admin/success-criteria', label: 'Success criteria', icon: ClipboardCheck },
-  //{ href: '/dashboard/admin/troubleshooting-extraction', label: 'Troubleshooting extraction', icon: TextSearch },
+  { href: '/dashboard/admin/success-criteria', label: 'Success criteria', icon: ClipboardCheck },
+  { href: '/dashboard/admin/troubleshooting-extraction', label: 'Troubleshooting extraction', icon: TextSearch },
   { href: '/dashboard/admin/problems-solutions-export', label: 'Problems export', icon: Download },
   { href: '/dashboard/admin/rag-stored-data', label: 'RAG stored data', icon: Database },
-  //{ href: '/dashboard/admin/page-fix-queue', label: 'Page fix queue', icon: ListChecks, badgeKey: 'pageFix' },
-  //{ href: '/dashboard/admin/manual-pipeline', label: 'Pipeline hub', icon: Workflow },
+  { href: '/dashboard/admin/manual-pipeline', label: 'Pipeline hub', icon: Workflow },
   {
     href: `${API_URL}/api/docs`,
     label: 'API (Swagger)',
@@ -72,19 +72,16 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
-  const [counts, setCounts] = useState({ knowledge: 0, pdfCandidates: 0, pageFix: 0 });
+  const [counts, setCounts] = useState({ knowledge: 0, pdfCandidates: 0 });
 
   useEffect(() => {
     const load = async () => {
       try {
         const [pipe, know] = await Promise.all([
-          api.get<{ pageFixOpen: number; extractionCandidatesPending: number }>(
-            '/knowledge-documents/admin-pipeline-counts',
-          ),
+          api.get<{ extractionCandidatesPending: number }>('/knowledge-documents/admin-pipeline-counts'),
           api.get<{ count: number }>('/knowledge/pending-review/count'),
         ]);
         setCounts({
-          pageFix: pipe.data.pageFixOpen ?? 0,
           pdfCandidates: pipe.data.extractionCandidatesPending ?? 0,
           knowledge: know.data.count ?? 0,
         });
@@ -100,8 +97,7 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
   const badgeFor = (key?: BadgeKey) => {
     if (!key) return 0;
     if (key === 'knowledge') return counts.knowledge;
-    if (key === 'pdfCandidates') return counts.pdfCandidates;
-    return counts.pageFix;
+    return counts.pdfCandidates;
   };
 
   const handleLogout = () => {

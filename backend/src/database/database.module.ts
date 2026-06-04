@@ -12,7 +12,6 @@ import { KnowledgeExtractionCandidate } from '../knowledge-documents/entities/kn
 import { MachineNameSuggestion } from '../knowledge-documents/entities/machine-name-suggestion.entity';
 import { KnowledgeDocumentPageAnalysis } from '../knowledge-documents/entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from '../knowledge-documents/entities/knowledge-document-job.entity';
-import { AdminPageFixQueueItem } from '../knowledge-documents/entities/admin-page-fix-queue.entity';
 import { MachineProfile } from '../machine-profiles/entities/machine-profile.entity';
 import { PipelinePreferences } from '../knowledge-documents/entities/pipeline-preferences.entity';
 import { VectorChunkHash } from '../ai/entities/vector-chunk-hash.entity';
@@ -40,7 +39,6 @@ import { VectorChunkHash } from '../ai/entities/vector-chunk-hash.entity';
           MachineNameSuggestion,
           KnowledgeDocumentPageAnalysis,
           KnowledgeDocumentJob,
-          AdminPageFixQueueItem,
           MachineProfile,
           PipelinePreferences,
           VectorChunkHash,

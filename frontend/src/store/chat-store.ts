@@ -25,6 +25,7 @@ export interface ChatThread {
   id: string;
   title: string;
   createdAt: number;
+  lastActivityAt?: number;
   archived?: boolean;
 }
 
@@ -55,8 +56,15 @@ interface ChatState {
   resetThread: (threadId: string) => void;
   deleteThread: (id: string) => void;
   setThreadArchived: (id: string, archived: boolean) => void;
+  setThreadTitle: (id: string, title: string) => void;
+  /** Set title only when still generic (Conversation N, Saved conversation, …). */
+  autoTitleThread: (id: string, title: string) => void;
   /** Replace thread messages (e.g. hydrate from server history). */
   setThreadMessages: (threadId: string, messages: ChatMessage[]) => void;
+  /** Add threads discovered on the server that are not in localStorage yet. */
+  mergeServerThreads: (
+    serverThreads: { threadId: string; title: string; lastMessageAt: string; messageCount: number }[],
+  ) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -93,13 +101,15 @@ export const useChatStore = create<ChatState>()(
       close: () => set({ isOpen: false }),
       createThread: (title?: string, userId?: string) => {
         const state = get();
-        const index = state.threads.length + 1;
         const prefix = userId ? `${userId.slice(0, 8)}-` : '';
         const id = `${prefix}${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const threadTitle = title || `Conversation ${index}`;
+        const threadTitle = title || 'New chat';
         const createdAt = Date.now();
         set({
-          threads: [...state.threads, { id, title: threadTitle, createdAt, archived: false }],
+          threads: [
+            ...state.threads,
+            { id, title: threadTitle, createdAt, lastActivityAt: createdAt, archived: false },
+          ],
           activeThreadId: id,
           messagesByThread: {
             ...state.messagesByThread,
@@ -116,12 +126,16 @@ export const useChatStore = create<ChatState>()(
       addMessage: (threadId, msg) =>
         set((state) => {
           const existing = state.messagesByThread[threadId] || [];
+          const now = Date.now();
           const newMessage: ChatMessage = {
             ...msg,
-            id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            createdAt: Date.now(),
+            id: `${now}-${Math.random().toString(16).slice(2)}`,
+            createdAt: now,
           };
           return {
+            threads: state.threads.map((t) =>
+              t.id === threadId ? { ...t, lastActivityAt: now } : t,
+            ),
             messagesByThread: {
               ...state.messagesByThread,
               [threadId]: [...existing, newMessage],
@@ -190,6 +204,28 @@ export const useChatStore = create<ChatState>()(
         set((state) => ({
           threads: state.threads.map((t) => (t.id === id ? { ...t, archived } : t)),
         })),
+      setThreadTitle: (id: string, title: string) =>
+        set((state) => ({
+          threads: state.threads.map((t) =>
+            t.id === id ? { ...t, title: title.trim() || t.title } : t,
+          ),
+        })),
+      autoTitleThread: (id: string, title: string) =>
+        set((state) => {
+          const thread = state.threads.find((t) => t.id === id);
+          if (!thread || !title.trim()) return state;
+          const generic =
+            !thread.title?.trim() ||
+            /^(conversation\s*\d+|saved conversation|new chat|techo chat|chat|untitled)$/i.test(
+              thread.title.trim(),
+            );
+          if (!generic) return state;
+          return {
+            threads: state.threads.map((t) =>
+              t.id === id ? { ...t, title: title.trim() } : t,
+            ),
+          };
+        }),
       setThreadMessages: (threadId: string, messages: ChatMessage[]) =>
         set((state) => ({
           messagesByThread: {
@@ -197,6 +233,61 @@ export const useChatStore = create<ChatState>()(
             [threadId]: messages,
           },
         })),
+      mergeServerThreads: (serverThreads) =>
+        set((state) => {
+          if (!serverThreads.length) return state;
+          const existingById = new Map(state.threads.map((t) => [t.id, t]));
+          const messagesByThread = { ...state.messagesByThread };
+          let threads = [...state.threads];
+
+          for (const row of serverThreads) {
+            const id = row.threadId?.trim();
+            if (!id) continue;
+            const serverTitle = row.title?.trim();
+            const lastAt = Date.parse(row.lastMessageAt) || Date.now();
+            const existing = existingById.get(id);
+
+            if (existing) {
+              const generic =
+                !existing.title?.trim() ||
+                /^(conversation\s*\d+|saved conversation|new chat|techo chat|chat|untitled)$/i.test(
+                  existing.title.trim(),
+                );
+              if (
+                generic &&
+                serverTitle &&
+                !/^(saved conversation|new chat)$/i.test(serverTitle)
+              ) {
+                threads = threads.map((t) =>
+                  t.id === id ? { ...t, title: serverTitle, lastActivityAt: lastAt } : t,
+                );
+              } else if (!existing.lastActivityAt || lastAt > existing.lastActivityAt) {
+                threads = threads.map((t) =>
+                  t.id === id ? { ...t, lastActivityAt: lastAt } : t,
+                );
+              }
+              continue;
+            }
+
+            existingById.set(id, {
+              id,
+              title: serverTitle && !/^saved conversation$/i.test(serverTitle) ? serverTitle : 'New chat',
+              createdAt: lastAt,
+              lastActivityAt: lastAt,
+              archived: false,
+            });
+            threads.push(existingById.get(id)!);
+            if (!messagesByThread[id]) {
+              messagesByThread[id] = [];
+            }
+          }
+
+          return {
+            threads,
+            messagesByThread,
+            activeThreadId: state.activeThreadId ?? threads[0]?.id ?? null,
+          };
+        }),
     }),
     {
       name: 'techo-chat-storage',

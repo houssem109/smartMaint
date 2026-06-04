@@ -6,7 +6,6 @@ import { KnowledgeExtractionCandidate } from './entities/knowledge-extraction-ca
 import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity';
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
-import { AdminPageFixQueueItem } from './entities/admin-page-fix-queue.entity';
 import { ExtractionFeedbackEvent } from './entities/extraction-feedback-event.entity';
 import { AuditLog } from '../common/entities/audit-log.entity';
 import { PipelinePreferences } from './entities/pipeline-preferences.entity';
@@ -43,7 +42,6 @@ import {
       MachineNameSuggestion,
       KnowledgeDocumentPageAnalysis,
       KnowledgeDocumentJob,
-      AdminPageFixQueueItem,
       ExtractionFeedbackEvent,
       AuditLog,
       KnowledgeEntry,

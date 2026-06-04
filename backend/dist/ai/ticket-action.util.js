@@ -60,11 +60,27 @@ function isTicketActionIntent(message) {
         return false;
     if (isAwaitingTicketActionConfirm([{ role: 'user', content: message }]))
         return false;
+    const isStatusQuestion = /^\s*(is|are|was|were|what|who|how|est-ce|c'est)\b/i.test(m) ||
+        /\b(or not|ou non)\s*\??\s*$/.test(m);
+    if (!isStatusQuestion &&
+        /\b(it|this|that|her|him|the same)\b/.test(m) &&
+        /\b(delete|remove|supprimer|effacer|close|fermer|reopen|rouvrir)\b/.test(m)) {
+        return true;
+    }
+    if (!isStatusQuestion &&
+        /\b(it|this|that)\b/.test(m) &&
+        /\b(can (you|u)|please|could you)\b/.test(m) &&
+        /\b(delete|remove|close|update|change|open|reopen)\b/.test(m)) {
+        return true;
+    }
     const actionPatterns = [
         /\b(close|fermer|ferme)\b.*\bticket|\bticket\b.*\b(close|fermer)\b/,
         /\b(make|set|mark)\b.*\b(close|closed|fermé)\b/,
         /\bcan you close|\bcan u close|\bcould you close|\bplease close|\bclose it\b|\bclose this\b/,
         /\b(delete|remove|supprimer|effacer)\b.*\bticket|\bticket\b.*\b(delete|remove|supprimer)\b/,
+        /\b(delete|remove|close|fermer|supprimer)\s+(it|this|that)\b/,
+        /\bcan (you|u) (delete|remove|close|update|change|open|reopen)\b/,
+        /\bcan (delete|remove|close|update|change)\b/,
         /\b(reopen|re-open|rouvrir)\b/,
         /\bopen\b.*\b(again|it|this|ticket)\b/,
         /\b(make|set|change|update|switch|turn)\b.*\b(open|closed|ouvert|fermé|in progress|solved)\b/,
@@ -72,7 +88,6 @@ function isTicketActionIntent(message) {
         /\b(set|change)\b.*\b(priority|priorité)\b.*\b(to|à)\b/,
         /\bcan't you close|\bcant close|\bwhy can't you close|\bpourquoi.*fermer/,
         /\bdo it\b.*\b(close|delete|update|open|reopen)\b|\b(close|delete|open|reopen)\b.*\bdo it\b/,
-        /\bcan (you|u) (update|change|open|reopen|close)\b/,
     ];
     return actionPatterns.some((r) => r.test(m));
 }
@@ -246,10 +261,14 @@ function buildNoTicketForActionReply(lang) {
 function shouldProcessTicketAction(message, history, hasPendingAction, hasTicketContext) {
     if (hasPendingAction || isAwaitingTicketActionConfirm(history))
         return true;
-    if (isTicketActionIntent(message) && hasTicketContext)
+    if ((0, ticket_wizard_util_1.findCreatedTicketInHistory)(history) && isTicketActionIntent(message))
         return true;
-    if (!hasTicketContext && !isTicketActionIntent(message))
+    if (!hasTicketContext && !(0, ticket_wizard_util_1.findCreatedTicketInHistory)(history))
         return false;
+    if (isTicketActionIntent(message))
+        return true;
+    if (parseTicketActionIntent(message).kind)
+        return true;
     return false;
 }
 //# sourceMappingURL=ticket-action.util.js.map

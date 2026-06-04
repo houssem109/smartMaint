@@ -13,8 +13,6 @@ type PipelineConfig = {
   pdfUpload: {
     maxBytes: number;
     uploadDir: string;
-    pageFixImageMaxBytes: number;
-    pageFixImageUploadDir: string;
   };
   gate: {
     tier1AcceptAbove: number;
@@ -164,14 +162,12 @@ export default function PipelineConfigPage() {
 
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">PDF upload & page-fix images</CardTitle>
+                  <CardTitle className="text-base">PDF upload</CardTitle>
                   <CardDescription>Storage limits (relative paths are under the API process cwd)</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-0">
                   <KeyVal k="KNOWLEDGE_PDF_MAX_BYTES (effective)" v={fmtBytes(cfg.pdfUpload.maxBytes)} />
                   <KeyVal k="KNOWLEDGE_PDF_UPLOAD_DIR" v={cfg.pdfUpload.uploadDir} />
-                  <KeyVal k="KNOWLEDGE_PAGE_FIX_IMAGE_MAX_BYTES (effective)" v={fmtBytes(cfg.pdfUpload.pageFixImageMaxBytes)} />
-                  <KeyVal k="KNOWLEDGE_PAGE_FIX_IMAGE_UPLOAD_DIR (effective)" v={cfg.pdfUpload.pageFixImageUploadDir} />
                 </CardContent>
               </Card>
 

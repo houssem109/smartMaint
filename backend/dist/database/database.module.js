@@ -21,7 +21,6 @@ const knowledge_extraction_candidate_entity_1 = require("../knowledge-documents/
 const machine_name_suggestion_entity_1 = require("../knowledge-documents/entities/machine-name-suggestion.entity");
 const knowledge_document_page_analysis_entity_1 = require("../knowledge-documents/entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("../knowledge-documents/entities/knowledge-document-job.entity");
-const admin_page_fix_queue_entity_1 = require("../knowledge-documents/entities/admin-page-fix-queue.entity");
 const machine_profile_entity_1 = require("../machine-profiles/entities/machine-profile.entity");
 const pipeline_preferences_entity_1 = require("../knowledge-documents/entities/pipeline-preferences.entity");
 const vector_chunk_hash_entity_1 = require("../ai/entities/vector-chunk-hash.entity");
@@ -52,7 +51,6 @@ exports.DatabaseModule = DatabaseModule = __decorate([
                         machine_name_suggestion_entity_1.MachineNameSuggestion,
                         knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis,
                         knowledge_document_job_entity_1.KnowledgeDocumentJob,
-                        admin_page_fix_queue_entity_1.AdminPageFixQueueItem,
                         machine_profile_entity_1.MachineProfile,
                         pipeline_preferences_entity_1.PipelinePreferences,
                         vector_chunk_hash_entity_1.VectorChunkHash,

@@ -66,12 +66,6 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], GateDecisionDto.prototype, "reason", void 0);
-class AdminFixTextDto {
-}
-__decorate([
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], AdminFixTextDto.prototype, "text", void 0);
 let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     constructor(knowledgeDocumentsService, databaseSchemaService) {
         this.knowledgeDocumentsService = knowledgeDocumentsService;
@@ -195,13 +189,6 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     async status(id) {
         return this.knowledgeDocumentsService.getDocumentStatus(id);
     }
-    async pageFixQueue() {
-        return this.knowledgeDocumentsService.listPageFixQueue();
-    }
-    async pageFixReplacementImage(itemId) {
-        const { data, contentType } = await this.knowledgeDocumentsService.getPageFixReplacementImage(itemId);
-        return new common_1.StreamableFile(data, { type: contentType });
-    }
     adminPipelineCounts() {
         return this.knowledgeDocumentsService.getAdminPipelineSummary();
     }
@@ -233,29 +220,6 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
         const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 200;
         const limit = Number.isFinite(parsed) ? parsed : 200;
         return this.knowledgeDocumentsService.listRecentExtractionFeedback(limit);
-    }
-    async fixUnreadableText(itemId, body, req) {
-        return this.knowledgeDocumentsService.fixPageWithText(itemId, body.text, req.user.id);
-    }
-    async fixUnreadableImage(itemId, file, req) {
-        if (!file?.path)
-            throw new common_1.BadRequestException('file is required');
-        const rel = (0, path_1.join)((0, pdf_ingestion_config_1.getPageFixImageUploadDir)(), file.filename).replace(/\\/g, '/');
-        try {
-            return await this.knowledgeDocumentsService.fixPageWithReplacementImage(itemId, file.path, rel, req.user.id);
-        }
-        catch (err) {
-            try {
-                if (file.path && (0, fs_1.existsSync)(file.path))
-                    (0, fs_1.unlinkSync)(file.path);
-            }
-            catch {
-            }
-            throw err;
-        }
-    }
-    async dismissFixQueueItem(itemId, req) {
-        return this.knowledgeDocumentsService.dismissFixQueueItem(itemId, req.user.id);
     }
     async runOcr(id, req) {
         return this.knowledgeDocumentsService.runOcrForDocument(id, req.user.id);
@@ -562,27 +526,10 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "status", null);
 __decorate([
-    (0, common_1.Get)('page-fix-queue'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'List unreadable pages waiting for admin fix' }),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "pageFixQueue", null);
-__decorate([
-    (0, common_1.Get)('page-fix-queue/:itemId/replacement-image'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Serve replacement page image for admin preview (JPEG/PNG/WebP)' }),
-    __param(0, (0, common_1.Param)('itemId')),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "pageFixReplacementImage", null);
-__decorate([
     (0, common_1.Get)('admin-pipeline-counts'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiOperation)({
-        summary: 'Counts for admin nav: open page-fix items + pending extraction candidates',
+        summary: 'Counts for admin nav: pending PDF extraction candidates',
     }),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
@@ -679,56 +626,6 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "extractionFeedbackRecent", null);
-__decorate([
-    (0, common_1.Post)('page-fix-queue/:itemId/fix-text'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Admin manually fixes unreadable page by typing text' }),
-    __param(0, (0, common_1.Param)('itemId')),
-    __param(1, (0, common_1.Body)()),
-    __param(2, (0, common_1.Request)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, AdminFixTextDto, Object]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "fixUnreadableText", null);
-__decorate([
-    (0, common_1.Post)('page-fix-queue/:itemId/fix-image'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiConsumes)('multipart/form-data'),
-    (0, swagger_1.ApiOperation)({
-        summary: 'Upload a replacement page image; runs PDF vision on it (requires ENABLE_PDF_VISION)',
-    }),
-    (0, common_1.UseInterceptors)((0, platform_express_1.FileInterceptor)('file', {
-        limits: { fileSize: (0, pdf_ingestion_config_1.getPageFixImageMaxBytes)() },
-        fileFilter: (_req, file, cb) => {
-            const ok = /^image\/(jpeg|png|webp)$/i.test(file.mimetype);
-            cb(ok ? null : new common_1.BadRequestException('Only JPEG, PNG, or WebP images are allowed'), ok);
-        },
-        storage: (0, multer_1.diskStorage)({
-            destination: (_req, _file, cb) => {
-                cb(null, (0, pdf_ingestion_config_1.ensurePageFixImageUploadDir)());
-            },
-            filename: (_req, file, cb) => {
-                cb(null, `${(0, uuid_1.v4)()}${(0, path_1.extname)(file.originalname).toLowerCase() || '.jpg'}`);
-            },
-        }),
-    })),
-    __param(0, (0, common_1.Param)('itemId')),
-    __param(1, (0, common_1.UploadedFile)()),
-    __param(2, (0, common_1.Request)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, Object]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "fixUnreadableImage", null);
-__decorate([
-    (0, common_1.Post)('page-fix-queue/:itemId/dismiss'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Dismiss unreadable page (not useful)' }),
-    __param(0, (0, common_1.Param)('itemId')),
-    __param(1, (0, common_1.Request)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
-    __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "dismissFixQueueItem", null);
 __decorate([
     (0, common_1.Post)(':id/run-ocr'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
@@ -9,14 +9,13 @@ import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
 import { PipelinePreferences } from './entities/pipeline-preferences.entity';
-import { AdminPageFixQueueItem } from './entities/admin-page-fix-queue.entity';
 import { ExtractionFeedbackEvent } from './entities/extraction-feedback-event.entity';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AiService } from '../ai/ai.service';
 import { getOllamaVisionModel } from '../ai/ollama-vision.util';
 import { DocumentChunkRowMeta, RagService } from '../ai/rag.service';
 import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
-import { join, resolve, extname, relative, sep } from 'path';
+import { join, resolve } from 'path';
 import { readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { mkdirSync, rmSync, readdirSync } from 'fs';
@@ -40,12 +39,7 @@ import {
 import { MachineProfilesService } from '../machine-profiles/machine-profiles.service';
 import { DocumentProgressGateway } from './document-progress.gateway';
 import { UserRole } from '../users/entities/user.entity';
-import {
-  getKnowledgePdfMaxBytes,
-  getKnowledgePdfUploadDir,
-  getPageFixImageMaxBytes,
-  getPageFixImageUploadDir,
-} from './pdf-ingestion.config';
+import { getKnowledgePdfMaxBytes, getKnowledgePdfUploadDir } from './pdf-ingestion.config';
 import { assertValidPdfForIngestion } from './pdf-ingestion.util';
 import {
   getOcrRenderDpi,
@@ -124,8 +118,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     private readonly pageAnalysisRepository: Repository<KnowledgeDocumentPageAnalysis>,
     @InjectRepository(KnowledgeDocumentJob)
     private readonly knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>,
-    @InjectRepository(AdminPageFixQueueItem)
-    private readonly adminPageFixQueueRepository: Repository<AdminPageFixQueueItem>,
     @InjectRepository(ExtractionFeedbackEvent)
     private readonly extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>,
     @InjectRepository(AuditLog)
@@ -849,8 +841,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     pdfUpload: {
       maxBytes: number;
       uploadDir: string;
-      pageFixImageMaxBytes: number;
-      pageFixImageUploadDir: string;
     };
     gate: {
       tier1AcceptAbove: number;
@@ -911,8 +901,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       pdfUpload: {
         maxBytes: getKnowledgePdfMaxBytes(),
         uploadDir: getKnowledgePdfUploadDir(),
-        pageFixImageMaxBytes: getPageFixImageMaxBytes(),
-        pageFixImageUploadDir: getPageFixImageUploadDir(),
       },
       gate: {
         tier1AcceptAbove: getGateTier1AcceptAbove(),
@@ -1032,12 +1020,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           purpose: 'Technician-proposed machine names until admin approves one',
         },
         {
-          table: 'admin_page_fix_queue',
-          entity: 'AdminPageFixQueueItem',
-          scope: 'pdf',
-          purpose: 'Unreadable pages + admin fix-text / replacementImagePath / dismiss',
-        },
-        {
           table: 'extraction_feedback_events',
           entity: 'ExtractionFeedbackEvent',
           scope: 'pdf',
@@ -1149,16 +1131,17 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         },
         {
           id: 'unreadable-nonblocking',
-          goal: 'Unreadable pages never block the pipeline — they go to admin queue',
+          goal: 'Unreadable pages never block the pipeline',
           status: 'shipped',
-          notes: '`admin_page_fix_queue` + pipeline continues; admin can dismiss or fix.',
+          notes:
+            'Low-text pages are routed to inline/async vision (page explanation); pipeline continues without a manual fix queue.',
         },
         {
           id: 'admin-fix-index',
-          goal: 'Admin manual fix is reflected in RAG quickly (re-index path)',
+          goal: 'Manual chunk re-index after page content changes',
           status: 'partial',
           notes:
-            '`reindex-manual-chunks` and best-effort re-embed after page fix; Qdrant write failures are log-only today (Postgres still source of truth).',
+            '`POST …/reindex-manual-chunks` on PDF detail; Qdrant write failures are log-only (Postgres + page_analysis remain source of truth).',
         },
         {
           id: 'tech-in-chat',
@@ -1499,15 +1482,9 @@ export class KnowledgeDocumentsService implements OnModuleInit {
 
       let b64: string;
       try {
-        const replacementAbs = await this.resolveReplacementPageImageAbs(documentId, pageNumber);
-        if (replacementAbs) {
-          const pngBuf = await sharp(replacementAbs).png().toBuffer();
-          b64 = pngBuf.toString('base64');
-        } else {
-          const dpi = usesDisplayFont ? 380 : schematicPage ? 300 : 200;
-          const pngPath = await this.renderPdfPageToPng(doc.filePath, pageNumber, workDir, dpi);
-          b64 = readFileSync(pngPath).toString('base64');
-        }
+        const dpi = usesDisplayFont ? 380 : schematicPage ? 300 : 200;
+        const pngPath = await this.renderPdfPageToPng(doc.filePath, pageNumber, workDir, dpi);
+        b64 = readFileSync(pngPath).toString('base64');
       } catch (e: any) {
         this.logger.warn(`Vision render failed page ${pageNumber}: ${e?.message ?? e}`);
         await this.appendPageQualityWarning(documentId, pageNumber, 'vision_render_failed');
@@ -2251,85 +2228,12 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return saved;
   }
 
-  async listPageFixQueue(): Promise<AdminPageFixQueueItem[]> {
-    return this.adminPageFixQueueRepository.find({
-      where: { status: 'open' as any },
-      order: { createdAt: 'DESC' },
-      take: 200,
-    });
-  }
-
-  /**
-   * Serve admin-uploaded replacement page image (path must stay under page-fix upload dir).
-   */
-  async getPageFixReplacementImage(itemId: string): Promise<{ data: Buffer; contentType: string }> {
-    const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-    if (!item) throw new NotFoundException('Fix queue item not found');
-    const rel = item.replacementImagePath?.trim();
-    if (!rel) throw new NotFoundException('No replacement image for this item');
-
-    const cwd = process.cwd();
-    const abs = resolve(cwd, rel);
-    const baseDir = resolve(cwd, getPageFixImageUploadDir());
-    const relToBase = relative(baseDir, abs);
-    if (!relToBase || relToBase.split(sep).includes('..')) {
-      throw new ForbiddenException('Invalid image path');
-    }
-
-    if (!existsSync(abs)) throw new NotFoundException('Image file not found');
-
-    const ext = extname(abs).toLowerCase();
-    const contentType =
-      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    return { data: readFileSync(abs), contentType };
-  }
-
   async listRecentExtractionFeedback(limit = 200): Promise<ExtractionFeedbackEvent[]> {
     const take = Math.min(Math.max(1, limit), 500);
     return this.extractionFeedbackRepository.find({
       order: { createdAt: 'DESC' },
       take,
     });
-  }
-
-  async fixPageWithText(itemId: string, text: string, adminId: string): Promise<{ ok: true }> {
-    const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-    if (!item) throw new NotFoundException('Fix queue item not found');
-    if (item.status !== 'open') throw new BadRequestException('Item is not open');
-    const trimmed = (text || '').trim();
-    if (!trimmed) throw new BadRequestException('Text cannot be empty');
-
-    await this.pageAnalysisRepository.update(
-      { documentId: item.documentId, pageNumber: item.pageNumber },
-      {
-        ocrText: trimmed,
-        ocrConfidence: 1,
-        processingMode: 'region',
-        extractionMode: 'ocr',
-        quality: 'degraded',
-        qualityWarnings: ['admin_fixed_text'],
-      },
-    );
-
-    item.status = 'fixed';
-    item.adminFixedText = trimmed;
-    item.fixedByAdminId = adminId;
-    item.fixedAt = new Date();
-    await this.adminPageFixQueueRepository.save(item);
-
-    await this.reindexManualChunksAfterPageFixBestEffort(item.documentId);
-
-    return { ok: true };
-  }
-
-  async dismissFixQueueItem(itemId: string, adminId: string): Promise<{ ok: true }> {
-    const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-    if (!item) throw new NotFoundException('Fix queue item not found');
-    item.status = 'dismissed';
-    item.fixedByAdminId = adminId;
-    item.fixedAt = new Date();
-    await this.adminPageFixQueueRepository.save(item);
-    return { ok: true };
   }
 
   /**
@@ -2382,126 +2286,13 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return { ok: true, chunksIndexed: chunksToIndex.length };
   }
 
-  private async reindexManualChunksAfterPageFixBestEffort(documentId: string): Promise<void> {
-    try {
-      await this.reindexManualChunksForDocument(documentId);
-    } catch (e: any) {
-      this.logger.warn(`Manual RAG re-index after page fix failed for ${documentId}: ${e?.message ?? e}`);
-    }
-  }
-
   async getAdminPipelineSummary(): Promise<{
-    pageFixOpen: number;
     extractionCandidatesPending: number;
   }> {
-    const pageFixOpen = await this.adminPageFixQueueRepository.count({
-      where: { status: 'open' as any },
-    });
     const extractionCandidatesPending = await this.extractionCandidatesRepository.count({
       where: { status: 'candidate' },
     });
-    return { pageFixOpen, extractionCandidatesPending };
-  }
-
-  private assertReplacementImageMagicBytes(absPath: string): void {
-    const raw = readFileSync(absPath);
-    const sig = raw.subarray(0, Math.min(12, raw.length));
-    const isPng = sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47;
-    const isJpeg = sig[0] === 0xff && sig[1] === 0xd8 && sig[2] === 0xff;
-    const isWebp =
-      sig[0] === 0x52 &&
-      sig[1] === 0x49 &&
-      sig[2] === 0x46 &&
-      sig[8] === 0x57 &&
-      sig[9] === 0x45 &&
-      sig[10] === 0x42 &&
-      sig[11] === 0x50;
-    if (!isPng && !isJpeg && !isWebp) {
-      throw new BadRequestException('Only JPEG, PNG, or WebP images are allowed');
-    }
-  }
-
-  private async resolveReplacementPageImageAbs(documentId: string, pageNumber: number): Promise<string | null> {
-    const rows = await this.adminPageFixQueueRepository.find({
-      where: { documentId, pageNumber, status: In(['open', 'fixed']) },
-      order: { updatedAt: 'DESC' },
-      take: 10,
-    });
-    const row = rows.find((r) => r.replacementImagePath != null && String(r.replacementImagePath).trim() !== '');
-    if (!row?.replacementImagePath) return null;
-    const root = resolve(join(process.cwd(), getPageFixImageUploadDir()));
-    const abs = resolve(join(process.cwd(), row.replacementImagePath.trim()));
-    if (!abs.startsWith(root)) return null;
-    if (!existsSync(abs)) return null;
-    return abs;
-  }
-
-  /**
-   * Admin uploads a clearer photo/scan for an unreadable PDF page; runs vision on that image and marks the queue item fixed when vision succeeds.
-   */
-  async fixPageWithReplacementImage(
-    itemId: string,
-    absoluteUploadedPath: string,
-    relativePathForDb: string,
-    adminId: string,
-  ): Promise<{ ok: true; visionPages: number }> {
-    if (!this.isEffectivePdfVision()) {
-      try {
-        if (absoluteUploadedPath && existsSync(absoluteUploadedPath)) unlinkSync(absoluteUploadedPath);
-      } catch {
-        // ignore
-      }
-      throw new BadRequestException(
-        'PDF vision is off: enable ENABLE_PDF_VISION in server env and turn the admin “PDF vision” toggle on (Pipeline env / PDF Library).',
-      );
-    }
-
-    const uploadRoot = resolve(join(process.cwd(), getPageFixImageUploadDir()));
-    const resolvedUpload = resolve(absoluteUploadedPath);
-    if (!resolvedUpload.startsWith(uploadRoot)) {
-      throw new BadRequestException('Invalid upload path');
-    }
-
-    this.assertReplacementImageMagicBytes(resolvedUpload);
-
-    const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-    if (!item) throw new NotFoundException('Fix queue item not found');
-    if (item.status !== 'open') throw new BadRequestException('Item is not open');
-
-    if (item.replacementImagePath?.trim()) {
-      const oldAbs = resolve(join(process.cwd(), item.replacementImagePath.trim()));
-      if (oldAbs.startsWith(uploadRoot) && existsSync(oldAbs) && oldAbs !== resolvedUpload) {
-        try {
-          unlinkSync(oldAbs);
-        } catch {
-          // ignore
-        }
-      }
-    }
-
-    item.replacementImagePath = relativePathForDb.replace(/\\/g, '/');
-    await this.adminPageFixQueueRepository.save(item);
-
-    const n = await this.runVisionForDocumentPages(item.documentId, [item.pageNumber]);
-
-    if (n > 0) {
-      item.status = 'fixed';
-      item.fixedByAdminId = adminId;
-      item.fixedAt = new Date();
-      await this.adminPageFixQueueRepository.save(item);
-      const w = await this.pageAnalysisRepository.findOne({
-        where: { documentId: item.documentId, pageNumber: item.pageNumber },
-      });
-      const qw = Array.isArray(w?.qualityWarnings) ? [...(w!.qualityWarnings as string[])] : [];
-      if (!qw.includes('admin_replacement_image')) qw.push('admin_replacement_image');
-      await this.pageAnalysisRepository.update(
-        { documentId: item.documentId, pageNumber: item.pageNumber },
-        { qualityWarnings: qw },
-      );
-      await this.reindexManualChunksAfterPageFixBestEffort(item.documentId);
-    }
-
-    return { ok: true, visionPages: n };
+    return { extractionCandidatesPending };
   }
 
   async updateMachineName(documentId: string, machineName: string, _adminId: string): Promise<KnowledgeDocument> {
@@ -3735,27 +3526,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
       await this.pageAnalysisRepository.save(rows);
     }
 
-    // For unreadable pages, push to admin fix queue (never blocks pipeline).
-    const unreadable = rows.filter((r) => r.quality === 'unreadable');
-    if (unreadable.length > 0) {
-      for (const u of unreadable) {
-        const exists = await this.adminPageFixQueueRepository.findOne({
-          where: { documentId, pageNumber: u.pageNumber, status: 'open' as any },
-        });
-        if (exists) continue;
-        await this.adminPageFixQueueRepository.save(
-          this.adminPageFixQueueRepository.create({
-            documentId,
-            pageNumber: u.pageNumber,
-            status: 'open',
-            reason: (u.qualityWarnings || []).join(',') || 'unreadable_page',
-            adminFixedText: null,
-            fixedByAdminId: null,
-            fixedAt: null,
-          }),
-        );
-      }
-    }
   }
 
   private async loadPopplerPageTextsForDocument(doc: KnowledgeDocument): Promise<string[]> {

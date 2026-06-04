@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const typeorm_1 = require("@nestjs/typeorm");
 const ai_service_1 = require("./ai.service");
+const ticket_intent_router_service_1 = require("./ticket-intent-router.service");
 const ai_controller_1 = require("./ai.controller");
 const chat_controller_1 = require("./chat.controller");
 const conversation_entity_1 = require("../tickets/entities/conversation.entity");
@@ -32,8 +33,8 @@ exports.AiModule = AiModule = __decorate([
             (0, common_1.forwardRef)(() => order_techo_module_1.OrderTechoModule),
         ],
         controllers: [ai_controller_1.AiController, chat_controller_1.ChatController],
-        providers: [ai_service_1.AiService],
-        exports: [ai_service_1.AiService, rag_module_1.RagModule],
+        providers: [ai_service_1.AiService, ticket_intent_router_service_1.TicketIntentRouterService],
+        exports: [ai_service_1.AiService, rag_module_1.RagModule, ticket_intent_router_service_1.TicketIntentRouterService],
     })
 ], AiModule);
 //# sourceMappingURL=ai.module.js.map

@@ -28,7 +28,6 @@ const machine_name_suggestion_entity_1 = require("./entities/machine-name-sugges
 const knowledge_document_page_analysis_entity_1 = require("./entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("./entities/knowledge-document-job.entity");
 const pipeline_preferences_entity_1 = require("./entities/pipeline-preferences.entity");
-const admin_page_fix_queue_entity_1 = require("./entities/admin-page-fix-queue.entity");
 const extraction_feedback_event_entity_1 = require("./entities/extraction-feedback-event.entity");
 const knowledge_service_1 = require("../knowledge/knowledge.service");
 const ai_service_1 = require("../ai/ai.service");
@@ -68,13 +67,12 @@ function safeUnlinkUpload(path) {
     }
 }
 let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDocumentsService {
-    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, machineNameSuggestionsRepository, pageAnalysisRepository, knowledgeDocumentJobRepository, adminPageFixQueueRepository, extractionFeedbackRepository, auditLogRepository, pipelinePreferencesRepository, gateQueue, extractionQueue, indexingQueue, ocrQueue, visionQueue, knowledgeService, aiService, ragService, machineProfilesService, documentProgressGateway) {
+    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, machineNameSuggestionsRepository, pageAnalysisRepository, knowledgeDocumentJobRepository, extractionFeedbackRepository, auditLogRepository, pipelinePreferencesRepository, gateQueue, extractionQueue, indexingQueue, ocrQueue, visionQueue, knowledgeService, aiService, ragService, machineProfilesService, documentProgressGateway) {
         this.knowledgeDocumentsRepository = knowledgeDocumentsRepository;
         this.extractionCandidatesRepository = extractionCandidatesRepository;
         this.machineNameSuggestionsRepository = machineNameSuggestionsRepository;
         this.pageAnalysisRepository = pageAnalysisRepository;
         this.knowledgeDocumentJobRepository = knowledgeDocumentJobRepository;
-        this.adminPageFixQueueRepository = adminPageFixQueueRepository;
         this.extractionFeedbackRepository = extractionFeedbackRepository;
         this.auditLogRepository = auditLogRepository;
         this.pipelinePreferencesRepository = pipelinePreferencesRepository;
@@ -583,8 +581,6 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
             pdfUpload: {
                 maxBytes: (0, pdf_ingestion_config_1.getKnowledgePdfMaxBytes)(),
                 uploadDir: (0, pdf_ingestion_config_1.getKnowledgePdfUploadDir)(),
-                pageFixImageMaxBytes: (0, pdf_ingestion_config_1.getPageFixImageMaxBytes)(),
-                pageFixImageUploadDir: (0, pdf_ingestion_config_1.getPageFixImageUploadDir)(),
             },
             gate: {
                 tier1AcceptAbove: (0, gate_config_1.getGateTier1AcceptAbove)(),
@@ -696,12 +692,6 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                     purpose: 'Technician-proposed machine names until admin approves one',
                 },
                 {
-                    table: 'admin_page_fix_queue',
-                    entity: 'AdminPageFixQueueItem',
-                    scope: 'pdf',
-                    purpose: 'Unreadable pages + admin fix-text / replacementImagePath / dismiss',
-                },
-                {
                     table: 'extraction_feedback_events',
                     entity: 'ExtractionFeedbackEvent',
                     scope: 'pdf',
@@ -800,15 +790,15 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                 },
                 {
                     id: 'unreadable-nonblocking',
-                    goal: 'Unreadable pages never block the pipeline — they go to admin queue',
+                    goal: 'Unreadable pages never block the pipeline',
                     status: 'shipped',
-                    notes: '`admin_page_fix_queue` + pipeline continues; admin can dismiss or fix.',
+                    notes: 'Low-text pages are routed to inline/async vision (page explanation); pipeline continues without a manual fix queue.',
                 },
                 {
                     id: 'admin-fix-index',
-                    goal: 'Admin manual fix is reflected in RAG quickly (re-index path)',
+                    goal: 'Manual chunk re-index after page content changes',
                     status: 'partial',
-                    notes: '`reindex-manual-chunks` and best-effort re-embed after page fix; Qdrant write failures are log-only today (Postgres still source of truth).',
+                    notes: '`POST …/reindex-manual-chunks` on PDF detail; Qdrant write failures are log-only (Postgres + page_analysis remain source of truth).',
                 },
                 {
                     id: 'tech-in-chat',
@@ -1067,16 +1057,9 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
             await this.pageAnalysisRepository.update({ documentId, pageNumber }, { extractionMode: 'vision', visionUsed: false });
             let b64;
             try {
-                const replacementAbs = await this.resolveReplacementPageImageAbs(documentId, pageNumber);
-                if (replacementAbs) {
-                    const pngBuf = await (0, sharp_1.default)(replacementAbs).png().toBuffer();
-                    b64 = pngBuf.toString('base64');
-                }
-                else {
-                    const dpi = usesDisplayFont ? 380 : schematicPage ? 300 : 200;
-                    const pngPath = await this.renderPdfPageToPng(doc.filePath, pageNumber, workDir, dpi);
-                    b64 = (0, fs_2.readFileSync)(pngPath).toString('base64');
-                }
+                const dpi = usesDisplayFont ? 380 : schematicPage ? 300 : 200;
+                const pngPath = await this.renderPdfPageToPng(doc.filePath, pageNumber, workDir, dpi);
+                b64 = (0, fs_2.readFileSync)(pngPath).toString('base64');
             }
             catch (e) {
                 this.logger.warn(`Vision render failed page ${pageNumber}: ${e?.message ?? e}`);
@@ -1669,74 +1652,12 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
         }));
         return saved;
     }
-    async listPageFixQueue() {
-        return this.adminPageFixQueueRepository.find({
-            where: { status: 'open' },
-            order: { createdAt: 'DESC' },
-            take: 200,
-        });
-    }
-    async getPageFixReplacementImage(itemId) {
-        const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-        if (!item)
-            throw new common_1.NotFoundException('Fix queue item not found');
-        const rel = item.replacementImagePath?.trim();
-        if (!rel)
-            throw new common_1.NotFoundException('No replacement image for this item');
-        const cwd = process.cwd();
-        const abs = (0, path_1.resolve)(cwd, rel);
-        const baseDir = (0, path_1.resolve)(cwd, (0, pdf_ingestion_config_1.getPageFixImageUploadDir)());
-        const relToBase = (0, path_1.relative)(baseDir, abs);
-        if (!relToBase || relToBase.split(path_1.sep).includes('..')) {
-            throw new common_1.ForbiddenException('Invalid image path');
-        }
-        if (!(0, fs_1.existsSync)(abs))
-            throw new common_1.NotFoundException('Image file not found');
-        const ext = (0, path_1.extname)(abs).toLowerCase();
-        const contentType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-        return { data: (0, fs_2.readFileSync)(abs), contentType };
-    }
     async listRecentExtractionFeedback(limit = 200) {
         const take = Math.min(Math.max(1, limit), 500);
         return this.extractionFeedbackRepository.find({
             order: { createdAt: 'DESC' },
             take,
         });
-    }
-    async fixPageWithText(itemId, text, adminId) {
-        const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-        if (!item)
-            throw new common_1.NotFoundException('Fix queue item not found');
-        if (item.status !== 'open')
-            throw new common_1.BadRequestException('Item is not open');
-        const trimmed = (text || '').trim();
-        if (!trimmed)
-            throw new common_1.BadRequestException('Text cannot be empty');
-        await this.pageAnalysisRepository.update({ documentId: item.documentId, pageNumber: item.pageNumber }, {
-            ocrText: trimmed,
-            ocrConfidence: 1,
-            processingMode: 'region',
-            extractionMode: 'ocr',
-            quality: 'degraded',
-            qualityWarnings: ['admin_fixed_text'],
-        });
-        item.status = 'fixed';
-        item.adminFixedText = trimmed;
-        item.fixedByAdminId = adminId;
-        item.fixedAt = new Date();
-        await this.adminPageFixQueueRepository.save(item);
-        await this.reindexManualChunksAfterPageFixBestEffort(item.documentId);
-        return { ok: true };
-    }
-    async dismissFixQueueItem(itemId, adminId) {
-        const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-        if (!item)
-            throw new common_1.NotFoundException('Fix queue item not found');
-        item.status = 'dismissed';
-        item.fixedByAdminId = adminId;
-        item.fixedAt = new Date();
-        await this.adminPageFixQueueRepository.save(item);
-        return { ok: true };
     }
     async reindexManualChunksForDocument(documentId) {
         const doc = await this.findOne(documentId);
@@ -1777,105 +1698,11 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
         await this.knowledgeDocumentsRepository.save(doc);
         return { ok: true, chunksIndexed: chunksToIndex.length };
     }
-    async reindexManualChunksAfterPageFixBestEffort(documentId) {
-        try {
-            await this.reindexManualChunksForDocument(documentId);
-        }
-        catch (e) {
-            this.logger.warn(`Manual RAG re-index after page fix failed for ${documentId}: ${e?.message ?? e}`);
-        }
-    }
     async getAdminPipelineSummary() {
-        const pageFixOpen = await this.adminPageFixQueueRepository.count({
-            where: { status: 'open' },
-        });
         const extractionCandidatesPending = await this.extractionCandidatesRepository.count({
             where: { status: 'candidate' },
         });
-        return { pageFixOpen, extractionCandidatesPending };
-    }
-    assertReplacementImageMagicBytes(absPath) {
-        const raw = (0, fs_2.readFileSync)(absPath);
-        const sig = raw.subarray(0, Math.min(12, raw.length));
-        const isPng = sig[0] === 0x89 && sig[1] === 0x50 && sig[2] === 0x4e && sig[3] === 0x47;
-        const isJpeg = sig[0] === 0xff && sig[1] === 0xd8 && sig[2] === 0xff;
-        const isWebp = sig[0] === 0x52 &&
-            sig[1] === 0x49 &&
-            sig[2] === 0x46 &&
-            sig[8] === 0x57 &&
-            sig[9] === 0x45 &&
-            sig[10] === 0x42 &&
-            sig[11] === 0x50;
-        if (!isPng && !isJpeg && !isWebp) {
-            throw new common_1.BadRequestException('Only JPEG, PNG, or WebP images are allowed');
-        }
-    }
-    async resolveReplacementPageImageAbs(documentId, pageNumber) {
-        const rows = await this.adminPageFixQueueRepository.find({
-            where: { documentId, pageNumber, status: (0, typeorm_2.In)(['open', 'fixed']) },
-            order: { updatedAt: 'DESC' },
-            take: 10,
-        });
-        const row = rows.find((r) => r.replacementImagePath != null && String(r.replacementImagePath).trim() !== '');
-        if (!row?.replacementImagePath)
-            return null;
-        const root = (0, path_1.resolve)((0, path_1.join)(process.cwd(), (0, pdf_ingestion_config_1.getPageFixImageUploadDir)()));
-        const abs = (0, path_1.resolve)((0, path_1.join)(process.cwd(), row.replacementImagePath.trim()));
-        if (!abs.startsWith(root))
-            return null;
-        if (!(0, fs_1.existsSync)(abs))
-            return null;
-        return abs;
-    }
-    async fixPageWithReplacementImage(itemId, absoluteUploadedPath, relativePathForDb, adminId) {
-        if (!this.isEffectivePdfVision()) {
-            try {
-                if (absoluteUploadedPath && (0, fs_1.existsSync)(absoluteUploadedPath))
-                    (0, fs_1.unlinkSync)(absoluteUploadedPath);
-            }
-            catch {
-            }
-            throw new common_1.BadRequestException('PDF vision is off: enable ENABLE_PDF_VISION in server env and turn the admin “PDF vision” toggle on (Pipeline env / PDF Library).');
-        }
-        const uploadRoot = (0, path_1.resolve)((0, path_1.join)(process.cwd(), (0, pdf_ingestion_config_1.getPageFixImageUploadDir)()));
-        const resolvedUpload = (0, path_1.resolve)(absoluteUploadedPath);
-        if (!resolvedUpload.startsWith(uploadRoot)) {
-            throw new common_1.BadRequestException('Invalid upload path');
-        }
-        this.assertReplacementImageMagicBytes(resolvedUpload);
-        const item = await this.adminPageFixQueueRepository.findOne({ where: { id: itemId } });
-        if (!item)
-            throw new common_1.NotFoundException('Fix queue item not found');
-        if (item.status !== 'open')
-            throw new common_1.BadRequestException('Item is not open');
-        if (item.replacementImagePath?.trim()) {
-            const oldAbs = (0, path_1.resolve)((0, path_1.join)(process.cwd(), item.replacementImagePath.trim()));
-            if (oldAbs.startsWith(uploadRoot) && (0, fs_1.existsSync)(oldAbs) && oldAbs !== resolvedUpload) {
-                try {
-                    (0, fs_1.unlinkSync)(oldAbs);
-                }
-                catch {
-                }
-            }
-        }
-        item.replacementImagePath = relativePathForDb.replace(/\\/g, '/');
-        await this.adminPageFixQueueRepository.save(item);
-        const n = await this.runVisionForDocumentPages(item.documentId, [item.pageNumber]);
-        if (n > 0) {
-            item.status = 'fixed';
-            item.fixedByAdminId = adminId;
-            item.fixedAt = new Date();
-            await this.adminPageFixQueueRepository.save(item);
-            const w = await this.pageAnalysisRepository.findOne({
-                where: { documentId: item.documentId, pageNumber: item.pageNumber },
-            });
-            const qw = Array.isArray(w?.qualityWarnings) ? [...w.qualityWarnings] : [];
-            if (!qw.includes('admin_replacement_image'))
-                qw.push('admin_replacement_image');
-            await this.pageAnalysisRepository.update({ documentId: item.documentId, pageNumber: item.pageNumber }, { qualityWarnings: qw });
-            await this.reindexManualChunksAfterPageFixBestEffort(item.documentId);
-        }
-        return { ok: true, visionPages: n };
+        return { extractionCandidatesPending };
     }
     async updateMachineName(documentId, machineName, _adminId) {
         const doc = await this.findOne(documentId);
@@ -2968,25 +2795,6 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
         if (rows.length > 0) {
             await this.pageAnalysisRepository.save(rows);
         }
-        const unreadable = rows.filter((r) => r.quality === 'unreadable');
-        if (unreadable.length > 0) {
-            for (const u of unreadable) {
-                const exists = await this.adminPageFixQueueRepository.findOne({
-                    where: { documentId, pageNumber: u.pageNumber, status: 'open' },
-                });
-                if (exists)
-                    continue;
-                await this.adminPageFixQueueRepository.save(this.adminPageFixQueueRepository.create({
-                    documentId,
-                    pageNumber: u.pageNumber,
-                    status: 'open',
-                    reason: (u.qualityWarnings || []).join(',') || 'unreadable_page',
-                    adminFixedText: null,
-                    fixedByAdminId: null,
-                    fixedAt: null,
-                }));
-            }
-        }
     }
     async loadPopplerPageTextsForDocument(doc) {
         if (!doc.filePath || !(0, fs_1.existsSync)(doc.filePath))
@@ -3409,17 +3217,15 @@ exports.KnowledgeDocumentsService = KnowledgeDocumentsService = KnowledgeDocumen
     __param(2, (0, typeorm_1.InjectRepository)(machine_name_suggestion_entity_1.MachineNameSuggestion)),
     __param(3, (0, typeorm_1.InjectRepository)(knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis)),
     __param(4, (0, typeorm_1.InjectRepository)(knowledge_document_job_entity_1.KnowledgeDocumentJob)),
-    __param(5, (0, typeorm_1.InjectRepository)(admin_page_fix_queue_entity_1.AdminPageFixQueueItem)),
-    __param(6, (0, typeorm_1.InjectRepository)(extraction_feedback_event_entity_1.ExtractionFeedbackEvent)),
-    __param(7, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
-    __param(8, (0, typeorm_1.InjectRepository)(pipeline_preferences_entity_1.PipelinePreferences)),
-    __param(9, (0, bull_1.InjectQueue)(queues_constants_1.GATE_QUEUE)),
-    __param(10, (0, bull_1.InjectQueue)(queues_constants_1.EXTRACTION_QUEUE)),
-    __param(11, (0, bull_1.InjectQueue)(queues_constants_1.INDEXING_QUEUE)),
-    __param(12, (0, bull_1.InjectQueue)(queues_constants_1.OCR_QUEUE)),
-    __param(13, (0, bull_1.InjectQueue)(queues_constants_1.VISION_QUEUE)),
+    __param(5, (0, typeorm_1.InjectRepository)(extraction_feedback_event_entity_1.ExtractionFeedbackEvent)),
+    __param(6, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
+    __param(7, (0, typeorm_1.InjectRepository)(pipeline_preferences_entity_1.PipelinePreferences)),
+    __param(8, (0, bull_1.InjectQueue)(queues_constants_1.GATE_QUEUE)),
+    __param(9, (0, bull_1.InjectQueue)(queues_constants_1.EXTRACTION_QUEUE)),
+    __param(10, (0, bull_1.InjectQueue)(queues_constants_1.INDEXING_QUEUE)),
+    __param(11, (0, bull_1.InjectQueue)(queues_constants_1.OCR_QUEUE)),
+    __param(12, (0, bull_1.InjectQueue)(queues_constants_1.VISION_QUEUE)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
-        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

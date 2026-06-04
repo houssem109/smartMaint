@@ -16,9 +16,6 @@ declare class RejectExtractionDto {
 declare class GateDecisionDto {
     reason?: string;
 }
-declare class AdminFixTextDto {
-    text: string;
-}
 export declare class KnowledgeDocumentsController {
     private readonly knowledgeDocumentsService;
     private readonly databaseSchemaService;
@@ -154,10 +151,7 @@ export declare class KnowledgeDocumentsController {
         error: string | null;
         qualitySnapshot: Record<string, number>;
     }>;
-    pageFixQueue(): Promise<import("./entities/admin-page-fix-queue.entity").AdminPageFixQueueItem[]>;
-    pageFixReplacementImage(itemId: string): Promise<StreamableFile>;
     adminPipelineCounts(): Promise<{
-        pageFixOpen: number;
         extractionCandidatesPending: number;
     }>;
     queuesHealth(): Promise<{
@@ -182,8 +176,6 @@ export declare class KnowledgeDocumentsController {
         pdfUpload: {
             maxBytes: number;
             uploadDir: string;
-            pageFixImageMaxBytes: number;
-            pageFixImageUploadDir: string;
         };
         gate: {
             tier1AcceptAbove: number;
@@ -310,16 +302,6 @@ export declare class KnowledgeDocumentsController {
         enabledEffective: boolean;
     }>;
     extractionFeedbackRecent(limitRaw?: string): Promise<import("./entities/extraction-feedback-event.entity").ExtractionFeedbackEvent[]>;
-    fixUnreadableText(itemId: string, body: AdminFixTextDto, req: any): Promise<{
-        ok: true;
-    }>;
-    fixUnreadableImage(itemId: string, file: Express.Multer.File | undefined, req: any): Promise<{
-        ok: true;
-        visionPages: number;
-    }>;
-    dismissFixQueueItem(itemId: string, req: any): Promise<{
-        ok: true;
-    }>;
     runOcr(id: string, req: any): Promise<{
         ok: true;
         processedPages: number;

@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiService } from './ai.service';
+import { TicketIntentRouterService } from './ticket-intent-router.service';
 import { AiController } from './ai.controller';
 import { ChatController } from './chat.controller';
 import { Conversation } from '../tickets/entities/conversation.entity';
@@ -20,8 +21,8 @@ import { OrderTechoModule } from '../order-techo/order-techo.module';
     forwardRef(() => OrderTechoModule),
   ],
   controllers: [AiController, ChatController],
-  providers: [AiService],
-  exports: [AiService, RagModule],
+  providers: [AiService, TicketIntentRouterService],
+  exports: [AiService, RagModule, TicketIntentRouterService],
 })
 export class AiModule {}
 

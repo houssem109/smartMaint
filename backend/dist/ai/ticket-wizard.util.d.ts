@@ -35,10 +35,18 @@ export declare function isBareTicketTrigger(message: string): boolean;
 export declare function isTriggerOnlyPhrase(message: string): boolean;
 export declare function tagWizardReply(step: TicketWizardStep, text: string): string;
 export declare function stripWizardMarker(text: string): string;
+export declare function inferWizardStepFromAssistantText(content: string): TicketWizardStep | null;
+export declare function isWizardPromptMessage(content: string): boolean;
+export declare function isAwaitingWizardUserInput(history?: {
+    role: string;
+    content: string;
+}[]): boolean;
 export declare function getWizardStepFromHistory(history?: {
     role: string;
     content: string;
 }[]): TicketWizardStep | null;
+export declare function isTestTicketRequest(message: string): boolean;
+export declare function buildTestTicketDraft(): Partial<CreateTicketDto>;
 export declare function parseDraftFromSummaryHistory(history?: {
     role: string;
     content: string;
@@ -56,10 +64,6 @@ export declare function parseMachineAndArea(text: string): {
 };
 export declare function inferCategoryFromText(title: string, description: string): TicketCategory | undefined;
 export declare function inferPriorityFromText(title: string, description: string): TicketPriority;
-export declare function isTicketWizardActiveInHistory(history?: {
-    role: string;
-    content: string;
-}[]): boolean;
 export declare function wizardAskTitle(name: string | undefined, lang: 'en' | 'fr'): string;
 export declare function wizardStartFromProblemReport(name: string | undefined, lang: 'en' | 'fr', userMessage: string): string;
 export declare function wizardAckTitleAskDescription(name: string | undefined, title: string, lang: 'en' | 'fr'): string;
@@ -69,6 +73,21 @@ export declare function wizardInvalidTitle(lang: 'en' | 'fr'): string;
 export declare function wizardInvalidDescription(lang: 'en' | 'fr'): string;
 export declare function wizardInvalidLocation(lang: 'en' | 'fr'): string;
 export declare function wizardCancelled(lang: 'en' | 'fr'): string;
+export declare function findCreatedTicketInHistory(history?: {
+    role: string;
+    content: string;
+}[]): {
+    id: string;
+    title: string;
+} | null;
+export declare function isWizardSupersededByCreatedTicket(history?: {
+    role: string;
+    content: string;
+}[]): boolean;
+export declare function isTicketWizardActiveInHistory(history?: {
+    role: string;
+    content: string;
+}[]): boolean;
 export declare function wizardCreatedReply(name: string | undefined, created: {
     id: string;
     title: string;

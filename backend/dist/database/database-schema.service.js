@@ -79,7 +79,6 @@ const TABLE_CATALOG = {
             { column: 'documentId', referencesTable: 'knowledge_document_page_analysis', referencesColumn: 'id' },
             { column: 'documentId', referencesTable: 'knowledge_extraction_candidates', referencesColumn: 'id' },
             { column: 'documentId', referencesTable: 'knowledge_document_jobs', referencesColumn: 'id' },
-            { column: 'documentId', referencesTable: 'admin_page_fix_queue', referencesColumn: 'id' },
             { column: 'documentId', referencesTable: 'machine_name_suggestions', referencesColumn: 'id' },
             { column: 'documentId', referencesTable: 'extraction_feedback_events', referencesColumn: 'id' },
             { column: 'knowledgeDocumentId', referencesTable: 'knowledge_entries', referencesColumn: 'id' },
@@ -109,15 +108,6 @@ const TABLE_CATALOG = {
         purpose: 'Background job rows (gate, OCR, vision, extract, index) and progress.',
         logicalReferences: [
             { column: 'documentId', referencesTable: 'knowledge_documents', referencesColumn: 'id' },
-        ],
-    },
-    admin_page_fix_queue: {
-        group: 'pdf',
-        entity: 'AdminPageFixQueueItem',
-        purpose: 'Unreadable PDF pages — admin can type text or upload a replacement image.',
-        logicalReferences: [
-            { column: 'documentId', referencesTable: 'knowledge_documents', referencesColumn: 'id' },
-            { column: 'fixedByAdminId', referencesTable: 'users', referencesColumn: 'id' },
         ],
     },
     machine_profiles: {
