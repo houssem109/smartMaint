@@ -117,7 +117,7 @@ __decorate([
     __metadata("design:type", String)
 ], Ticket.prototype, "createdById", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.createdTickets),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.createdTickets, { onDelete: 'CASCADE' }),
     (0, typeorm_1.JoinColumn)({ name: 'createdById' }),
     __metadata("design:type", user_entity_1.User)
 ], Ticket.prototype, "createdBy", void 0);
@@ -126,7 +126,7 @@ __decorate([
     __metadata("design:type", String)
 ], Ticket.prototype, "assignedToId", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.assignedTickets),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, (user) => user.assignedTickets, { onDelete: 'SET NULL' }),
     (0, typeorm_1.JoinColumn)({ name: 'assignedToId' }),
     __metadata("design:type", user_entity_1.User)
 ], Ticket.prototype, "assignedTo", void 0);

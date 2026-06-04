@@ -120,7 +120,7 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeDocument.prototype, "uploadedById", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { onDelete: 'CASCADE' }),
     (0, typeorm_1.JoinColumn)({ name: 'uploadedById' }),
     __metadata("design:type", user_entity_1.User)
 ], KnowledgeDocument.prototype, "uploadedBy", void 0);

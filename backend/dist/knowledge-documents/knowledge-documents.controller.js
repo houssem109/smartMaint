@@ -30,6 +30,7 @@ const pdf_ingestion_config_1 = require("./pdf-ingestion.config");
 const class_validator_1 = require("class-validator");
 const machine_name_dto_1 = require("./dto/machine-name.dto");
 const set_pdf_vision_preference_dto_1 = require("./dto/set-pdf-vision-preference.dto");
+const tech_extraction_review_dto_1 = require("./dto/tech-extraction-review.dto");
 class ApproveExtractionDto {
 }
 __decorate([
@@ -121,6 +122,9 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     async upload(file, req, supersedesDocumentId) {
         return this.acceptPdfUpload(file, req, supersedesDocumentId);
     }
+    async techReviewExtraction(candidateId, body, req) {
+        return this.knowledgeDocumentsService.submitTechExtractionReview(candidateId, req.user.id, body);
+    }
     async uploadAlias(file, req, supersedesDocumentId) {
         return this.acceptPdfUpload(file, req, supersedesDocumentId);
     }
@@ -145,7 +149,9 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     async list(req, includeSuperseded) {
         const wants = includeSuperseded === 'true' || includeSuperseded === '1' || includeSuperseded === 'yes';
         const isAdmin = req.user.role === user_entity_1.UserRole.ADMIN || req.user.role === user_entity_1.UserRole.SUPERADMIN;
-        return this.knowledgeDocumentsService.findAll({ includeSuperseded: wants && isAdmin });
+        return this.knowledgeDocumentsService.findAll({
+            includeSuperseded: wants && isAdmin,
+        });
     }
     async machineNameSuggestions(id) {
         return this.knowledgeDocumentsService.listMachineNameSuggestions(id);
@@ -204,22 +210,25 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
     databaseSchema() {
         return this.databaseSchemaService.getPublicSchema();
     }
-    qaSuccessCriteria() {
-        return this.knowledgeDocumentsService.getQaSuccessCriteria();
-    }
-    troubleshootingExtractionReference() {
-        return this.knowledgeDocumentsService.getTroubleshootingExtractionReference();
-    }
     getPdfVisionPreference() {
         return this.knowledgeDocumentsService.getPdfVisionPreferenceReadModel();
     }
     patchPdfVisionPreference(body, req) {
         return this.knowledgeDocumentsService.setPdfVisionAdminEnabled(body.enabled, req.user.id);
     }
-    async extractionFeedbackRecent(limitRaw) {
-        const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 200;
-        const limit = Number.isFinite(parsed) ? parsed : 200;
-        return this.knowledgeDocumentsService.listRecentExtractionFeedback(limit);
+    async extractionFeedbackRecent(pageRaw, pageSizeRaw, signal) {
+        const page = pageRaw != null ? parseInt(pageRaw, 10) : 1;
+        const pageSize = pageSizeRaw != null ? parseInt(pageSizeRaw, 10) : 10;
+        const allowed = new Set(['approve', 'approve_edit', 'reject']);
+        const signalFilter = signal && allowed.has(signal) ? signal : undefined;
+        return this.knowledgeDocumentsService.listRecentExtractionFeedback({
+            page: Number.isFinite(page) ? page : 1,
+            pageSize: Number.isFinite(pageSize) ? pageSize : 10,
+            signal: signalFilter,
+        });
+    }
+    async extractionFeedbackDetail(eventId) {
+        return this.knowledgeDocumentsService.getExtractionFeedbackDetail(eventId);
     }
     async runOcr(id, req) {
         return this.knowledgeDocumentsService.runOcrForDocument(id, req.user.id);
@@ -280,14 +289,14 @@ let KnowledgeDocumentsController = class KnowledgeDocumentsController {
         };
     }
     async remove(id, req) {
-        await this.knowledgeDocumentsService.deleteDocument(id, req.user.id);
+        await this.knowledgeDocumentsService.deleteDocument(id, req.user.id, req.user.role);
         return { ok: true };
     }
 };
 exports.KnowledgeDocumentsController = KnowledgeDocumentsController;
 __decorate([
     (0, common_1.Post)('upload'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
     (0, common_1.HttpCode)(common_1.HttpStatus.ACCEPTED),
     (0, swagger_1.ApiConsumes)('multipart/form-data'),
     (0, swagger_1.ApiOperation)({ summary: 'Upload a PDF to the knowledge documents library' }),
@@ -316,8 +325,21 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], KnowledgeDocumentsController.prototype, "upload", null);
 __decorate([
+    (0, common_1.Post)('extractions/:candidateId/tech-review'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({
+        summary: 'Technician recommendation on an extraction (does not finalize — admin decides)',
+    }),
+    __param(0, (0, common_1.Param)('candidateId')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Request)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, tech_extraction_review_dto_1.TechExtractionReviewDto, Object]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "techReviewExtraction", null);
+__decorate([
     (0, common_1.Post)(),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
     (0, common_1.HttpCode)(common_1.HttpStatus.ACCEPTED),
     (0, swagger_1.ApiConsumes)('multipart/form-data'),
     (0, swagger_1.ApiOperation)({ summary: 'Upload alias (same behavior as /upload)' }),
@@ -412,10 +434,10 @@ __decorate([
 ], KnowledgeDocumentsController.prototype, "rejectExtraction", null);
 __decorate([
     (0, common_1.Get)(),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN, user_entity_1.UserRole.WORKER),
     (0, swagger_1.ApiOperation)({
         summary: 'List uploaded knowledge documents',
-        description: 'Query includeSuperseded=true (admin/superadmin only) to list superseded revisions for 11 history.',
+        description: 'Workers and technicians can browse PDFs. Query includeSuperseded=true (admin/superadmin only) for superseded revisions.',
     }),
     __param(0, (0, common_1.Request)()),
     __param(1, (0, common_1.Query)('includeSuperseded')),
@@ -456,7 +478,7 @@ __decorate([
 ], KnowledgeDocumentsController.prototype, "suggestMachineName", null);
 __decorate([
     (0, common_1.Get)(':id/extractions'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
     (0, swagger_1.ApiOperation)({ summary: 'Get extracted Problem→Solution candidates for a document' }),
     __param(0, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
@@ -576,26 +598,6 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], KnowledgeDocumentsController.prototype, "databaseSchema", null);
 __decorate([
-    (0, common_1.Get)('qa-success-criteria'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({
-        summary: 'Section 20 QA matrix: original success criteria vs shipped/partial/gap (curated; read-only)',
-    }),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", void 0)
-], KnowledgeDocumentsController.prototype, "qaSuccessCriteria", null);
-__decorate([
-    (0, common_1.Get)('troubleshooting-extraction-reference'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({
-        summary: 'Section 22 read-only: troubleshooting extraction (service, queue, schema, endpoints)',
-    }),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", void 0)
-], KnowledgeDocumentsController.prototype, "troubleshootingExtractionReference", null);
-__decorate([
     (0, common_1.Get)('pipeline-preferences/pdf-vision'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
     (0, swagger_1.ApiOperation)({
@@ -620,12 +622,23 @@ __decorate([
 __decorate([
     (0, common_1.Get)('extraction-feedback/recent'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Recent extraction approve/reject feedback events (analytics)' }),
-    __param(0, (0, common_1.Query)('limit')),
+    (0, swagger_1.ApiOperation)({ summary: 'Paginated extraction approve/reject feedback events' }),
+    __param(0, (0, common_1.Query)('page')),
+    __param(1, (0, common_1.Query)('pageSize')),
+    __param(2, (0, common_1.Query)('signal')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:returntype", Promise)
+], KnowledgeDocumentsController.prototype, "extractionFeedbackRecent", null);
+__decorate([
+    (0, common_1.Get)('extraction-feedback/:eventId'),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
+    (0, swagger_1.ApiOperation)({ summary: 'Single extraction feedback event with full problem/solution text' }),
+    __param(0, (0, common_1.Param)('eventId')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
-], KnowledgeDocumentsController.prototype, "extractionFeedbackRecent", null);
+], KnowledgeDocumentsController.prototype, "extractionFeedbackDetail", null);
 __decorate([
     (0, common_1.Post)(':id/run-ocr'),
     (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
@@ -671,7 +684,7 @@ __decorate([
 ], KnowledgeDocumentsController.prototype, "continueExtraction", null);
 __decorate([
     (0, common_1.Get)(':id/download'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN, user_entity_1.UserRole.WORKER),
     (0, swagger_1.ApiOperation)({ summary: 'Download uploaded PDF' }),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Res)()),
@@ -690,8 +703,8 @@ __decorate([
 ], KnowledgeDocumentsController.prototype, "details", null);
 __decorate([
     (0, common_1.Delete)(':id'),
-    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN),
-    (0, swagger_1.ApiOperation)({ summary: 'Delete a PDF document' }),
+    (0, roles_decorator_1.Roles)(user_entity_1.UserRole.ADMIN, user_entity_1.UserRole.SUPERADMIN, user_entity_1.UserRole.TECHNICIAN),
+    (0, swagger_1.ApiOperation)({ summary: 'Delete a PDF document (technicians: own uploads only)' }),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, common_1.Request)()),
     __metadata("design:type", Function),

@@ -125,6 +125,9 @@ let UsersController = class UsersController {
         return this.usersService.update(id, updateData);
     }
     async remove(req, id) {
+        if (req.user.id === id) {
+            throw new common_1.ForbiddenException('You cannot delete your own account');
+        }
         if (req.user.role === user_entity_1.UserRole.ADMIN) {
             const target = await this.usersService.findOne(id);
             if (target.role === user_entity_1.UserRole.ADMIN || target.role === user_entity_1.UserRole.SUPERADMIN) {

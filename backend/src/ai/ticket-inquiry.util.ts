@@ -1,4 +1,5 @@
 import { Ticket } from '../tickets/entities/ticket.entity';
+import { isOrderIntentMessage } from '../order-techo/order-intent.util';
 import {
   isAwaitingWizardUserInput,
   isBareTicketTrigger,
@@ -151,6 +152,7 @@ export function shouldProcessTicketInquiry(
   history?: { role: string; content: string }[],
   hasCachedTicket?: boolean,
 ): boolean {
+  if (isOrderIntentMessage(message, history)) return false;
   if (isTicketWizardActiveInHistory(history) || isAwaitingWizardUserInput(history)) return false;
   if (isTicketActionIntent(message) || isAwaitingTicketActionConfirm(history)) return false;
   if (isAwaitingMissionDoneConfirm(history)) return false;
@@ -215,6 +217,8 @@ export function extractTicketSearchQuery(
   message: string,
   history?: { role: string; content: string }[],
 ): string | null {
+  if (isOrderIntentMessage(message, history)) return null;
+
   const uuid = extractTicketIdFromText(message);
   if (uuid) return uuid;
 

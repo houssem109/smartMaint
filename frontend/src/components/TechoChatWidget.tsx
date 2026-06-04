@@ -1,20 +1,23 @@
-﻿'use client';
+'use client';
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { MessageCircle, X, Send, Plus, Edit2, ImagePlus, Maximize2 } from 'lucide-react';
+import { MessageCircle, X, Send, Plus, Edit2, Maximize2 } from 'lucide-react';
 import { useChatStore, type ChatSource } from '@/store/chat-store';
 import { displayChatContent } from '@/lib/techo-chat-display';
 import {
   deriveThreadTitleFromMessages,
+  findReusableEmptyThread,
   getThreadDisplayTitle,
-  pickWidgetRecentThreads,
+  getWidgetThreadLabel,
+  pickWidgetActiveThread,
+  sortThreadsByActivity,
 } from '@/lib/techo-thread-title';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 
 export default function TechoChatWidget() {
   const { user } = useAuthStore();
@@ -31,19 +34,17 @@ export default function TechoChatWidget() {
     addMessage,
     isSending,
     setSending,
-    resetThread,
     updateMessage,
     updateNextAssistantMessage,
     setThreadArchived,
     setThreadMessages,
     ensureUserScope,
     autoTitleThread,
+    mergeServerThreads,
   } = useChatStore();
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   /** Data URL or raw base64 for next send (10 Type 2). */
-  const [pendingImage, setPendingImage] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const name = user?.fullName?.trim() || user?.username?.trim() || user?.email?.split('@')[0] || '';
@@ -63,32 +64,56 @@ export default function TechoChatWidget() {
     if (user?.id) ensureUserScope(user.id);
   }, [user?.id, ensureUserScope]);
 
-  // Ensure at least one thread exists when opening
+  // Sync server thread list (same as full Techo page)
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get<{
+          threads: { threadId: string; title: string; lastMessageAt: string; messageCount: number }[];
+        }>('/chat/threads');
+        if (cancelled || !res.data?.threads?.length) return;
+        mergeServerThreads(res.data.threads);
+      } catch {
+        /* optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, mergeServerThreads]);
+
+  // Ensure one sensible active thread when the widget opens
   useEffect(() => {
     if (!isOpen || !user?.id) return;
-    if (!activeThreadId) {
-      if (threads.length > 0) {
-        // Restore first existing thread as active after refresh
-        setActiveThread(threads[0].id);
-      } else {
-        const id = createThread(undefined, user.id);
-        // Techo greeting for new thread
-        addMessage(id, {
-          role: 'assistant',
-          content: greeting,
-        });
+    const state = useChatStore.getState();
+    const pick = pickWidgetActiveThread(state.threads, state.messagesByThread, state.activeThreadId);
+
+    if (pick) {
+      if (state.activeThreadId !== pick.id) setActiveThread(pick.id);
+      const msgs = state.messagesByThread[pick.id];
+      if (!msgs?.length) {
+        addMessage(pick.id, { role: 'assistant', content: greeting });
       }
+      return;
     }
-  }, [isOpen, activeThreadId, threads, createThread, addMessage, setActiveThread, greeting, user?.id]);
+
+    const id = createThread(undefined, user.id);
+    addMessage(id, { role: 'assistant', content: greeting });
+  }, [isOpen, user?.id, createThread, addMessage, setActiveThread, greeting]);
 
   const activeMessages = activeThreadId ? messagesByThread[activeThreadId] || [] : [];
   const activeThread = threads.find((t) => t.id === activeThreadId) || null;
   const isArchived = !!activeThread?.archived;
   const activeDisplayTitle = activeThread
     ? getThreadDisplayTitle(activeThread, activeMessages)
-    : 'New chat';
-  const recentTabs = pickWidgetRecentThreads(threads, messagesByThread, activeThreadId);
-  const hiddenTabCount = Math.max(0, threads.length - recentTabs.length);
+    : 'Techo';
+  const switchableThreads = sortThreadsByActivity(
+    threads.filter((t) => !t.archived),
+    messagesByThread,
+  );
+  const showThreadPicker = switchableThreads.length > 1;
 
   const refreshThreadTitle = async (threadId: string) => {
     const msgs = useChatStore.getState().messagesByThread[threadId] ?? [];
@@ -154,26 +179,6 @@ export default function TechoChatWidget() {
     return match ? match[1] : undefined;
   })();
 
-  const onPickImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    if (!/^image\/(jpeg|png|webp)$/i.test(file.type)) {
-      window.alert('Use JPEG, PNG, or WebP.');
-      return;
-    }
-    if (file.size > 4.2 * 1024 * 1024) {
-      window.alert('Image must be under 4.2 MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const r = reader.result;
-      if (typeof r === 'string') setPendingImage(r);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleSend = async () => {
     const text = input.trim();
     if (!text || isSending) return;
@@ -200,13 +205,11 @@ export default function TechoChatWidget() {
       }));
       addMessage(activeThreadId, {
         role: 'user',
-        content: pendingImage ? `${text}\n[photo attached]` : text,
+        content: text,
       });
     }
 
-    const imagePayload = !isEditing ? pendingImage : null;
     setInput('');
-    setPendingImage(null);
     setSending(true);
 
     try {
@@ -222,7 +225,6 @@ export default function TechoChatWidget() {
         ticketId: currentTicketId,
         history: historyPayload,
         allowTicketCreation: true,
-        ...(imagePayload ? { imageBase64: imagePayload } : {}),
       });
       const replyText = res.data.reply || '…';
       const sources = Array.isArray(res.data.sources) ? res.data.sources : undefined;
@@ -284,22 +286,15 @@ export default function TechoChatWidget() {
     }
   };
 
-  const handleReset = () => {
-    if (!activeThreadId) return;
-    resetThread(activeThreadId);
-    // Re-add greeting after reset
-    addMessage(activeThreadId, {
-      role: 'assistant',
-      content: greeting,
-    });
-  };
-
   const handleNewConversation = () => {
-    const id = createThread(undefined, user?.id);
-    addMessage(id, {
-      role: 'assistant',
-      content: greeting,
-    });
+    if (!user?.id) return;
+    const reusable = findReusableEmptyThread(threads, messagesByThread);
+    if (reusable) {
+      setActiveThread(reusable.id);
+      return;
+    }
+    const id = createThread(undefined, user.id);
+    addMessage(id, { role: 'assistant', content: greeting });
   };
 
   const handleEditFromMessage = (id: string, content: string) => {
@@ -326,104 +321,111 @@ export default function TechoChatWidget() {
 
       {/* Chat panel */}
       {isOpen && (
-        <div className="fixed z-40 bottom-20 right-4 w-full max-w-sm rounded-xl border border-border/60 bg-card shadow-xl flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-border/60 bg-muted/60">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <div className="h-7 w-7 rounded-full bg-primary/90 flex items-center justify-center text-primary-foreground text-xs font-bold">
+        <div className="fixed z-40 bottom-20 right-4 flex h-[min(32rem,calc(100vh-6rem))] w-full max-w-sm flex-col overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xl">
+          <div className="accent-band-top shrink-0" aria-hidden />
+          <header className="shrink-0 border-b border-border/70 bg-card/95 px-3 py-2.5 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-xs font-bold text-primary-foreground shadow-sm ring-2 ring-background">
                   T
                 </div>
-                <div className="flex flex-col min-w-0">
-                  <span className="text-sm font-semibold leading-none truncate max-w-[11rem]">
-                    {activeDisplayTitle}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">Techo · SmartMaint</span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold leading-tight">{activeDisplayTitle}</p>
+                  <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    {!isArchived && (
+                      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                    )}
+                    {isArchived ? 'Closed' : 'Online'}
+                  </p>
                 </div>
               </div>
-              {/* Recent conversation tabs (last few only) */}
-              <div className="mt-1 flex items-center gap-1 min-w-0">
-                <div className="flex flex-1 gap-1 min-w-0 overflow-x-auto">
-                  {recentTabs.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setActiveThread(t.id)}
-                      title={getThreadDisplayTitle(t, messagesByThread[t.id])}
-                      className={`shrink-0 max-w-[7rem] truncate rounded-full border px-2 py-0.5 text-[10px] ${
-                        t.id === activeThreadId
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-transparent text-muted-foreground border-border hover:bg-muted'
-                      } ${t.archived ? 'opacity-60' : ''}`}
-                    >
-                      {getThreadDisplayTitle(t, messagesByThread[t.id])}
-                    </button>
-                  ))}
-                  {hiddenTabCount > 0 && (
-                    <Link
-                      href="/dashboard/techo"
-                      className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted whitespace-nowrap"
-                    >
-                      +{hiddenTabCount} more
-                    </Link>
-                  )}
-                </div>
+              <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
                   onClick={handleNewConversation}
-                  className="ml-1 h-5 w-5 rounded-full border border-border flex items-center justify-center text-[11px] text-muted-foreground hover:bg-muted shrink-0"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                   title="New conversation"
                 >
-                  <Plus className="h-3 w-3" />
+                  <Plus className="h-4 w-4" />
+                </button>
+                <Link
+                  href="/dashboard/techo"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  title="All conversations"
+                  aria-label="All conversations"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </Link>
+                {activeThread && !isArchived && (
+                  <button
+                    type="button"
+                    onClick={handleToggleArchived}
+                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent/10 hover:text-foreground"
+                    title="Mark as done"
+                  >
+                    Done
+                  </button>
+                )}
+                {activeThread && isArchived && (
+                  <button
+                    type="button"
+                    onClick={handleToggleArchived}
+                    className="rounded-lg px-2 py-1 text-[10px] font-medium text-primary hover:bg-primary/10"
+                  >
+                    Reopen
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={close}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted"
+                  aria-label="Close chat"
+                >
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Link
-                href="/dashboard/techo"
-                className="h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center"
-                title="Open full conversations page"
-                aria-label="Open full conversations page"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </Link>
-              {activeThread && (
-                <button
-                  type="button"
-                  onClick={handleToggleArchived}
-                  className="px-2 py-0.5 rounded-full border text-[10px] text-muted-foreground hover:bg-muted"
-                  title={isArchived ? 'Reopen conversation' : 'Mark conversation as done'}
-                >
-                  {isArchived ? 'Reopen' : 'Done'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={close}
-                className="h-7 w-7 rounded-full hover:bg-muted flex items-center justify-center"
-                aria-label="Close chat"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
 
-          <div className="flex-1 max-h-80 overflow-y-auto px-3 py-2 space-y-2 text-sm">
+            {showThreadPicker && (
+              <label className="mt-2 block">
+                <span className="sr-only">Switch conversation</span>
+                <select
+                  value={activeThreadId ?? ''}
+                  onChange={(e) => setActiveThread(e.target.value)}
+                  className="w-full rounded-lg border border-border/80 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm focus-visible:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/15"
+                >
+                  {switchableThreads.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {getWidgetThreadLabel(t, messagesByThread[t.id], threads, messagesByThread)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </header>
+
+          <div className="flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-muted/25 to-background px-3 py-3 text-sm">
             {activeMessages.map((m) => (
               <div
                 key={m.id}
-                className={
-                  m.role === 'user'
-                    ? 'flex justify-end'
-                    : 'flex justify-start'
-                }
+                className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start gap-2'}
               >
-                <div className="relative max-w-[80%] group">
+                {m.role === 'assistant' && (
                   <div
-                    className={
+                    className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-[10px] font-bold text-primary-foreground"
+                    aria-hidden
+                  >
+                    T
+                  </div>
+                )}
+                <div className="relative max-w-[85%] group">
+                  <div
+                    className={cn(
+                      'break-words px-3.5 py-2 text-sm leading-relaxed',
                       m.role === 'user'
-                        ? 'rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-sm break-words'
-                        : 'rounded-lg bg-muted px-3 py-1.5 text-sm text-foreground break-words'
-                    }
+                        ? 'rounded-2xl rounded-br-md bg-primary text-primary-foreground shadow-md shadow-primary/15'
+                        : 'rounded-2xl rounded-bl-md border border-border/60 bg-card text-foreground shadow-sm',
+                    )}
                   >
                     {displayChatContent(m.content)}
                     {m.role === 'assistant' && m.sources && m.sources.length > 0 && (
@@ -454,9 +456,19 @@ export default function TechoChatWidget() {
             ))}
             <div ref={messagesEndRef} />
             {isSending && !editingMessageId && (
-              <div className="flex justify-start">
-                <div className="max-w-[60%] rounded-lg bg-muted px-3 py-1.5 text-xs text-muted-foreground italic">
-                  Techo is thinking…
+              <div className="flex justify-start gap-2">
+                <div
+                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 text-[10px] font-bold text-primary-foreground"
+                  aria-hidden
+                >
+                  T
+                </div>
+                <div className="rounded-2xl rounded-bl-md border border-border/60 bg-card px-3.5 py-2.5 shadow-sm">
+                  <div className="flex gap-1" aria-label="Techo is thinking">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary/50 animate-bounce" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary/50 animate-bounce [animation-delay:150ms]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary/50 animate-bounce [animation-delay:300ms]" />
+                  </div>
                 </div>
               </div>
             )}
@@ -467,63 +479,54 @@ export default function TechoChatWidget() {
             )}
           </div>
 
-          <div className="border-t border-border/60 px-2 py-2 bg-card/90">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={onPickImage}
-            />
-            {pendingImage && (
-              <div className="mb-2 flex items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-1.5">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={pendingImage} alt="" className="h-12 w-12 rounded object-cover shrink-0" />
-                <span className="text-[11px] text-muted-foreground flex-1">Photo will be sent with your message.</span>
-                <button
-                  type="button"
-                  className="text-[11px] text-destructive hover:underline shrink-0"
-                  onClick={() => setPendingImage(null)}
-                >
-                  Remove
-                </button>
-              </div>
-            )}
-            <div className="flex items-end gap-2">
-              <button
-                type="button"
-                className="h-9 w-9 shrink-0 rounded-md border border-input flex items-center justify-center text-muted-foreground hover:bg-muted disabled:opacity-40"
-                disabled={isSending || isArchived}
-                title="Attach photo"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <ImagePlus className="h-4 w-4" />
-              </button>
+          <footer className="shrink-0 border-t border-border/70 bg-card/95 px-3 py-2.5 backdrop-blur-sm">
+            <div
+              className={cn(
+                'flex items-end gap-1.5 rounded-xl border bg-background p-1 shadow-sm transition-all',
+                isArchived
+                  ? 'border-border/50 opacity-60'
+                  : 'border-border/60 focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10',
+              )}
+            >
               <textarea
-                placeholder={isArchived ? 'Conversation is closed.' : 'Ask Techo anything about your work…'}
+                placeholder={isArchived ? 'Conversation closed' : 'Message Techo…'}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown as any}
+                onKeyDown={handleKeyDown as React.KeyboardEventHandler<HTMLTextAreaElement>}
                 rows={1}
-                className="flex-1 max-h-20 resize-none overflow-y-auto rounded-md border border-input bg-background px-2.5 py-1.5 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Message to Techo"
+                className="min-h-[2.5rem] max-h-20 flex-1 resize-none bg-transparent px-2.5 py-2 text-sm leading-relaxed placeholder:text-muted-foreground/70 focus-visible:outline-none disabled:cursor-not-allowed"
                 disabled={isSending || isArchived}
               />
               <Button
                 type="button"
                 size="icon"
-                className="h-9 w-9"
+                aria-label="Send message"
+                className={cn(
+                  'mb-0.5 h-9 w-9 shrink-0 rounded-lg',
+                  input.trim() && !isArchived && !isSending
+                    ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 hover:bg-primary/90'
+                    : 'bg-muted text-muted-foreground',
+                )}
                 onClick={handleSend}
                 disabled={isSending || !input.trim() || isArchived}
               >
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            {currentTicketId && (
-              <p className="mt-1 text-[11px] text-muted-foreground text-right">
-                Linked to ticket {currentTicketId.slice(0, 8)}…
+            {threads.length > 1 && (
+              <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
+                <Link href="/dashboard/techo" className="font-medium text-primary hover:underline">
+                  {threads.length} conversations
+                </Link>
               </p>
             )}
-          </div>
+            {currentTicketId && (
+              <p className="mt-0.5 text-center text-[10px] text-muted-foreground">
+                Ticket {currentTicketId.slice(0, 8)}…
+              </p>
+            )}
+          </footer>
         </div>
       )}
     </>

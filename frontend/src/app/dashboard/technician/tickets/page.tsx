@@ -87,10 +87,7 @@ export default function TechnicianTicketsPage() {
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
       const res = await api.get<Ticket[]>('/tickets', { params });
-      const myTickets = currentUser
-        ? res.data.filter((t) => t.assignedToId === currentUser.id)
-        : [];
-      setTickets(myTickets);
+      setTickets(res.data);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load tickets');
     } finally {

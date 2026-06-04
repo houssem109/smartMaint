@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode, type FC } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -8,7 +8,8 @@ import Layout from '@/components/Layout';
 import ConfirmModal from '@/components/ConfirmModal';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/auth-store';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select } from '@/components/ui/native-select';
@@ -19,6 +20,14 @@ import {
   Save,
   Lock,
   Trash2,
+  FileText,
+  ImageIcon,
+  Download,
+  User,
+  Calendar,
+  MapPin,
+  Wrench,
+  Paperclip,
 } from 'lucide-react';
 
 interface Ticket {
@@ -35,6 +44,7 @@ interface Ticket {
   updatedAt: string;
   createdById?: string;
   createdBy?: { fullName: string; email: string };
+  assignedToId?: string | null;
   assignedTo?: { id?: string; fullName: string; email: string };
   assignmentRequestStatus?: 'none' | 'pending' | 'approved' | 'rejected';
   assignmentRequestedById?: string | null;
@@ -53,6 +63,43 @@ interface TechnicianOption {
   id: string;
   fullName?: string | null;
   email: string;
+}
+
+function getBackPath(role?: string) {
+  const r = role?.toLowerCase?.();
+  if (r === 'admin' || r === 'superadmin') return '/dashboard/admin/tickets';
+  if (r === 'technician') return '/dashboard/technician/tickets';
+  return '/dashboard/worker';
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatLabel(value: string) {
+  return value.replace(/_/g, ' ');
+}
+
+function DetailRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: FC<{ className?: string }>;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <li className="flex items-start gap-3 py-2.5 border-b border-border/40 last:border-0">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="text-sm font-medium break-words">{value}</p>
+      </div>
+    </li>
+  );
 }
 
 export default function TicketDetailPage() {
@@ -181,7 +228,10 @@ export default function TicketDetailPage() {
   const canClose = user?.role === 'admin' || user?.role === 'superadmin' || user?.role === 'technician';
   const canAssignTechnician = user?.role === 'admin' || user?.role === 'superadmin';
   const canRequestSelfAssign = user?.role === 'technician';
-  const showSidebar = user?.role === 'admin' || user?.role === 'superadmin';
+  const showSidebar =
+    user?.role === 'admin' ||
+    user?.role === 'superadmin' ||
+    user?.role === 'technician';
 
   const handleDeleteClick = () => {
     setShowDeleteModal(true);
@@ -253,164 +303,236 @@ export default function TicketDetailPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="max-w-5xl mx-auto">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.back()}
-              className="gap-2 text-muted-foreground hover:text-foreground mb-3"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </Button>
+          <div className="mx-auto mb-12 max-w-5xl space-y-6 pb-10">
+            <div className="flex items-center justify-between gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push(getBackPath(user?.role))}
+                className="gap-1 text-muted-foreground"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to tickets
+              </Button>
+              <span className="font-mono text-xs text-muted-foreground">
+                #{ticket.id.slice(0, 8)}
+              </span>
+            </div>
 
-            {/* Title row: title (left) + status & actions (right) */}
-            <header className="mb-3">
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4">
-                <h1 className="text-2xl font-bold tracking-tight text-foreground break-words flex-1 min-w-0">
-                  {ticket.title}
-                </h1>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  {canUpdateStatus && (
-                    <>
-                      <Select
-                        value={newStatus}
-                        onChange={(e) => setNewStatus(e.target.value)}
-                        className="h-9 min-w-[7rem] rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+            <Card className="border-border/50 shadow-sm">
+              <CardHeader className="space-y-4 pb-4">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1 space-y-3">
+                    <CardTitle className="text-2xl font-semibold leading-tight break-words">
+                      {ticket.title}
+                    </CardTitle>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'text-xs font-medium capitalize',
+                          getStatusBadgeClass(ticket.status),
+                        )}
                       >
-                        <option value="open">Open</option>
-                        <option value="in_review">In Review</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="solved">Solved</option>
-                        <option value="closed">Closed</option>
-                      </Select>
-                      <Button
-                        size="sm"
-                        onClick={handleStatusUpdate}
-                        disabled={updating || newStatus === ticket.status}
-                        className="gap-1.5 h-9"
+                        {formatLabel(ticket.status)}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'text-xs font-medium capitalize',
+                          getPriorityBadgeClass(ticket.priority),
+                        )}
                       >
-                        {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                        Update
-                      </Button>
-                    </>
-                  )}
-                  {canClose && ticket.status !== 'closed' && (
-                    <Button size="sm" variant="outline" onClick={handleCloseTicketClick} disabled={updating} className="gap-1.5 h-9">
-                      <Lock className="h-3.5 w-3.5" />
-                      Close
-                    </Button>
-                  )}
-                  {canDelete && (
-                    <Button size="sm" variant="destructive" onClick={handleDeleteClick} className="gap-1.5 h-9">
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Delete
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-sm mt-2">
-                <Badge variant="outline" className={getStatusBadgeClass(ticket.status) + ' text-xs font-medium px-2.5 py-0.5'}>
-                  {ticket.status.replace('_', ' ')}
-                </Badge>
-                <Badge variant="outline" className={getPriorityBadgeClass(ticket.priority) + ' text-xs font-medium px-2.5 py-0.5'}>
-                  {ticket.priority}
-                </Badge>
-                <Badge variant="outline" className="bg-violet-500/90 text-white border-0 text-xs font-medium px-2.5 py-0.5">
-                  {ticket.category}
-                </Badge>
-                <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground">
-                  {new Date(ticket.createdAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
-                </span>
-              </div>
-            </header>
-
-            <div className="border-t border-border/60 my-4" />
-
-            {/* Main: description (left) + details sidebar (right) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6 pt-2">
-              <section>
-                <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                  Description
-                </h2>
-                <p className="whitespace-pre-wrap text-foreground leading-relaxed text-base">
-                  {ticket.description}
-                </p>
-                {ticket.attachments && ticket.attachments.length > 0 && (
-                  <div className="mt-6">
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                      Attachments
-                    </h3>
-                    <ul className="space-y-2">
-                      {ticket.attachments.map((att) => (
-                        <li key={att.id} className="flex items-center justify-between gap-2 text-sm">
-                          <span className="truncate max-w-xs text-foreground">
-                            {att.fileName}
-                          </span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="shrink-0"
-                            onClick={() => handleOpenAttachment(att.id, att.mimeType)}
-                          >
-                            View / Download
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
+                        {ticket.priority}
+                      </Badge>
+                      <Badge
+                        variant="secondary"
+                        className="text-xs font-medium capitalize"
+                      >
+                        {formatLabel(ticket.category)}
+                      </Badge>
+                    </div>
+                    <CardDescription>
+                      Opened{' '}
+                      {new Date(ticket.createdAt).toLocaleDateString(undefined, {
+                        dateStyle: 'long',
+                      })}
+                    </CardDescription>
                   </div>
-                )}
-              </section>
 
-              <aside className="lg:pl-0">
-                <div className="rounded-lg border border-border/50 bg-muted/30 p-4">
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                    Details
-                  </h2>
-                  {canAssignTechnician && (
-                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
-                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                        Assign technician
-                      </div>
-                      <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {canUpdateStatus && (
+                      <>
                         <Select
-                          value={selectedTechnicianId}
-                          onChange={(e) => setSelectedTechnicianId(e.target.value)}
-                          className="h-9"
+                          value={newStatus}
+                          onChange={(e) => setNewStatus(e.target.value)}
+                          className="h-9 min-w-[8.5rem] text-sm"
                         >
-                          <option value="">Select technician</option>
-                          {technicians.map((tech) => (
-                            <option key={tech.id} value={tech.id}>
-                              {tech.fullName?.trim() || tech.email}
-                            </option>
-                          ))}
+                          <option value="open">Open</option>
+                          <option value="in_review">In review</option>
+                          <option value="in_progress">In progress</option>
+                          <option value="solved">Solved</option>
+                          <option value="closed">Closed</option>
                         </Select>
                         <Button
                           size="sm"
-                          onClick={handleAssignTechnician}
-                          disabled={assigning || !selectedTechnicianId}
-                          className="h-9"
+                          onClick={handleStatusUpdate}
+                          disabled={updating || newStatus === ticket.status}
+                          className="gap-1.5"
                         >
-                          {assigning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Assign'}
+                          {updating ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Save className="h-3.5 w-3.5" />
+                          )}
+                          Update
                         </Button>
-                      </div>
-                    </div>
-                  )}
-                  {canRequestSelfAssign && (
-                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
-                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                        Self-assign
-                      </div>
+                      </>
+                    )}
+                    {canClose && ticket.status !== 'closed' && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleCloseTicketClick}
+                        disabled={updating}
+                        className="gap-1.5"
+                      >
+                        <Lock className="h-3.5 w-3.5" />
+                        Close
+                      </Button>
+                    )}
+                    {canDelete && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={handleDeleteClick}
+                        className="gap-1.5"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
+              <div className="space-y-6">
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg">Description</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="whitespace-pre-wrap text-base leading-relaxed text-foreground/90">
+                      {ticket.description}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                {ticket.attachments && ticket.attachments.length > 0 && (
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-lg">
+                        <Paperclip className="h-4 w-4 text-muted-foreground" />
+                        Attachments
+                        <Badge variant="secondary" className="ml-1 font-normal">
+                          {ticket.attachments.length}
+                        </Badge>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="space-y-2">
+                        {ticket.attachments.map((att) => {
+                          const isImage = att.mimeType.startsWith('image/');
+                          return (
+                            <li
+                              key={att.id}
+                              className="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5"
+                            >
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-background">
+                                {isImage ? (
+                                  <ImageIcon className="h-4 w-4 text-primary" />
+                                ) : (
+                                  <FileText className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate text-sm font-medium">{att.fileName}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatFileSize(att.fileSize)}
+                                </p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="shrink-0 gap-1.5"
+                                onClick={() => handleOpenAttachment(att.id, att.mimeType)}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                Open
+                              </Button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+
+              <aside className="space-y-4">
+                {canAssignTechnician && (
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Assign technician</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Select
+                        value={selectedTechnicianId}
+                        onChange={(e) => setSelectedTechnicianId(e.target.value)}
+                        className="h-10 w-full"
+                      >
+                        <option value="">Select technician</option>
+                        {technicians.map((tech) => (
+                          <option key={tech.id} value={tech.id}>
+                            {tech.fullName?.trim() || tech.email}
+                          </option>
+                        ))}
+                      </Select>
+                      <Button
+                        className="w-full"
+                        size="sm"
+                        onClick={handleAssignTechnician}
+                        disabled={assigning || !selectedTechnicianId}
+                      >
+                        {assigning ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          'Assign'
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {canRequestSelfAssign && (
+                  <Card className="border-border/50 shadow-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Self-assign</CardTitle>
+                    </CardHeader>
+                    <CardContent>
                       {ticket.assignedToId === user?.id ? (
                         <Badge variant="default">Already assigned to you</Badge>
                       ) : ticket.assignedToId ? (
                         <Badge variant="secondary">Already assigned</Badge>
-                      ) : ticket.assignmentRequestStatus === 'pending' && ticket.assignmentRequestedById === user?.id ? (
-                        <Badge variant="outline">Request pending admin approval</Badge>
+                      ) : ticket.assignmentRequestStatus === 'pending' &&
+                        ticket.assignmentRequestedById === user?.id ? (
+                        <Badge variant="outline">Pending admin approval</Badge>
                       ) : (
                         <Button
                           size="sm"
+                          className="w-full"
                           onClick={async () => {
                             if (!ticket) return;
                             setRequestingSelfAssign(true);
@@ -418,127 +540,147 @@ export default function TicketDetailPage() {
                             try {
                               await api.post(`/tickets/${ticket.id}/request-self-assign`);
                               await fetchTicket(ticket.id);
-                              toast.success('Self-assign request sent for admin approval.', { id: toastId });
-                            } catch (error: any) {
-                              toast.error(error.response?.data?.message || 'Failed to send request', {
+                              toast.success('Self-assign request sent for admin approval.', {
                                 id: toastId,
                               });
+                            } catch (error: any) {
+                              toast.error(
+                                error.response?.data?.message || 'Failed to send request',
+                                { id: toastId },
+                              );
                             } finally {
                               setRequestingSelfAssign(false);
                             }
                           }}
                           disabled={requestingSelfAssign}
                         >
-                          {requestingSelfAssign ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Request assignment'}
+                          {requestingSelfAssign ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            'Request assignment'
+                          )}
                         </Button>
                       )}
-                    </div>
-                  )}
-                  {canAssignTechnician && ticket.assignmentRequestStatus === 'pending' && (
-                    <div className="mb-4 rounded-md border border-border/50 bg-background/80 p-3">
-                      <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                        Pending self-assign request
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          disabled={reviewingSelfAssign}
-                          onClick={async () => {
-                            if (!ticket) return;
-                            setReviewingSelfAssign(true);
-                            const toastId = toast.loading('Approving request...');
-                            try {
-                              await api.post(`/tickets/${ticket.id}/assignment-request/approve`);
-                              await fetchTicket(ticket.id);
-                              toast.success('Request approved and technician assigned.', { id: toastId });
-                            } catch (error: any) {
-                              toast.error(error.response?.data?.message || 'Failed to approve request', {
-                                id: toastId,
-                              });
-                            } finally {
-                              setReviewingSelfAssign(false);
-                            }
-                          }}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={reviewingSelfAssign}
-                          onClick={async () => {
-                            if (!ticket) return;
-                            setReviewingSelfAssign(true);
-                            const toastId = toast.loading('Rejecting request...');
-                            try {
-                              await api.post(`/tickets/${ticket.id}/assignment-request/reject`, {
-                                reason: 'Rejected by admin',
-                              });
-                              await fetchTicket(ticket.id);
-                              toast.success('Request rejected.', { id: toastId });
-                            } catch (error: any) {
-                              toast.error(error.response?.data?.message || 'Failed to reject request', {
-                                id: toastId,
-                              });
-                            } finally {
-                              setReviewingSelfAssign(false);
-                            }
-                          }}
-                        >
-                          Reject
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  <ul className="space-y-2.5 text-sm">
-                    <li className="flex justify-between gap-3">
-                      <span className="text-muted-foreground shrink-0">Created by</span>
-                      <span className="font-medium text-right">
-                        {ticket.createdBy?.fullName || ticket.createdBy?.email || '—'}
-                      </span>
-                    </li>
-                    {ticket.assignedTo && (
-                      <li className="flex justify-between gap-3">
-                        <span className="text-muted-foreground shrink-0">Assigned to</span>
-                        <span className="font-medium text-right">
-                          {ticket.assignedTo.fullName || ticket.assignedTo.email}
-                        </span>
-                      </li>
-                    )}
-                    {ticket.subcategory && (
-                      <li className="flex justify-between gap-3">
-                        <span className="text-muted-foreground shrink-0">Type</span>
-                        <span className="font-medium text-right capitalize">
-                          {ticket.subcategory.replace(/_/g, ' ')}
-                        </span>
-                      </li>
-                    )}
-                    {ticket.machine && (
-                      <li className="flex justify-between gap-3">
-                        <span className="text-muted-foreground shrink-0">Machine</span>
-                        <span className="font-medium text-right">{ticket.machine}</span>
-                      </li>
-                    )}
-                    {ticket.area && (
-                      <li className="flex justify-between gap-3">
-                        <span className="text-muted-foreground shrink-0">Area</span>
-                        <span className="font-medium text-right">{ticket.area}</span>
-                      </li>
-                    )}
-                    <li className="flex justify-between gap-3">
-                      <span className="text-muted-foreground shrink-0">Created</span>
-                      <span className="font-medium text-right">
-                        {new Date(ticket.createdAt).toLocaleString()}
-                      </span>
-                    </li>
-                    <li className="flex justify-between gap-3">
-                      <span className="text-muted-foreground shrink-0">Updated</span>
-                      <span className="font-medium text-right">
-                        {new Date(ticket.updatedAt).toLocaleString()}
-                      </span>
-                    </li>
-                  </ul>
-                </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {canAssignTechnician && ticket.assignmentRequestStatus === 'pending' && (
+                  <Card className="border-primary/30 bg-primary/5 shadow-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Pending request</CardTitle>
+                      <CardDescription>Technician asked to be assigned</CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex gap-2">
+                      <Button
+                        size="sm"
+                        className="flex-1"
+                        disabled={reviewingSelfAssign}
+                        onClick={async () => {
+                          if (!ticket) return;
+                          setReviewingSelfAssign(true);
+                          const toastId = toast.loading('Approving request...');
+                          try {
+                            await api.post(`/tickets/${ticket.id}/assignment-request/approve`);
+                            await fetchTicket(ticket.id);
+                            toast.success('Request approved and technician assigned.', {
+                              id: toastId,
+                            });
+                          } catch (error: any) {
+                            toast.error(
+                              error.response?.data?.message || 'Failed to approve request',
+                              { id: toastId },
+                            );
+                          } finally {
+                            setReviewingSelfAssign(false);
+                          }
+                        }}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        disabled={reviewingSelfAssign}
+                        onClick={async () => {
+                          if (!ticket) return;
+                          setReviewingSelfAssign(true);
+                          const toastId = toast.loading('Rejecting request...');
+                          try {
+                            await api.post(`/tickets/${ticket.id}/assignment-request/reject`, {
+                              reason: 'Rejected by admin',
+                            });
+                            await fetchTicket(ticket.id);
+                            toast.success('Request rejected.', { id: toastId });
+                          } catch (error: any) {
+                            toast.error(
+                              error.response?.data?.message || 'Failed to reject request',
+                              { id: toastId },
+                            );
+                          } finally {
+                            setReviewingSelfAssign(false);
+                          }
+                        }}
+                      >
+                        Reject
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card className="border-border/50 shadow-sm">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Details</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <ul>
+                      <DetailRow
+                        icon={User}
+                        label="Created by"
+                        value={
+                          ticket.createdBy?.fullName || ticket.createdBy?.email || '—'
+                        }
+                      />
+                      {ticket.assignedTo && (
+                        <DetailRow
+                          icon={User}
+                          label="Assigned to"
+                          value={
+                            ticket.assignedTo.fullName || ticket.assignedTo.email
+                          }
+                        />
+                      )}
+                      {ticket.subcategory && (
+                        <DetailRow
+                          icon={TicketIcon}
+                          label="Type"
+                          value={
+                            <span className="capitalize">
+                              {formatLabel(ticket.subcategory)}
+                            </span>
+                          }
+                        />
+                      )}
+                      {ticket.machine && (
+                        <DetailRow icon={Wrench} label="Machine" value={ticket.machine} />
+                      )}
+                      {ticket.area && (
+                        <DetailRow icon={MapPin} label="Area" value={ticket.area} />
+                      )}
+                      <DetailRow
+                        icon={Calendar}
+                        label="Created"
+                        value={new Date(ticket.createdAt).toLocaleString()}
+                      />
+                      <DetailRow
+                        icon={Calendar}
+                        label="Last updated"
+                        value={new Date(ticket.updatedAt).toLocaleString()}
+                      />
+                    </ul>
+                  </CardContent>
+                </Card>
               </aside>
             </div>
           </div>

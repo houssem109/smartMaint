@@ -45,6 +45,19 @@ describe('ticket-intent-router.util', () => {
     expect(text).toMatch(/delete the ticket/i);
   });
 
+  it('heuristic routes commande to general_chat not ticket lookup', () => {
+    const r = detectTurnRouteHeuristic({
+      message: 'i have commande 25109760 dont work',
+      history: [],
+      lastTicket: null,
+      pendingActionKind: null,
+      wizardStep: null,
+      hasCachedTicket: false,
+    });
+    expect(r?.intent).toBe('general_chat');
+    expect(r?.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+
   it('heuristic prefers wizard continue over lookup when wizard prompt is last', () => {
     const history = [
       { role: 'user' as const, content: 'create ticket' },

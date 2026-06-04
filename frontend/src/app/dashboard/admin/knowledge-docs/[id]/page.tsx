@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
+import ConfirmModal from '@/components/ConfirmModal';
 import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,8 +15,17 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Edit3, X, FileJson, FileSpreadsheet } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Edit3, X, FileJson, FileSpreadsheet } from 'lucide-react';
 import { downloadCsv, downloadJson } from '@/lib/export-download';
+import {
+  adminApprovePayload,
+  adminFinalLabel,
+  candidateTechReviews,
+  techEditReviews,
+  techReviewLabel,
+  techReviewSummary,
+  type KnowledgeExtractionCandidate,
+} from '@/lib/knowledge-extraction';
 
 interface KnowledgeDocument {
   id: string;
@@ -36,6 +46,68 @@ interface KnowledgeDocument {
   createdAt: string;
   supersedesDocumentId?: string | null;
   supersededByDocumentId?: string | null;
+  progressPercent?: number;
+  currentStage?: string | null;
+  totalPages?: number;
+  pagesProcessed?: number;
+}
+
+/** Developers: set to `true` to show OCR, pipeline export, and batch tools on this page. */
+const SHOW_KNOWLEDGE_DOC_DEV_TOOLS = false;
+
+function adminPdfStatus(status: string) {
+  switch (status) {
+    case 'uploaded':
+      return {
+        label: 'Uploaded',
+        description: 'PDF received. Reading will start soon.',
+      };
+    case 'processing':
+      return {
+        label: 'Reading PDF',
+        description: 'The manual is being read. This can take a few minutes.',
+      };
+    case 'done':
+      return {
+        label: 'Ready',
+        description: 'Finished. Technicians can use this manual in search.',
+      };
+    case 'failed':
+      return {
+        label: 'Failed',
+        description: 'Reading failed. Try again or upload a clearer PDF.',
+      };
+    case 'needs_review':
+      return {
+        label: 'Needs your approval',
+        description: 'Use the yellow box above to approve or reject this upload.',
+      };
+    case 'rejected':
+      return {
+        label: 'Rejected',
+        description: 'This PDF was rejected and is not used.',
+      };
+    case 'partially_indexed':
+      return {
+        label: 'Almost ready',
+        description: 'Reading finished but something may be incomplete. You can try again below.',
+      };
+    case 'gated':
+      return {
+        label: 'In progress',
+        description: 'Check passed. Reading continues.',
+      };
+    case 'superseded':
+      return {
+        label: 'Replaced',
+        description: 'A newer version of this manual exists.',
+      };
+    default:
+      return {
+        label: status.replace(/_/g, ' '),
+        description: '',
+      };
+  }
 }
 
 interface MachineNameSuggestion {
@@ -46,22 +118,6 @@ interface MachineNameSuggestion {
   rejectReason: string | null;
   createdAt: string;
   suggestedBy?: { email: string; fullName?: string | null };
-}
-
-interface KnowledgeExtractionCandidate {
-  id: string;
-  entryType?: string | null;
-  title: string;
-  problemDescription: string;
-  solution: string;
-  symptom?: string | null;
-  rootCause?: string | null;
-  tags: string | null;
-  sourcePages?: string | null;
-  confidence?: number | null;
-  sectionType?: string | null;
-  status: string;
-  createdById: string;
 }
 
 interface PageAnalysisRow {
@@ -145,7 +201,9 @@ export default function KnowledgeDocDetailsPage() {
   const [visionMaxPerBatch, setVisionMaxPerBatch] = useState(20);
   const [currentPage, setCurrentPage] = useState(1);
   const [currentQualityPage, setCurrentQualityPage] = useState(1);
-  const pageSize = 8;
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<KnowledgeExtractionCandidate | null>(null);
+  const pageSize = 1;
   const qualityPageSize = 10;
   const [saving, setSaving] = useState(false);
 
@@ -153,6 +211,7 @@ export default function KnowledgeDocDetailsPage() {
   const [savingOfficial, setSavingOfficial] = useState(false);
   const [suggestions, setSuggestions] = useState<MachineNameSuggestion[]>([]);
   const [rejectOthersReason, setRejectOthersReason] = useState('');
+  const [statusDetail, setStatusDetail] = useState('');
   const [auditReport, setAuditReport] = useState<PipelineAuditReport | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditTab, setAuditTab] = useState<'summary' | 'pages' | 'qdrant'>('summary');
@@ -173,6 +232,7 @@ export default function KnowledgeDocDetailsPage() {
     try {
       const res = await api.get<{ document: KnowledgeDocument; resume: any }>(`/knowledge-documents/${id}`);
       setDoc(res.data.document);
+      setStatusDetail(res.data.resume?.message?.trim() || '');
       setOfficialName(res.data.document.machineName?.trim() || '');
       if (res.data.document.machineName?.trim()) {
         setSuggestions([]);
@@ -209,6 +269,7 @@ export default function KnowledgeDocDetailsPage() {
     try {
       const detailRes = await api.get<{ document: KnowledgeDocument; resume: any }>(`/knowledge-documents/${id}`);
       setDoc(detailRes.data.document);
+      setStatusDetail(detailRes.data.resume?.message?.trim() || '');
       setOfficialName(detailRes.data.document.machineName?.trim() || '');
       const hasMachineName = !!detailRes.data.document.machineName?.trim();
 
@@ -263,10 +324,6 @@ export default function KnowledgeDocDetailsPage() {
   }, [id]);
 
   useEffect(() => {
-    setCurrentPage(1);
-  }, [extractions.length]);
-
-  useEffect(() => {
     setCurrentQualityPage(1);
   }, [pageAnalysis.length]);
 
@@ -289,18 +346,29 @@ export default function KnowledgeDocDetailsPage() {
     return { candidate, approved, rejected };
   }, [extractions]);
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(extractions.length / pageSize)),
-    [extractions.length],
+  const pendingExtractions = useMemo(
+    () => extractions.filter((e) => e.status === 'candidate'),
+    [extractions],
+  );
+
+  const totalListPages = useMemo(
+    () => Math.max(1, Math.ceil(pendingExtractions.length / pageSize)),
+    [pendingExtractions.length],
   );
 
   const paginatedExtractions = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return extractions.slice(start, start + pageSize);
-  }, [extractions, currentPage]);
+    return pendingExtractions.slice(start, start + pageSize);
+  }, [pendingExtractions, currentPage]);
 
-  const startIndex = extractions.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const endIndex = Math.min(currentPage * pageSize, extractions.length);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pendingExtractions.length]);
+
+  useEffect(() => {
+    if (currentPage > totalListPages) setCurrentPage(totalListPages);
+  }, [currentPage, totalListPages]);
+
   const nonGoodPageRows = useMemo(
     () => pageAnalysis.filter((p) => p.quality !== 'good'),
     [pageAnalysis],
@@ -330,18 +398,13 @@ export default function KnowledgeDocDetailsPage() {
     return 'outline';
   };
 
-  const extractionStatusVariant = (status: string) => {
-    if (status === 'approved') return 'default';
-    if (status === 'rejected') return 'destructive';
-    return 'secondary';
-  };
-
   const openEditModal = (c: KnowledgeExtractionCandidate) => {
+    const payload = adminApprovePayload(c);
     setEditingCandidate(c);
     setForm({
-      title: c.title || '',
-      problemDescription: c.problemDescription || '',
-      solution: c.solution || '',
+      title: payload.title || '',
+      problemDescription: payload.problemDescription || '',
+      solution: payload.solution || '',
       tags: c.tags || '',
     });
     setModalOpen(true);
@@ -369,18 +432,37 @@ export default function KnowledgeDocDetailsPage() {
     }
   };
 
+  const handleQuickApprove = async (c: KnowledgeExtractionCandidate) => {
+    setApprovingId(c.id);
+    try {
+      await api.post(`/knowledge-documents/extractions/${c.id}/approve`, adminApprovePayload(c));
+      toast.success('Added to knowledge base');
+      await fetchExtractions();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to approve');
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
   const handleReject = async (c: KnowledgeExtractionCandidate) => {
-    if (!window.confirm('Reject this extracted item?')) return;
     setSaving(true);
     try {
       await api.post(`/knowledge-documents/extractions/${c.id}/reject`);
-      toast.success('Candidate rejected');
-      fetchExtractions();
+      toast.success('Suggestion rejected');
+      await fetchExtractions();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to reject');
     } finally {
       setSaving(false);
     }
+  };
+
+  const confirmReject = async () => {
+    if (!rejectTarget) return;
+    const target = rejectTarget;
+    setRejectTarget(null);
+    await handleReject(target);
   };
 
   const handleDeleteDocument = async () => {
@@ -648,20 +730,13 @@ export default function KnowledgeDocDetailsPage() {
               <p className="text-sm text-muted-foreground mt-1">
                 {doc ? `Uploaded by ${doc.uploadedBy?.fullName || doc.uploadedBy?.email || '—'} • ${new Date(doc.createdAt).toLocaleString()}` : ''}
               </p>
-              {doc && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Type: {doc.docType || '—'} • Gate:{' '}
-                  {typeof doc.gateConfidence === 'number'
-                    ? `${Math.round(doc.gateConfidence * 100)}%`
-                    : '—'}
-                  {doc.needsReview ? ' • needs review' : ''} • Mode:{' '}
-                  {doc.deepMode === false ? 'fast' : 'deep'}
-                </p>
+              {doc?.machineName?.trim() && (
+                <p className="text-sm text-muted-foreground mt-1">Machine: {doc.machineName.trim()}</p>
               )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <Badge variant={statusVariant(doc?.status || 'uploaded') as any} className="text-xs capitalize">
-                {doc?.status || 'uploaded'}
+              <Badge variant={statusVariant(doc?.status || 'uploaded') as any} className="text-xs">
+                {adminPdfStatus(doc?.status || 'uploaded').label}
               </Badge>
               <Button variant="outline" size="sm" onClick={fetchAll}>
                 Refresh
@@ -690,11 +765,11 @@ export default function KnowledgeDocDetailsPage() {
           {doc?.status === 'needs_review' && (
             <Card className="border-amber-500/40 bg-amber-500/5 shadow-sm">
               <CardHeader>
-                <CardTitle className="text-lg">Gate review</CardTitle>
+                <CardTitle className="text-lg">Approve this PDF?</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2 items-center">
                 <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
-                  Relevance gate marked this upload for admin review before extraction continues.
+                  Please check this PDF is a real maintenance manual before we read it.
                 </p>
                 <Button size="sm" onClick={handleApproveGate} disabled={saving}>
                   Approve & continue
@@ -775,19 +850,26 @@ export default function KnowledgeDocDetailsPage() {
                 <CardTitle className="text-lg">Machine name suggestions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Note when approving (optional)</Label>
-                  <Textarea
-                    rows={2}
-                    value={rejectOthersReason}
-                    onChange={(e) => setRejectOthersReason(e.target.value)}
-                    placeholder="If you approve one suggestion, other pending suggestions are rejected with this message (or a default)."
-                  />
-                </div>
                 {suggestions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No suggestions yet.</p>
+                  <p className="text-sm text-muted-foreground">
+                    Technicians can propose a name from their PDF view. Until then, set the name in{' '}
+                    <span className="font-medium text-foreground">Official machine name</span> above.
+                  </p>
                 ) : (
-                  <div className="space-y-3">
+                  <>
+                    {suggestions.some((s) => s.status === 'pending') && (
+                      <div className="space-y-2 rounded-lg border border-border/50 bg-muted/10 p-3">
+                        <Label htmlFor="reject-others-reason">Note when approving (optional)</Label>
+                        <Textarea
+                          id="reject-others-reason"
+                          rows={2}
+                          value={rejectOthersReason}
+                          onChange={(e) => setRejectOthersReason(e.target.value)}
+                          placeholder="Other pending suggestions are rejected with this note (or a default)."
+                        />
+                      </div>
+                    )}
+                    <div className="space-y-3">
                     {suggestions.map((s) => (
                       <div
                         key={s.id}
@@ -829,7 +911,8 @@ export default function KnowledgeDocDetailsPage() {
                         </div>
                       </div>
                     ))}
-                  </div>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>
@@ -837,83 +920,148 @@ export default function KnowledgeDocDetailsPage() {
 
           <Card className="border-border/50 shadow-sm">
             <CardHeader>
-              <CardTitle className="text-lg">Resume</CardTitle>
+              <CardTitle className="text-lg">Status</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <div className="rounded-lg border border-border/50 bg-card/60 p-3">
-                  <div className="text-xs text-muted-foreground">Chunks indexed</div>
-                  <div className="text-lg font-semibold">{doc?.chunksIndexed ?? 0}</div>
-                </div>
-                <div className="rounded-lg border border-border/50 bg-card/60 p-3">
-                  <div className="text-xs text-muted-foreground">Candidates extracted</div>
-                  <div className="text-lg font-semibold">{counts.candidate + counts.approved + counts.rejected}</div>
-                </div>
-                <div className="rounded-lg border border-border/50 bg-card/60 p-3">
-                  <div className="text-xs text-muted-foreground">Approved</div>
-                  <div className="text-lg font-semibold">{counts.approved}</div>
-                </div>
-                <div className="rounded-lg border border-border/50 bg-card/60 p-3">
-                  <div className="text-xs text-muted-foreground">Rejected</div>
-                  <div className="text-lg font-semibold">{counts.rejected}</div>
-                </div>
-              </div>
-              <div className="rounded-md bg-muted/30 border border-border/40 p-3 text-sm text-muted-foreground">
-                Extraction should populate the candidates list shortly. If nothing appears, try Refresh.
-              </div>
+            <CardContent className="space-y-4">
+              {doc && (
+                <>
+                  <div className="rounded-lg border border-border/50 bg-muted/15 p-4">
+                    <p className="font-medium">{adminPdfStatus(doc.status).label}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {adminPdfStatus(doc.status).description}
+                    </p>
+                    {statusDetail &&
+                      (doc.status === 'failed' ||
+                        doc.status === 'rejected' ||
+                        doc.status === 'partially_indexed') && (
+                        <p className="mt-2 text-sm text-destructive/90">{statusDetail}</p>
+                      )}
+                  </div>
+
+                  {(doc.status === 'processing' || doc.status === 'uploaded') &&
+                    typeof doc.progressPercent === 'number' && (
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Progress</span>
+                          <span>{Math.min(100, Math.max(0, doc.progressPercent))}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full bg-primary transition-all"
+                            style={{
+                              width: `${Math.min(100, Math.max(0, doc.progressPercent))}%`,
+                            }}
+                          />
+                        </div>
+                        {typeof doc.pagesProcessed === 'number' && typeof doc.totalPages === 'number' && (
+                          <p className="text-xs text-muted-foreground">
+                            Page {doc.pagesProcessed} of {doc.totalPages}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                  {(doc.status === 'done' ||
+                    doc.status === 'partially_indexed' ||
+                    doc.status === 'processing') && (
+                    <p className="text-sm text-muted-foreground">
+                      {counts.candidate > 0 ? (
+                        <>
+                          The system found{' '}
+                          <span className="font-semibold text-foreground">{counts.candidate}</span>{' '}
+                          problem/solution suggestion{counts.candidate === 1 ? '' : 's'} in this
+                          manual.
+                          {counts.approved > 0 && (
+                            <>
+                              {' '}
+                              <span className="font-semibold text-foreground">{counts.approved}</span>{' '}
+                              already kept in the knowledge base.
+                            </>
+                          )}
+                        </>
+                      ) : counts.approved > 0 ? (
+                        <>
+                          All suggestions from this PDF were reviewed.{' '}
+                          <span className="font-semibold text-foreground">{counts.approved}</span>{' '}
+                          {counts.approved === 1 ? 'is' : 'are'} in the knowledge base.
+                        </>
+                      ) : doc.status === 'processing' ? (
+                        <>Suggestions will appear in the list below when reading finishes.</>
+                      ) : (
+                        <>No problem/solution suggestions were found in this PDF.</>
+                      )}
+                    </p>
+                  )}
+
+                  {doc.status === 'uploaded' && (
+                    <p className="text-sm text-muted-foreground">
+                      Reading has not started yet. Click <span className="font-medium text-foreground">Refresh</span>{' '}
+                      in a moment.
+                    </p>
+                  )}
+
+                  {(doc.status === 'failed' || doc.status === 'partially_indexed') && (
+                    <Button variant="default" size="sm" onClick={handleContinueExtraction} disabled={saving}>
+                      Try reading again
+                    </Button>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {SHOW_KNOWLEDGE_DOC_DEV_TOOLS && (
+          <details className="group rounded-lg border border-border/50 bg-card/40 shadow-sm">
+            <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium marker:content-none [&::-webkit-details-marker]:hidden">
+              Advanced tools (technical team)
+            </summary>
+            <div className="space-y-4 border-t border-border/50 px-4 py-4">
               <div className="rounded-md border border-border/40 p-3 text-sm">
-                <div className="font-medium">Batch execution estimate</div>
+                <div className="font-medium">Batch estimate</div>
                 <div className="mt-1 text-muted-foreground">
                   {totalPagesForBatching > 0 ? (
                     <>
-                      This manual is expected to run in <span className="font-semibold text-foreground">{estimatedBatchCount}</span>{' '}
-                      batch(es): {totalPagesForBatching} page(s) / {docBatchPages} pages per batch.
+                      ~{estimatedBatchCount} batch(es) for {totalPagesForBatching} page(s) ({docBatchPages}{' '}
+                      pages per batch, vision cap {visionMaxPerBatch}).
                     </>
                   ) : (
-                    <>Batch estimate will appear after page analysis is available.</>
+                    <>Available after page analysis.</>
                   )}
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Vision cap per batch: {visionMaxPerBatch} page(s).
-                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-2">
                 {(doc?.status === 'failed' || doc?.status === 'partially_indexed') && (
-                  <Button variant="default" size="sm" onClick={handleContinueExtraction} disabled={saving}>
+                  <Button variant="outline" size="sm" onClick={handleContinueExtraction} disabled={saving}>
                     Continue extraction
                   </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={handleReindexManual} disabled={saving}>
-                  Re-index manual RAG (Qdrant)
+                  Re-index search index
                 </Button>
-                <span className="text-xs text-muted-foreground">
-                  Continue = resume after OpenRouter/OCR fail (no re-upload). Re-index = Qdrant only.
-                </span>
               </div>
               {pageAnalysis.length > 0 && (
-                <div className="rounded-md border border-border/40 p-3">
-                  <div className="text-sm font-medium">Page quality (OCR scaffold)</div>
-                  <div className="mt-2 text-xs text-muted-foreground space-y-1">
+                <div className="rounded-md border border-border/40 p-3 text-sm">
+                  <div className="font-medium">Page quality (OCR)</div>
+                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                     <div>
-                      Good:{' '}
-                      {pageAnalysis.filter((p) => p.quality === 'good').length} • Degraded:{' '}
-                      {pageAnalysis.filter((p) => p.quality === 'degraded').length} • Poor:{' '}
-                      {pageAnalysis.filter((p) => p.quality === 'poor').length} • Unreadable:{' '}
+                      Good: {pageAnalysis.filter((p) => p.quality === 'good').length} · Degraded:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'degraded').length} · Poor:{' '}
+                      {pageAnalysis.filter((p) => p.quality === 'poor').length} · Unreadable:{' '}
                       {pageAnalysis.filter((p) => p.quality === 'unreadable').length}
                     </div>
                     {paginatedQualityRows.map((p) => (
-                        <div key={p.id}>
-                          Page {p.pageNumber}: {p.quality}
-                          {typeof p.ocrConfidence === 'number'
-                            ? ` (${Math.round(p.ocrConfidence * 100)}%)`
-                            : ''}
-                        </div>
-                      ))}
+                      <div key={p.id}>
+                        Page {p.pageNumber}: {p.quality}
+                        {typeof p.ocrConfidence === 'number'
+                          ? ` (${Math.round(p.ocrConfidence * 100)}%)`
+                          : ''}
+                      </div>
+                    ))}
                   </div>
                   {nonGoodPageRows.length > 0 && (
                     <div className="mt-2 flex items-center justify-between border-t border-border/30 pt-2">
                       <span className="text-xs text-muted-foreground">
-                        Showing {qualityStartIndex}-{qualityEndIndex} of {nonGoodPageRows.length} pages
+                        {qualityStartIndex}-{qualityEndIndex} of {nonGoodPageRows.length} flagged pages
                       </span>
                       <div className="flex items-center gap-2">
                         <Button
@@ -940,33 +1088,24 @@ export default function KnowledgeDocDetailsPage() {
                       </div>
                     </div>
                   )}
-                  <div className="my-3 h-px bg-border" />
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <Button variant="outline" size="sm" onClick={handleRunOcr} disabled={saving}>
-                      Run OCR (VL pages)
+                      Run OCR
                     </Button>
                     <Button variant="outline" size="sm" onClick={handleRunVision} disabled={saving}>
-                      Run vision (Ollama)
+                      Run vision
                     </Button>
-                    <span className="text-xs text-muted-foreground">
-                      OCR: Poppler + PaddleOCR-VL (GPU). Vision: ENABLE_PDF_VISION + llava:latest (or OLLAMA_VISION_MODEL).
-                    </span>
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
 
-          <Card className="border-border/50 shadow-sm border-primary/20">
-            <CardHeader>
-              <CardTitle className="text-lg">Pipeline data &amp; export (rapport / jury)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              <Card className="border-primary/20 shadow-none">
+                <CardHeader className="px-0 pt-0">
+                  <CardTitle className="text-base">Pipeline export</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 px-0 pb-0">
               <p className="text-sm text-muted-foreground">
-                Load a full trace: <strong>before</strong> = page OCR/vision text in PostgreSQL;{' '}
-                <strong>after</strong> = chunks in Qdrant. Download the{' '}
-                <strong>Excel report</strong> for a readable multi-sheet file (summary, pages, search
-                chunks, LLM extraction). After fixes, click <strong>Re-index manual RAG</strong> above.
+                Excel/JSON exports for debugging or jury reports (developers).
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" onClick={loadAuditReport} disabled={auditLoading}>
@@ -985,11 +1124,6 @@ export default function KnowledgeDocDetailsPage() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={exportQdrantCsv} disabled={!auditReport}>
                   CSV Qdrant
-                </Button>
-                <Button asChild size="sm" variant="outline">
-                  <Link href={`/dashboard/admin/rag-stored-data?documentId=${encodeURIComponent(id || '')}`}>
-                    Global RAG viewer
-                  </Link>
                 </Button>
               </div>
 
@@ -1146,109 +1280,239 @@ export default function KnowledgeDocDetailsPage() {
                   )}
                 </>
               )}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </div>
+          </details>
+          )}
 
           <Card className="border-border/50 shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-lg">Extracted Problem → Solution items</CardTitle>
+            <CardHeader className="border-b border-border/40 pb-4">
+              <div className="flex items-center justify-between gap-4">
+                <CardTitle className="text-lg font-semibold">Review suggestions</CardTitle>
+                {pendingExtractions.length > 0 && (
+                  <span className="text-sm text-muted-foreground tabular-nums shrink-0">
+                    {currentPage} / {totalListPages}
+                  </span>
+                )}
+              </div>
+              {counts.candidate > 0 && (
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {counts.candidate} remaining
+                  {counts.approved > 0 ? ` · ${counts.approved} saved` : ''}
+                  {(() => {
+                    const techDone = extractions.filter(
+                      (e) => e.status === 'candidate' && (e.techReviews?.length ?? 0) > 0,
+                    ).length;
+                    return techDone > 0 ? ` · ${techDone} with technician review` : '';
+                  })()}
+                </p>
+              )}
             </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Title</TableHead>
-                    <TableHead>Problem</TableHead>
-                    <TableHead>Solution</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {extractions.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4}>
-                        <div className="text-sm text-muted-foreground py-6 text-center">
-                          No extraction results yet. Refresh after a minute.
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    paginatedExtractions.map((c) => (
-                      <TableRow key={c.id} className="align-top">
-                        <TableCell className="min-w-[220px]">
-                          <div className="font-medium">{c.title}</div>
-                          <div className="text-[11px] text-muted-foreground mt-1">
-                            Type: {c.entryType || '—'} • Section: {c.sectionType || '—'} • Confidence:{' '}
-                            {typeof c.confidence === 'number'
-                              ? `${Math.round(c.confidence * 100)}%`
-                              : '—'}
-                          </div>
-                          {c.sourcePages && (
-                            <div className="text-[11px] text-muted-foreground">
-                              Source pages: {c.sourcePages}
-                            </div>
+            <CardContent className="p-0">
+              {extractions.length === 0 ? (
+                <p className="px-6 py-12 text-center text-sm text-muted-foreground">
+                  Nothing found yet. Click Refresh in a minute.
+                </p>
+              ) : pendingExtractions.length === 0 ? (
+                <p className="px-6 py-12 text-center text-sm text-muted-foreground">
+                  All done for this PDF.
+                </p>
+              ) : (
+                (() => {
+                  const c = paginatedExtractions[0];
+                  if (!c) return null;
+                  const busy = saving || approvingId === c.id;
+                  const techReviews = candidateTechReviews(c);
+                  const editReviews = techEditReviews(c);
+                  const rejectReviews = techReviews.filter((r) => r.action === 'reject');
+                  return (
+                    <article>
+                      <div className="flex flex-col gap-5 px-6 py-6 sm:flex-row sm:gap-6">
+                        <aside className="shrink-0 space-y-3 sm:w-52">
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                            Technicians
+                          </p>
+                          {techReviews.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No reviews yet</p>
+                          ) : (
+                            <ul className="space-y-2">
+                              {techReviews.map((r) => (
+                                <li
+                                  key={r.id}
+                                  className={`text-sm font-medium ${
+                                    r.action === 'reject'
+                                      ? 'text-destructive'
+                                      : r.action === 'approve_edit'
+                                        ? 'text-amber-700 dark:text-amber-400'
+                                        : 'text-primary'
+                                  }`}
+                                >
+                                  {techReviewLabel(r)}
+                                </li>
+                              ))}
+                            </ul>
                           )}
-                        </TableCell>
-                        <TableCell className="max-w-[320px]">
-                          <div className="text-xs text-muted-foreground whitespace-pre-wrap overflow-hidden" style={{ maxHeight: 90 }}>
-                            {c.problemDescription}
-                          </div>
-                        </TableCell>
-                        <TableCell className="max-w-[320px]">
-                          <div className="text-xs text-muted-foreground whitespace-pre-wrap overflow-hidden" style={{ maxHeight: 90 }}>
-                            {c.solution}
-                          </div>
-                        </TableCell>
-                        <TableCell className="min-w-[160px]">
-                          <div className="space-y-2">
-                            <Badge variant={extractionStatusVariant(c.status) as any} className="text-xs capitalize">
-                              {c.status}
-                            </Badge>
-                            {c.status === 'candidate' && (
-                              <div className="flex flex-col gap-2">
-                                <Button variant="outline" size="sm" onClick={() => openEditModal(c)} disabled={saving} className="gap-2">
-                                  <Edit3 className="h-3.5 w-3.5" />
-                                  Edit
-                                </Button>
-                                <Button variant="destructive" size="sm" onClick={() => handleReject(c)} disabled={saving}>
-                                  Reject
-                                </Button>
-                              </div>
+                          {techReviewSummary(c) && (
+                            <p className="text-xs text-muted-foreground">{techReviewSummary(c)}</p>
+                          )}
+                          {adminFinalLabel(c) && (
+                            <p className="border-t border-border/40 pt-2 text-sm font-medium text-foreground">
+                              {adminFinalLabel(c)}
+                            </p>
+                          )}
+                        </aside>
+                        <div className="min-w-0 flex-1 space-y-5">
+                          <div>
+                            <h3 className="text-lg font-medium leading-snug">
+                              {c.title || 'Untitled'}
+                            </h3>
+                            {c.sourcePages && (
+                              <p className="mt-1 text-sm text-muted-foreground">
+                                Page {c.sourcePages}
+                              </p>
                             )}
                           </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-              {extractions.length > 0 && (
-                <div className="flex items-center justify-between border-t border-border/40 px-4 py-2">
-                  <span className="text-xs text-muted-foreground">
-                    Showing {startIndex}-{endIndex} of {extractions.length} items
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={currentPage === totalPages}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
+
+                          <div className="space-y-4 text-sm leading-relaxed">
+                            {editReviews.length > 0 ? (
+                              <>
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    Original — Problem
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-foreground/80">
+                                    {c.problemDescription || '—'}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    Original — Solution
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-foreground/80">
+                                    {c.solution || '—'}
+                                  </p>
+                                </div>
+                                {editReviews.map((r) => (
+                                  <div
+                                    key={r.id}
+                                    className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+                                  >
+                                    <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                                      {techReviewLabel(r)}
+                                    </p>
+                                    <div>
+                                      <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
+                                        Problem
+                                      </p>
+                                      <p className="whitespace-pre-wrap text-foreground/90">
+                                        {r.editedProblemDescription || '—'}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
+                                        Solution
+                                      </p>
+                                      <p className="whitespace-pre-wrap text-foreground/90">
+                                        {r.editedSolution || '—'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
+                            ) : (
+                              <>
+                                <p className="whitespace-pre-wrap text-foreground/90">
+                                  <span className="font-medium text-foreground">Problem — </span>
+                                  {c.problemDescription || '—'}
+                                </p>
+                                <p className="whitespace-pre-wrap text-foreground/90">
+                                  <span className="font-medium text-foreground">Solution — </span>
+                                  {c.solution || '—'}
+                                </p>
+                              </>
+                            )}
+                            {rejectReviews.map(
+                              (r) =>
+                                r.rejectReason && (
+                                  <p key={r.id} className="text-sm text-muted-foreground">
+                                    <span className="font-medium text-foreground">
+                                      {techReviewLabel(r)} — note:{' '}
+                                    </span>
+                                    {r.rejectReason}
+                                  </p>
+                                ),
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-border/40 bg-muted/20 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex gap-2">
+                          <Button
+                            className="gap-1.5 min-w-[7rem]"
+                            onClick={() => handleQuickApprove(c)}
+                            disabled={busy}
+                          >
+                            {approvingId === c.id ? (
+                              'Saving…'
+                            ) : (
+                              <>
+                                <Check className="h-4 w-4" />
+                                Approve
+                              </>
+                            )}
+                          </Button>
+                          <Button variant="outline" onClick={() => openEditModal(c)} disabled={busy}>
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => setRejectTarget(c)}
+                            disabled={busy}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                        <div className="flex items-center gap-2 sm:justify-end">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={currentPage === 1 || busy}
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            Back
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage((p) => Math.min(totalListPages, p + 1))}
+                            disabled={currentPage === totalListPages || busy}
+                          >
+                            Skip
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })()
               )}
             </CardContent>
           </Card>
+
+          <ConfirmModal
+            isOpen={!!rejectTarget}
+            title="Reject this suggestion?"
+            message="It will not be added to the knowledge base. This is recorded in the activity log."
+            confirmText="Reject"
+            cancelText="Cancel"
+            type="danger"
+            onConfirm={() => void confirmReject()}
+            onCancel={() => setRejectTarget(null)}
+          />
 
           <div className="flex items-center gap-3">
             <Button asChild variant="outline">
@@ -1259,7 +1523,7 @@ export default function KnowledgeDocDetailsPage() {
 
         {modalOpen && editingCandidate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <Card accentBand className="w-full max-w-2xl max-h-[90vh] shadow-xl overflow-y-auto">
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle>Edit candidate</CardTitle>
                 <Button variant="ghost" size="icon" onClick={() => setModalOpen(false)} aria-label="Close edit modal">

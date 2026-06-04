@@ -2,11 +2,13 @@ import { OnModuleInit } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { KnowledgeDocument } from './entities/knowledge-document.entity';
 import { KnowledgeExtractionCandidate } from './entities/knowledge-extraction-candidate.entity';
+import { KnowledgeExtractionTechReview } from './entities/knowledge-extraction-tech-review.entity';
 import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity';
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
 import { PipelinePreferences } from './entities/pipeline-preferences.entity';
 import { ExtractionFeedbackEvent } from './entities/extraction-feedback-event.entity';
+import { KnowledgeEntry } from '../knowledge/entities/knowledge-entry.entity';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AiService } from '../ai/ai.service';
 import { RagService } from '../ai/rag.service';
@@ -19,11 +21,13 @@ import { chunkQualityFlags } from './pdf-chunk-quality.util';
 export declare class KnowledgeDocumentsService implements OnModuleInit {
     private readonly knowledgeDocumentsRepository;
     private readonly extractionCandidatesRepository;
+    private readonly extractionTechReviewsRepository;
     private readonly machineNameSuggestionsRepository;
     private readonly pageAnalysisRepository;
     private readonly knowledgeDocumentJobRepository;
     private readonly extractionFeedbackRepository;
     private readonly auditLogRepository;
+    private readonly knowledgeEntryRepository;
     private readonly pipelinePreferencesRepository;
     private readonly gateQueue;
     private readonly extractionQueue;
@@ -39,7 +43,7 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     private workProfileEmbedding;
     private nonWorkProfileEmbedding;
     private pdfVisionAdminEnabled;
-    constructor(knowledgeDocumentsRepository: Repository<KnowledgeDocument>, extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>, machineNameSuggestionsRepository: Repository<MachineNameSuggestion>, pageAnalysisRepository: Repository<KnowledgeDocumentPageAnalysis>, knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>, extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>, auditLogRepository: Repository<AuditLog>, pipelinePreferencesRepository: Repository<PipelinePreferences>, gateQueue: Queue, extractionQueue: Queue, indexingQueue: Queue, ocrQueue: Queue, visionQueue: Queue, knowledgeService: KnowledgeService, aiService: AiService, ragService: RagService, machineProfilesService: MachineProfilesService, documentProgressGateway: DocumentProgressGateway);
+    constructor(knowledgeDocumentsRepository: Repository<KnowledgeDocument>, extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>, extractionTechReviewsRepository: Repository<KnowledgeExtractionTechReview>, machineNameSuggestionsRepository: Repository<MachineNameSuggestion>, pageAnalysisRepository: Repository<KnowledgeDocumentPageAnalysis>, knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>, extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>, auditLogRepository: Repository<AuditLog>, knowledgeEntryRepository: Repository<KnowledgeEntry>, pipelinePreferencesRepository: Repository<PipelinePreferences>, gateQueue: Queue, extractionQueue: Queue, indexingQueue: Queue, ocrQueue: Queue, visionQueue: Queue, knowledgeService: KnowledgeService, aiService: AiService, ragService: RagService, machineProfilesService: MachineProfilesService, documentProgressGateway: DocumentProgressGateway);
     onModuleInit(): Promise<void>;
     private loadPdfVisionAdminPreference;
     private isEffectivePdfVision;
@@ -75,9 +79,17 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     }>;
     findAll(opts?: {
         includeSuperseded?: boolean;
+        uploadedById?: string;
     }): Promise<KnowledgeDocument[]>;
     findOne(id: string): Promise<KnowledgeDocument>;
     getExtractionsForDocument(documentId: string): Promise<KnowledgeExtractionCandidate[]>;
+    submitTechExtractionReview(candidateId: string, technicianId: string, payload: {
+        action: 'approve' | 'approve_edit' | 'reject';
+        title?: string;
+        problemDescription?: string;
+        solution?: string;
+        reason?: string;
+    }): Promise<KnowledgeExtractionTechReview>;
     getExtractionStats(documentId: string): Promise<{
         extractedCandidates: number;
         approvedCandidates: number;
@@ -271,45 +283,6 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
             purpose: string;
         }[];
     };
-    getQaSuccessCriteria(): {
-        checkedAt: string;
-        rows: {
-            id: string;
-            goal: string;
-            status: 'shipped' | 'partial' | 'gap' | 'aspirational';
-            notes: string;
-        }[];
-    };
-    getTroubleshootingExtractionReference(): {
-        checkedAt: string;
-        responsibility: string;
-        implementation: {
-            service: string;
-            method: string;
-            bullQueue: string;
-            bullJobType: string;
-        };
-        systemPromptRelativePaths: string[];
-        envKeys: string[];
-        textWindowNote: string;
-        persistence: {
-            table: string;
-            entity: string;
-            statusValues: string[];
-            requiredCandidateFields: string[];
-            optionalCandidateFields: string[];
-        };
-        pageSectionLabels: string[];
-        chunkSectionLabels: string[];
-        extractionUserMessageSchema: string;
-        entryTypesFromLlm: string[];
-        relatedEndpoints: {
-            method: string;
-            path: string;
-            note: string;
-        }[];
-        notes: string[];
-    };
     enqueueExtractionJob(documentId: string, opts?: {
         resume?: boolean;
     }): Promise<string>;
@@ -360,7 +333,7 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
     private languageLabel;
     private allowedScriptsFor;
     private stripDisallowedScripts;
-    deleteDocument(documentId: string, adminId: string): Promise<void>;
+    deleteDocument(documentId: string, userId: string, role: UserRole): Promise<void>;
     approveExtractionCandidate(candidateId: string, adminId: string, approverRole: UserRole, payload?: {
         title?: string;
         problemDescription?: string;
@@ -368,7 +341,37 @@ export declare class KnowledgeDocumentsService implements OnModuleInit {
         tags?: string;
     }): Promise<KnowledgeExtractionCandidate>;
     rejectExtractionCandidate(candidateId: string, adminId: string, reason?: string): Promise<KnowledgeExtractionCandidate>;
-    listRecentExtractionFeedback(limit?: number): Promise<ExtractionFeedbackEvent[]>;
+    private pickNonEmptyString;
+    private resolveFeedbackTextSnapshot;
+    private findKnowledgeEntryForFeedbackEvent;
+    private enrichExtractionFeedbackEvents;
+    getExtractionFeedbackDetail(eventId: string): Promise<ExtractionFeedbackEvent & {
+        candidateTitle: string | null;
+        candidateProblem: string | null;
+        candidateSolution: string | null;
+        documentOriginalName: string | null;
+    }>;
+    listRecentExtractionFeedback(options?: {
+        page?: number;
+        pageSize?: number;
+        signal?: 'approve' | 'approve_edit' | 'reject';
+    }): Promise<{
+        items: Array<ExtractionFeedbackEvent & {
+            candidateTitle: string | null;
+            candidateProblem: string | null;
+            candidateSolution: string | null;
+            documentOriginalName: string | null;
+        }>;
+        total: number;
+        page: number;
+        pageSize: number;
+        totalPages: number;
+        counts: {
+            approve: number;
+            approve_edit: number;
+            reject: number;
+        };
+    }>;
     reindexManualChunksForDocument(documentId: string): Promise<{
         ok: true;
         chunksIndexed: number;

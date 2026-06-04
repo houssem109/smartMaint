@@ -4,6 +4,7 @@ import { KnowledgeDocumentsService } from './knowledge-documents.service';
 import { DatabaseSchemaService } from '../database/database-schema.service';
 import { ApproveMachineNameSuggestionDto, RejectMachineNameSuggestionDto, SuggestMachineNameDto, UpdateMachineNameDto } from './dto/machine-name.dto';
 import { SetPdfVisionPreferenceDto } from './dto/set-pdf-vision-preference.dto';
+import { TechExtractionReviewDto } from './dto/tech-extraction-review.dto';
 declare class ApproveExtractionDto {
     title?: string;
     problemDescription?: string;
@@ -33,6 +34,7 @@ export declare class KnowledgeDocumentsController {
             message: string;
         };
     }>;
+    techReviewExtraction(candidateId: string, body: TechExtractionReviewDto, req: any): Promise<import("./entities/knowledge-extraction-tech-review.entity").KnowledgeExtractionTechReview>;
     uploadAlias(file: Express.Multer.File, req: any, supersedesDocumentId?: string): Promise<{
         documentId: string;
         jobId: string;
@@ -61,6 +63,7 @@ export declare class KnowledgeDocumentsController {
     rejectExtraction(candidateId: string, body: RejectExtractionDto, req: any): Promise<import("./entities/knowledge-extraction-candidate.entity").KnowledgeExtractionCandidate>;
     list(req: {
         user: {
+            id: string;
             role: UserRole;
         };
     }, includeSuperseded?: string): Promise<import("./entities/knowledge-document.entity").KnowledgeDocument[]>;
@@ -252,45 +255,6 @@ export declare class KnowledgeDocumentsController {
         }[];
     };
     databaseSchema(): Promise<import("../database/database-schema.service").DatabaseSchemaSnapshot>;
-    qaSuccessCriteria(): {
-        checkedAt: string;
-        rows: {
-            id: string;
-            goal: string;
-            status: "shipped" | "partial" | "gap" | "aspirational";
-            notes: string;
-        }[];
-    };
-    troubleshootingExtractionReference(): {
-        checkedAt: string;
-        responsibility: string;
-        implementation: {
-            service: string;
-            method: string;
-            bullQueue: string;
-            bullJobType: string;
-        };
-        systemPromptRelativePaths: string[];
-        envKeys: string[];
-        textWindowNote: string;
-        persistence: {
-            table: string;
-            entity: string;
-            statusValues: string[];
-            requiredCandidateFields: string[];
-            optionalCandidateFields: string[];
-        };
-        pageSectionLabels: string[];
-        chunkSectionLabels: string[];
-        extractionUserMessageSchema: string;
-        entryTypesFromLlm: string[];
-        relatedEndpoints: {
-            method: string;
-            path: string;
-            note: string;
-        }[];
-        notes: string[];
-    };
     getPdfVisionPreference(): {
         pdfVisionAdminEnabled: boolean;
         enabledFromEnv: boolean;
@@ -301,7 +265,29 @@ export declare class KnowledgeDocumentsController {
         enabledFromEnv: boolean;
         enabledEffective: boolean;
     }>;
-    extractionFeedbackRecent(limitRaw?: string): Promise<import("./entities/extraction-feedback-event.entity").ExtractionFeedbackEvent[]>;
+    extractionFeedbackRecent(pageRaw?: string, pageSizeRaw?: string, signal?: string): Promise<{
+        items: Array<import("./entities/extraction-feedback-event.entity").ExtractionFeedbackEvent & {
+            candidateTitle: string | null;
+            candidateProblem: string | null;
+            candidateSolution: string | null;
+            documentOriginalName: string | null;
+        }>;
+        total: number;
+        page: number;
+        pageSize: number;
+        totalPages: number;
+        counts: {
+            approve: number;
+            approve_edit: number;
+            reject: number;
+        };
+    }>;
+    extractionFeedbackDetail(eventId: string): Promise<import("./entities/extraction-feedback-event.entity").ExtractionFeedbackEvent & {
+        candidateTitle: string | null;
+        candidateProblem: string | null;
+        candidateSolution: string | null;
+        documentOriginalName: string | null;
+    }>;
     runOcr(id: string, req: any): Promise<{
         ok: true;
         processedPages: number;

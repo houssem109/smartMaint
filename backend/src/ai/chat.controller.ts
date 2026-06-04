@@ -17,6 +17,7 @@ import {
   mergeChatHistories,
   trimHistoryForModel,
 } from './chat-memory.util';
+import { isOrderIntentMessage } from '../order-techo/order-intent.util';
 import { OrderTechoService } from '../order-techo/order-techo.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { RagService } from './rag.service';
@@ -392,6 +393,33 @@ export class ChatController {
           sources: [],
           ticketUpdated: postWizardAction.ticketUpdated,
           archiveThread: postWizardAction.archiveThread,
+        };
+      }
+    }
+
+    // Sales orders (commande + 8-digit) before ticket lookup — avoids treating order numbers as tickets.
+    if (isOrderIntentMessage(message.trim(), mergedHistory)) {
+      const orderEarly = await this.orderTechoService.handleMessage(
+        user.id,
+        message.trim(),
+        mergedHistory,
+        threadId,
+      );
+      if (orderEarly) {
+        await this.persistConversation(
+          user.id,
+          ticketId ?? null,
+          message.trim(),
+          orderEarly.reply,
+          threadId,
+        );
+        return {
+          reply: orderEarly.reply,
+          ticketId,
+          sources: [],
+          orderMode: orderEarly.mode,
+          orderNumber: orderEarly.orderNumber,
+          detectedError: orderEarly.detectedError,
         };
       }
     }

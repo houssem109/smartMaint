@@ -45,6 +45,15 @@ describe('Order Techo follow-up', () => {
     } as unknown as AiService);
   });
 
+  it('handles commande problem report for 25109760', async () => {
+    const userId = 'test-user-commande-25109760';
+    const res = await orderTecho.handleMessage(userId, 'i have commande 25109760 dont work');
+    expect(res).not.toBeNull();
+    expect(res?.orderNumber).toBe('25109760');
+    expect(['order_data', 'order_facts']).toContain(res?.mode);
+    expect(res?.reply).toMatch(/25109760|PROBLEME_DATE_CMD|CS/i);
+  });
+
   it('answers dcto from CSV without RAG when order is in history', async () => {
     const userId = 'test-user-followup';
     const history = [

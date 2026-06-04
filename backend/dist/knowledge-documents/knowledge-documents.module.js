@@ -12,6 +12,7 @@ const typeorm_1 = require("@nestjs/typeorm");
 const bull_1 = require("@nestjs/bull");
 const knowledge_document_entity_1 = require("./entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("./entities/knowledge-extraction-candidate.entity");
+const knowledge_extraction_tech_review_entity_1 = require("./entities/knowledge-extraction-tech-review.entity");
 const machine_name_suggestion_entity_1 = require("./entities/machine-name-suggestion.entity");
 const knowledge_document_page_analysis_entity_1 = require("./entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("./entities/knowledge-document-job.entity");
@@ -39,6 +40,7 @@ exports.KnowledgeDocumentsModule = KnowledgeDocumentsModule = __decorate([
             typeorm_1.TypeOrmModule.forFeature([
                 knowledge_document_entity_1.KnowledgeDocument,
                 knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate,
+                knowledge_extraction_tech_review_entity_1.KnowledgeExtractionTechReview,
                 machine_name_suggestion_entity_1.MachineNameSuggestion,
                 knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis,
                 knowledge_document_job_entity_1.KnowledgeDocumentJob,

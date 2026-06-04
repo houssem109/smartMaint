@@ -18,6 +18,7 @@ exports.formatTicketInquiryReply = formatTicketInquiryReply;
 exports.formatMultipleTicketsReply = formatMultipleTicketsReply;
 exports.formatNoTicketReply = formatNoTicketReply;
 exports.formatNeedQueryReply = formatNeedQueryReply;
+const order_intent_util_1 = require("../order-techo/order-intent.util");
 const ticket_wizard_util_1 = require("./ticket-wizard.util");
 const ticket_action_util_1 = require("./ticket-action.util");
 const conversation_wrap_util_1 = require("./conversation-wrap.util");
@@ -128,6 +129,8 @@ function extractBareSearchQuery(message) {
     return bare;
 }
 function shouldProcessTicketInquiry(message, history, hasCachedTicket) {
+    if ((0, order_intent_util_1.isOrderIntentMessage)(message, history))
+        return false;
     if ((0, ticket_wizard_util_1.isTicketWizardActiveInHistory)(history) || (0, ticket_wizard_util_1.isAwaitingWizardUserInput)(history))
         return false;
     if ((0, ticket_action_util_1.isTicketActionIntent)(message) || (0, ticket_action_util_1.isAwaitingTicketActionConfirm)(history))
@@ -185,6 +188,8 @@ function extractTicketIdFromText(message) {
     return message.match(UUID_RE)?.[0];
 }
 function extractTicketSearchQuery(message, history) {
+    if ((0, order_intent_util_1.isOrderIntentMessage)(message, history))
+        return null;
     const uuid = extractTicketIdFromText(message);
     if (uuid)
         return uuid;

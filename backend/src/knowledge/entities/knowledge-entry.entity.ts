@@ -75,7 +75,7 @@ export class KnowledgeEntry {
   @Column()
   createdById: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'createdById' })
   createdBy: User;
 

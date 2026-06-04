@@ -103,18 +103,27 @@ export class TicketsController {
   @ApiQuery({ name: 'category', required: false })
   @ApiQuery({ name: 'priority', required: false })
   @ApiQuery({ name: 'assignedToId', required: false })
+  @ApiQuery({
+    name: 'unassignedOnly',
+    required: false,
+    description: 'Technicians only: list unassigned tickets (e.g. self-assign requests)',
+  })
   findAll(
     @Request() req,
     @Query('status') status?: TicketStatus,
     @Query('category') category?: string,
     @Query('priority') priority?: string,
     @Query('assignedToId') assignedToId?: string,
+    @Query('unassignedOnly') unassignedOnly?: string,
   ) {
+    const wantsUnassigned =
+      unassignedOnly === 'true' || unassignedOnly === '1' || unassignedOnly === 'yes';
     return this.ticketsService.findAll(req.user.id, req.user.role, {
       status,
       category,
       priority,
       assignedToId,
+      unassignedOnly: wantsUnassigned,
     });
   }
 
@@ -122,12 +131,19 @@ export class TicketsController {
   @ApiOperation({ summary: 'Get ticket history (latest changes)' })
   @ApiQuery({ name: 'ticketId', required: false })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({
+    name: 'includeErrors',
+    required: false,
+    description: 'Include PDF pipeline failures (default true)',
+  })
   async history(
     @Query('ticketId') ticketId?: string,
     @Query('limit') limit?: string,
+    @Query('includeErrors') includeErrors?: string,
   ) {
     const take = limit ? Number(limit) || 50 : 50;
-    return this.ticketsService.getHistory(ticketId, take);
+    const withErrors = includeErrors !== 'false';
+    return this.ticketsService.getHistory(ticketId, take, withErrors);
   }
 
   @Get('notifications')

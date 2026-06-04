@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bull';
 import { KnowledgeDocument } from './entities/knowledge-document.entity';
 import { KnowledgeExtractionCandidate } from './entities/knowledge-extraction-candidate.entity';
+import { KnowledgeExtractionTechReview } from './entities/knowledge-extraction-tech-review.entity';
 import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity';
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
@@ -39,6 +40,7 @@ import {
     TypeOrmModule.forFeature([
       KnowledgeDocument,
       KnowledgeExtractionCandidate,
+      KnowledgeExtractionTechReview,
       MachineNameSuggestion,
       KnowledgeDocumentPageAnalysis,
       KnowledgeDocumentJob,

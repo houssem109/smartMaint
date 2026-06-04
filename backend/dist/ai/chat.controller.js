@@ -18,6 +18,7 @@ const swagger_1 = require("@nestjs/swagger");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
 const ai_service_1 = require("./ai.service");
 const chat_memory_util_1 = require("./chat-memory.util");
+const order_intent_util_1 = require("../order-techo/order-intent.util");
 const order_techo_service_1 = require("../order-techo/order-techo.service");
 const tickets_service_1 = require("../tickets/tickets.service");
 const rag_service_1 = require("./rag.service");
@@ -220,6 +221,20 @@ let ChatController = class ChatController {
                     sources: [],
                     ticketUpdated: postWizardAction.ticketUpdated,
                     archiveThread: postWizardAction.archiveThread,
+                };
+            }
+        }
+        if ((0, order_intent_util_1.isOrderIntentMessage)(message.trim(), mergedHistory)) {
+            const orderEarly = await this.orderTechoService.handleMessage(user.id, message.trim(), mergedHistory, threadId);
+            if (orderEarly) {
+                await this.persistConversation(user.id, ticketId ?? null, message.trim(), orderEarly.reply, threadId);
+                return {
+                    reply: orderEarly.reply,
+                    ticketId,
+                    sources: [],
+                    orderMode: orderEarly.mode,
+                    orderNumber: orderEarly.orderNumber,
+                    detectedError: orderEarly.detectedError,
                 };
             }
         }

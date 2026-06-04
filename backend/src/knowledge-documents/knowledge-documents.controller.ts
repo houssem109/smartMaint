@@ -40,6 +40,7 @@ import {
   UpdateMachineNameDto,
 } from './dto/machine-name.dto';
 import { SetPdfVisionPreferenceDto } from './dto/set-pdf-vision-preference.dto';
+import { TechExtractionReviewDto } from './dto/tech-extraction-review.dto';
 
 class ApproveExtractionDto {
   @IsOptional()
@@ -133,7 +134,7 @@ export class KnowledgeDocumentsController {
   }
 
   @Post('upload')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload a PDF to the knowledge documents library' })
@@ -164,8 +165,21 @@ export class KnowledgeDocumentsController {
     return this.acceptPdfUpload(file, req, supersedesDocumentId);
   }
 
+  @Post('extractions/:candidateId/tech-review')
+  @Roles(UserRole.TECHNICIAN)
+  @ApiOperation({
+    summary: 'Technician recommendation on an extraction (does not finalize — admin decides)',
+  })
+  async techReviewExtraction(
+    @Param('candidateId') candidateId: string,
+    @Body() body: TechExtractionReviewDto,
+    @Request() req,
+  ) {
+    return this.knowledgeDocumentsService.submitTechExtractionReview(candidateId, req.user.id, body);
+  }
+
   @Post()
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload alias (same behavior as /upload)' })
@@ -268,20 +282,22 @@ export class KnowledgeDocumentsController {
   }
 
   @Get()
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN, UserRole.WORKER)
   @ApiOperation({
     summary: 'List uploaded knowledge documents',
     description:
-      'Query includeSuperseded=true (admin/superadmin only) to list superseded revisions for 11 history.',
+      'Workers and technicians can browse PDFs. Query includeSuperseded=true (admin/superadmin only) for superseded revisions.',
   })
   async list(
-    @Request() req: { user: { role: UserRole } },
+    @Request() req: { user: { id: string; role: UserRole } },
     @Query('includeSuperseded') includeSuperseded?: string,
   ) {
     const wants =
       includeSuperseded === 'true' || includeSuperseded === '1' || includeSuperseded === 'yes';
     const isAdmin = req.user.role === UserRole.ADMIN || req.user.role === UserRole.SUPERADMIN;
-    return this.knowledgeDocumentsService.findAll({ includeSuperseded: wants && isAdmin });
+    return this.knowledgeDocumentsService.findAll({
+      includeSuperseded: wants && isAdmin,
+    });
   }
 
   @Get(':id/machine-name/suggestions')
@@ -310,7 +326,7 @@ export class KnowledgeDocumentsController {
   }
 
   @Get(':id/extractions')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
   @ApiOperation({ summary: 'Get extracted Problem→Solution candidates for a document' })
   async extractions(@Param('id') id: string) {
     return this.knowledgeDocumentsService.getExtractionsForDocument(id);
@@ -420,24 +436,6 @@ export class KnowledgeDocumentsController {
     return this.databaseSchemaService.getPublicSchema();
   }
 
-  @Get('qa-success-criteria')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({
-    summary: 'Section 20 QA matrix: original success criteria vs shipped/partial/gap (curated; read-only)',
-  })
-  qaSuccessCriteria() {
-    return this.knowledgeDocumentsService.getQaSuccessCriteria();
-  }
-
-  @Get('troubleshooting-extraction-reference')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({
-    summary: 'Section 22 read-only: troubleshooting extraction (service, queue, schema, endpoints)',
-  })
-  troubleshootingExtractionReference() {
-    return this.knowledgeDocumentsService.getTroubleshootingExtractionReference();
-  }
-
   @Get('pipeline-preferences/pdf-vision')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({
@@ -459,11 +457,29 @@ export class KnowledgeDocumentsController {
 
   @Get('extraction-feedback/recent')
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'Recent extraction approve/reject feedback events (analytics)' })
-  async extractionFeedbackRecent(@Query('limit') limitRaw?: string) {
-    const parsed = limitRaw != null ? parseInt(limitRaw, 10) : 200;
-    const limit = Number.isFinite(parsed) ? parsed : 200;
-    return this.knowledgeDocumentsService.listRecentExtractionFeedback(limit);
+  @ApiOperation({ summary: 'Paginated extraction approve/reject feedback events' })
+  async extractionFeedbackRecent(
+    @Query('page') pageRaw?: string,
+    @Query('pageSize') pageSizeRaw?: string,
+    @Query('signal') signal?: string,
+  ) {
+    const page = pageRaw != null ? parseInt(pageRaw, 10) : 1;
+    const pageSize = pageSizeRaw != null ? parseInt(pageSizeRaw, 10) : 10;
+    const allowed = new Set(['approve', 'approve_edit', 'reject']);
+    const signalFilter =
+      signal && allowed.has(signal) ? (signal as 'approve' | 'approve_edit' | 'reject') : undefined;
+    return this.knowledgeDocumentsService.listRecentExtractionFeedback({
+      page: Number.isFinite(page) ? page : 1,
+      pageSize: Number.isFinite(pageSize) ? pageSize : 10,
+      signal: signalFilter,
+    });
+  }
+
+  @Get('extraction-feedback/:eventId')
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
+  @ApiOperation({ summary: 'Single extraction feedback event with full problem/solution text' })
+  async extractionFeedbackDetail(@Param('eventId') eventId: string) {
+    return this.knowledgeDocumentsService.getExtractionFeedbackDetail(eventId);
   }
 
   @Post(':id/run-ocr')
@@ -501,7 +517,7 @@ export class KnowledgeDocumentsController {
   }
 
   @Get(':id/download')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN, UserRole.WORKER)
   @ApiOperation({ summary: 'Download uploaded PDF' })
   async download(@Param('id') id: string, @Res() res: any) {
     const doc = await this.knowledgeDocumentsService.findOne(id);
@@ -560,10 +576,10 @@ export class KnowledgeDocumentsController {
   }
 
   @Delete(':id')
-  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
-  @ApiOperation({ summary: 'Delete a PDF document' })
+  @Roles(UserRole.ADMIN, UserRole.SUPERADMIN, UserRole.TECHNICIAN)
+  @ApiOperation({ summary: 'Delete a PDF document (technicians: own uploads only)' })
   async remove(@Param('id') id: string, @Request() req) {
-    await this.knowledgeDocumentsService.deleteDocument(id, req.user.id);
+    await this.knowledgeDocumentsService.deleteDocument(id, req.user.id, req.user.role);
     return { ok: true };
   }
 }

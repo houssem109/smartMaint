@@ -12,6 +12,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.KnowledgeExtractionCandidate = void 0;
 const typeorm_1 = require("typeorm");
 const knowledge_document_entity_1 = require("./knowledge-document.entity");
+const user_entity_1 = require("../../users/entities/user.entity");
+const knowledge_extraction_tech_review_entity_1 = require("./knowledge-extraction-tech-review.entity");
 let KnowledgeExtractionCandidate = class KnowledgeExtractionCandidate {
 };
 exports.KnowledgeExtractionCandidate = KnowledgeExtractionCandidate;
@@ -77,9 +79,51 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeExtractionCandidate.prototype, "createdById", void 0);
 __decorate([
-    (0, typeorm_1.Column)({ type: 'varchar', nullable: true }),
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
     __metadata("design:type", String)
 ], KnowledgeExtractionCandidate.prototype, "reviewedById", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { nullable: true }),
+    (0, typeorm_1.JoinColumn)({ name: 'reviewedById' }),
+    __metadata("design:type", user_entity_1.User)
+], KnowledgeExtractionCandidate.prototype, "reviewedBy", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'varchar', length: 32, nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techReviewStatus", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'uuid', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techReviewedById", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { nullable: true }),
+    (0, typeorm_1.JoinColumn)({ name: 'techReviewedById' }),
+    __metadata("design:type", user_entity_1.User)
+], KnowledgeExtractionCandidate.prototype, "techReviewedBy", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'timestamptz', nullable: true }),
+    __metadata("design:type", Date)
+], KnowledgeExtractionCandidate.prototype, "techReviewedAt", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techEditedTitle", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techEditedProblemDescription", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techEditedSolution", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ type: 'text', nullable: true }),
+    __metadata("design:type", String)
+], KnowledgeExtractionCandidate.prototype, "techRejectReason", void 0);
+__decorate([
+    (0, typeorm_1.OneToMany)(() => knowledge_extraction_tech_review_entity_1.KnowledgeExtractionTechReview, (r) => r.candidate),
+    __metadata("design:type", Array)
+], KnowledgeExtractionCandidate.prototype, "techReviews", void 0);
 __decorate([
     (0, typeorm_1.CreateDateColumn)(),
     __metadata("design:type", Date)

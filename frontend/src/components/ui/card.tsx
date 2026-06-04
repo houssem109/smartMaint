@@ -1,19 +1,28 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { AccentBand } from "@/components/ui/accent-band"
 
-const Card = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow-sm",
-      className
-    )}
-    {...props}
-  />
-))
+export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Green top band (modals / popover-style panels). */
+  accentBand?: boolean
+}
+
+const Card = React.forwardRef<HTMLDivElement, CardProps>(
+  ({ className, accentBand, children, ...props }, ref) => (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-lg border bg-card text-card-foreground",
+        accentBand && "overflow-hidden",
+        className
+      )}
+      {...props}
+    >
+      {accentBand && <AccentBand />}
+      {children}
+    </div>
+  )
+)
 Card.displayName = "Card"
 
 const CardHeader = React.forwardRef<
@@ -44,10 +53,10 @@ const CardTitle = React.forwardRef<
 CardTitle.displayName = "CardTitle"
 
 const CardDescription = React.forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement>
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <p
+  <div
     ref={ref}
     className={cn("text-sm text-muted-foreground", className)}
     {...props}

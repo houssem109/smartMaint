@@ -32,7 +32,6 @@ const CATEGORY_OPTIONS = [
   { value: 'hardware', label: 'Hardware' },
   { value: 'electrical', label: 'Electrical' },
   { value: 'mechanical', label: 'Mechanical' },
-  { value: 'it', label: 'IT' },
   { value: 'plumbing', label: 'Plumbing' },
   { value: 'task', label: 'Task' },
   { value: 'other', label: 'Other' },
@@ -81,31 +80,22 @@ export default function TicketsExportPage() {
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
       <Layout title="Tickets export" showSidebar={true}>
-        <div className="space-y-6 max-w-2xl">
+        <div className="max-w-5xl space-y-6">
           <div>
             <h2 className="text-xl font-semibold tracking-tight">Export tickets</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Download tickets created in a date range as CSV or Excel. Includes title, type,
-              creator, assignee, resolved status, and who marked the ticket solved or closed.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Download tickets as Excel or CSV. Leave dates empty to include all tickets.
             </p>
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Period &amp; filters</CardTitle>
+              <CardTitle className="text-base">Filters</CardTitle>
               <CardDescription>
-                Dates filter by ticket creation date. Leave both empty to export all tickets.
+                Dates filter by ticket creation date. Status and type are optional.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="from">From</Label>
-                <Input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="to">To</Label>
-                <Input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-              </div>
               <div className="space-y-2">
                 <Label>Status</Label>
                 <Select value={status} onValueChange={setStatus}>
@@ -122,7 +112,7 @@ export default function TicketsExportPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Type (category)</Label>
+                <Label>Type</Label>
                 <Select value={category} onValueChange={setCategory}>
                   <SelectTrigger>
                     <SelectValue />
@@ -135,6 +125,14 @@ export default function TicketsExportPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="from">From (ISO date)</Label>
+                <Input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="to">To (ISO date)</Label>
+                <Input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label>Format</Label>
@@ -153,18 +151,6 @@ export default function TicketsExportPage() {
                   {downloading ? 'Preparing…' : 'Download export'}
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Columns included</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Title · Description · Type (category) · Priority · Status · Resolved (Yes/No) · Created by ·
-                Assigned to · Resolved by · Created at · Updated at · Machine · Area · Source
-              </p>
             </CardContent>
           </Card>
         </div>

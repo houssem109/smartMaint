@@ -68,6 +68,11 @@ describe('ticket-inquiry.util', () => {
     expect(shouldProcessTicketInquiry('can you delete it?', [], true)).toBe(false);
   });
 
+  it('does not treat sales order messages as ticket inquiry', () => {
+    expect(shouldProcessTicketInquiry('i have commande 25109760 dont work')).toBe(false);
+    expect(extractTicketSearchQuery('i have commande 25109760 dont work')).toBeNull();
+  });
+
   it('does not treat wizard follow-up as ticket search after prior inquiry', () => {
     const history = [
       { role: 'user' as const, content: 'is ticket open or closed' },

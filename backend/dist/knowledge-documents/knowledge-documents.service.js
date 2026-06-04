@@ -24,11 +24,13 @@ const typeorm_2 = require("typeorm");
 const fs_1 = require("fs");
 const knowledge_document_entity_1 = require("./entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("./entities/knowledge-extraction-candidate.entity");
+const knowledge_extraction_tech_review_entity_1 = require("./entities/knowledge-extraction-tech-review.entity");
 const machine_name_suggestion_entity_1 = require("./entities/machine-name-suggestion.entity");
 const knowledge_document_page_analysis_entity_1 = require("./entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("./entities/knowledge-document-job.entity");
 const pipeline_preferences_entity_1 = require("./entities/pipeline-preferences.entity");
 const extraction_feedback_event_entity_1 = require("./entities/extraction-feedback-event.entity");
+const knowledge_entry_entity_1 = require("../knowledge/entities/knowledge-entry.entity");
 const knowledge_service_1 = require("../knowledge/knowledge.service");
 const ai_service_1 = require("../ai/ai.service");
 const ollama_vision_util_1 = require("../ai/ollama-vision.util");
@@ -45,6 +47,7 @@ const sharp_1 = __importDefault(require("sharp"));
 const queues_constants_1 = require("./queues.constants");
 const machine_profiles_service_1 = require("../machine-profiles/machine-profiles.service");
 const document_progress_gateway_1 = require("./document-progress.gateway");
+const user_entity_1 = require("../users/entities/user.entity");
 const pdf_ingestion_config_1 = require("./pdf-ingestion.config");
 const pdf_ingestion_util_1 = require("./pdf-ingestion.util");
 const pdf_ocr_util_1 = require("./pdf-ocr.util");
@@ -67,14 +70,16 @@ function safeUnlinkUpload(path) {
     }
 }
 let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDocumentsService {
-    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, machineNameSuggestionsRepository, pageAnalysisRepository, knowledgeDocumentJobRepository, extractionFeedbackRepository, auditLogRepository, pipelinePreferencesRepository, gateQueue, extractionQueue, indexingQueue, ocrQueue, visionQueue, knowledgeService, aiService, ragService, machineProfilesService, documentProgressGateway) {
+    constructor(knowledgeDocumentsRepository, extractionCandidatesRepository, extractionTechReviewsRepository, machineNameSuggestionsRepository, pageAnalysisRepository, knowledgeDocumentJobRepository, extractionFeedbackRepository, auditLogRepository, knowledgeEntryRepository, pipelinePreferencesRepository, gateQueue, extractionQueue, indexingQueue, ocrQueue, visionQueue, knowledgeService, aiService, ragService, machineProfilesService, documentProgressGateway) {
         this.knowledgeDocumentsRepository = knowledgeDocumentsRepository;
         this.extractionCandidatesRepository = extractionCandidatesRepository;
+        this.extractionTechReviewsRepository = extractionTechReviewsRepository;
         this.machineNameSuggestionsRepository = machineNameSuggestionsRepository;
         this.pageAnalysisRepository = pageAnalysisRepository;
         this.knowledgeDocumentJobRepository = knowledgeDocumentJobRepository;
         this.extractionFeedbackRepository = extractionFeedbackRepository;
         this.auditLogRepository = auditLogRepository;
+        this.knowledgeEntryRepository = knowledgeEntryRepository;
         this.pipelinePreferencesRepository = pipelinePreferencesRepository;
         this.gateQueue = gateQueue;
         this.extractionQueue = extractionQueue;
@@ -274,8 +279,14 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
         return { document: doc, jobId: tracking.id };
     }
     async findAll(opts) {
+        const where = opts?.includeSuperseded
+            ? {}
+            : { status: (0, typeorm_2.Not)('superseded') };
+        if (opts?.uploadedById) {
+            where.uploadedById = opts.uploadedById;
+        }
         return this.knowledgeDocumentsRepository.find({
-            ...(opts?.includeSuperseded ? {} : { where: { status: (0, typeorm_2.Not)('superseded') } }),
+            where,
             order: { createdAt: 'DESC' },
             relations: ['uploadedBy'],
         });
@@ -291,10 +302,88 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
     }
     async getExtractionsForDocument(documentId) {
         await this.findOne(documentId);
-        return this.extractionCandidatesRepository.find({
-            where: { documentId },
-            order: { createdAt: 'DESC' },
+        const rows = await this.extractionCandidatesRepository
+            .createQueryBuilder('candidate')
+            .leftJoinAndSelect('candidate.techReviews', 'techReview')
+            .leftJoinAndSelect('techReview.technician', 'technician')
+            .leftJoinAndSelect('candidate.reviewedBy', 'reviewedBy')
+            .where('candidate.documentId = :documentId', { documentId })
+            .orderBy('candidate.createdAt', 'DESC')
+            .addOrderBy('techReview.createdAt', 'ASC')
+            .getMany();
+        for (const row of rows) {
+            if (row.techReviews?.length) {
+                row.techReviews.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            }
+        }
+        return rows;
+    }
+    async submitTechExtractionReview(candidateId, technicianId, payload) {
+        const candidate = await this.extractionCandidatesRepository.findOne({
+            where: { id: candidateId },
         });
+        if (!candidate)
+            throw new common_1.NotFoundException('Extraction candidate not found');
+        if (candidate.status !== 'candidate') {
+            throw new common_1.BadRequestException('This suggestion was already finalized by an admin');
+        }
+        const existing = await this.extractionTechReviewsRepository.findOne({
+            where: { candidateId, technicianId },
+        });
+        if (existing) {
+            throw new common_1.BadRequestException('You already reviewed this suggestion');
+        }
+        const action = payload.action;
+        let editedTitle = null;
+        let editedProblemDescription = null;
+        let editedSolution = null;
+        let rejectReason = null;
+        if (action === 'approve_edit') {
+            const title = payload.title?.trim();
+            const problemDescription = payload.problemDescription?.trim();
+            const solution = payload.solution?.trim();
+            if (!title || !problemDescription || !solution) {
+                throw new common_1.BadRequestException('Title, problem, and solution are required when editing');
+            }
+            editedTitle = title;
+            editedProblemDescription = problemDescription;
+            editedSolution = solution;
+        }
+        else if (action === 'reject') {
+            rejectReason = payload.reason?.trim() || null;
+        }
+        const review = await this.extractionTechReviewsRepository.save(this.extractionTechReviewsRepository.create({
+            candidateId,
+            technicianId,
+            action,
+            editedTitle,
+            editedProblemDescription,
+            editedSolution,
+            rejectReason,
+        }));
+        const doc = await this.knowledgeDocumentsRepository.findOne({ where: { id: candidate.documentId } });
+        const withRelations = await this.extractionTechReviewsRepository.findOne({
+            where: { id: review.id },
+            relations: ['technician', 'candidate'],
+        });
+        const techUser = withRelations?.technician;
+        await this.auditLogRepository.save(this.auditLogRepository.create({
+            actionType: audit_log_entity_1.ActionType.UPDATE,
+            entityType: 'knowledge_extraction_candidate',
+            entityId: candidate.id,
+            userId: technicianId,
+            changes: {
+                event: 'extraction_candidate_tech_reviewed',
+                techReviewId: review.id,
+                techReviewStatus: action,
+                documentId: candidate.documentId,
+                documentOriginalName: doc?.originalName ?? null,
+                techReviewerName: techUser?.fullName?.trim() || techUser?.email || null,
+                title: candidate.title,
+            },
+            reason: payload.reason?.trim() || null,
+        }));
+        return withRelations;
     }
     async getExtractionStats(documentId) {
         await this.findOne(documentId);
@@ -739,179 +828,6 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                     scope: 'shared',
                     purpose: 'Ticket file attachments (separate from knowledge PDFs)',
                 },
-            ],
-        };
-    }
-    getQaSuccessCriteria() {
-        return {
-            checkedAt: new Date().toISOString(),
-            rows: [
-                {
-                    id: 'gate-irrelevant',
-                    goal: 'Irrelevant PDFs blocked at the gate without calling the LLM in obvious cases',
-                    status: 'partial',
-                    notes: 'Tier 1/2 heuristics + embedding similarity often decide without LLM; Tier 3 LLM still runs when confidence is borderline.',
-                },
-                {
-                    id: 'machine-cover',
-                    goal: 'Machine name and manufacturer auto-detected from PDF cover / early pages',
-                    status: 'partial',
-                    notes: 'Machine name from gate/extraction + suggestions flow; manufacturer on `machine_profiles` is often manual or inferred — not a guaranteed auto-fill for every PDF.',
-                },
-                {
-                    id: 'pages-covered',
-                    goal: 'All pages covered by text extraction, OCR, or vision',
-                    status: 'partial',
-                    notes: 'Poppler text + OCR queues + bounded vision pass; caps (`PDF_OCR_MAX_PAGES`, `PDF_VISION_MAX_PAGES`) mean very large manuals may not run OCR/vision on every page.',
-                },
-                {
-                    id: 'upload-latency',
-                    goal: 'Very large PDFs do not block the backend — upload returns in under ~1 second',
-                    status: 'aspirational',
-                    notes: 'Handler returns 202 after accepting the file, but disk write + validation still scale with bytes — treat as ops benchmark, not a guaranteed SLA.',
-                },
-                {
-                    id: 'concurrent-uploads',
-                    goal: 'Multiple PDFs can upload and process concurrently without crashes',
-                    status: 'partial',
-                    notes: 'Bull queues isolate work; no formal load test or back-pressure policy is checked in CI.',
-                },
-                {
-                    id: 'progress-realtime',
-                    goal: 'Progress visible from 0% to 100% in near real time',
-                    status: 'partial',
-                    notes: 'Postgres progress fields + `document:progress` WebSocket; some stages are coarse and polling via `GET …/status` is still used for some clients.',
-                },
-                {
-                    id: 'chat-latency',
-                    goal: 'Chatbot has access to fault tables within ~2 minutes of upload',
-                    status: 'gap',
-                    notes: 'No automated SLA; depends on queue depth, extraction chunk limits, and model speed.',
-                },
-                {
-                    id: 'unreadable-nonblocking',
-                    goal: 'Unreadable pages never block the pipeline',
-                    status: 'shipped',
-                    notes: 'Low-text pages are routed to inline/async vision (page explanation); pipeline continues without a manual fix queue.',
-                },
-                {
-                    id: 'admin-fix-index',
-                    goal: 'Manual chunk re-index after page content changes',
-                    status: 'partial',
-                    notes: '`POST …/reindex-manual-chunks` on PDF detail; Qdrant write failures are log-only (Postgres + page_analysis remain source of truth).',
-                },
-                {
-                    id: 'tech-in-chat',
-                    goal: 'Technician experience entries appear in chatbot answers alongside PDF knowledge',
-                    status: 'shipped',
-                    notes: 'Approved `knowledge_entries` are embedded and merged into RAG retrieval for Techo.',
-                },
-                {
-                    id: 'attribution',
-                    goal: 'Chatbot shows source attribution (page, document, technician where applicable)',
-                    status: 'partial',
-                    notes: '`POST /chat/message` returns `sources` and the widget can show them; persisting sources on stored conversation rows for audit replay is still pending.',
-                },
-                {
-                    id: 'cross-dedup',
-                    goal: 'Cross-document dedup reduces duplicate answers (fingerprint + chunk hashes + supersede)',
-                    status: 'partial',
-                    notes: 'Fingerprint gate + `vector_chunk_hashes` + superseded manual vector purge; not a semantic duplicate detector for all phrasings.',
-                },
-                {
-                    id: 'crash-resume',
-                    goal: 'System recovers from worker crashes without reprocessing from page 1',
-                    status: 'gap',
-                    notes: 'Bull retries and re-queued jobs help, but there is no fully documented durable “checkpoint resume” story per page across arbitrary failure modes.',
-                },
-                {
-                    id: 'tri-lang-ocr',
-                    goal: 'French, English, and Arabic PDFs extract correctly via OCR stack',
-                    status: 'partial',
-                    notes: 'Dockerfile includes Arabic tess data and `.env.example` suggests `eng+fra+ara`; scan quality and mixed-language layouts still vary.',
-                },
-            ],
-        };
-    }
-    getTroubleshootingExtractionReference() {
-        return {
-            checkedAt: new Date().toISOString(),
-            responsibility: 'Problem/solution-style rows are produced by the same PDF extraction pass as other structured knowledge — implemented in KnowledgeDocumentsService (no separate PdfTroubleshootingExtractorService).',
-            implementation: {
-                service: 'KnowledgeDocumentsService',
-                method: 'processDocumentExtraction(documentId)',
-                bullQueue: queues_constants_1.EXTRACTION_QUEUE,
-                bullJobType: queues_constants_1.EXTRACTION_JOB,
-            },
-            systemPromptRelativePaths: [
-                'backend/src/ai/prompts/techo-pdf-extractor-system.prompt.md',
-                '(runtime fallbacks: dist-relative paths in processDocumentExtraction)',
-            ],
-            envKeys: [
-                'DOC_EXTRACTION_MAX_CHUNKS',
-                'DOC_EXTRACTION_MAX_CANDIDATES',
-                'DOC_EXTRACTION_MAX_CANDIDATES_PER_CHUNK',
-                'DOC_EXTRACTION_CHUNK_SIZE',
-                'DOC_EXTRACTION_CHUNK_OVERLAP',
-            ],
-            textWindowNote: 'If the lowercased full-PDF text contains the substring "troubleshooting", extraction and manual re-index use text from that offset onward; otherwise the entire extracted string is used. Manuals that only use headings like "Dépannage" without the English word keep the full text.',
-            persistence: {
-                table: 'knowledge_extraction_candidates',
-                entity: 'KnowledgeExtractionCandidate',
-                statusValues: ['candidate', 'approved', 'rejected'],
-                requiredCandidateFields: ['title', 'problemDescription', 'solution'],
-                optionalCandidateFields: [
-                    'tags',
-                    'entryType',
-                    'symptom',
-                    'rootCause',
-                    'sourcePages',
-                    'confidence',
-                    'sectionType',
-                ],
-            },
-            pageSectionLabels: [
-                'fault_table',
-                'alarm_list',
-                'wiring',
-                'warning_notice',
-                'procedure_steps',
-                'specification',
-                'general',
-            ],
-            chunkSectionLabels: [
-                'fault_table',
-                'alarm_list',
-                'wiring',
-                'warning_notice',
-                'procedure_steps',
-                'specification',
-                'general_text',
-            ],
-            extractionUserMessageSchema: 'Per chunk: JSON with top-level key "candidates" (array). Each item: entryType, title, problemDescription, solution, symptom, rootCause, tags, sourcePages, confidence — see inline string in processDocumentExtraction.',
-            entryTypesFromLlm: ['fault', 'procedure', 'safety', 'wiring', 'spec'],
-            relatedEndpoints: [
-                { method: 'GET', path: '/knowledge-documents/:id/extractions', note: 'List candidates for one PDF' },
-                {
-                    method: 'POST',
-                    path: '/knowledge-documents/extractions/:candidateId/approve',
-                    note: 'Promote candidate into knowledge_entries (optional body edits)',
-                },
-                {
-                    method: 'POST',
-                    path: '/knowledge-documents/extractions/:candidateId/reject',
-                    note: 'Reject candidate; logs extraction_feedback_events (14) best-effort',
-                },
-                {
-                    method: 'GET',
-                    path: '/export/problems-solutions',
-                    note: 'Curated columns export; filters machine, documentId (UUID, knowledge_documents FK on entry), severity, from/to, format — see 23',
-                },
-            ],
-            notes: [
-                'Per-page sectionType uses detectSectionType (regex on page text); chunk hints use classifyChunkSection (chunk + docType).',
-                'buildRoutedChunks + prioritizeChunksForExtraction order chunks before the LLM pass.',
-                'RAG manual re-index (reindexManualChunksForDocument) reuses the same troubleshooting slice + routing.',
             ],
         };
     }
@@ -1532,8 +1448,13 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
         out = out.replace(/\n{3,}/g, '\n\n');
         return out.trim();
     }
-    async deleteDocument(documentId, adminId) {
+    async deleteDocument(documentId, userId, role) {
         const doc = await this.findOne(documentId);
+        if (role === user_entity_1.UserRole.TECHNICIAN) {
+            if (doc.uploadedById !== userId) {
+                throw new common_1.ForbiddenException('You can only delete PDFs you uploaded');
+            }
+        }
         try {
             await this.ragService.purgeManualIndexForDocument(doc.id);
         }
@@ -1595,13 +1516,22 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                 confidence: candidate.confidence,
                 adminId,
                 reason: null,
-                editDelta: edited
-                    ? {
-                        title: payload?.title ?? null,
-                        problemDescription: payload?.problemDescription ?? null,
-                        solution: payload?.solution ?? null,
-                    }
-                    : null,
+                editDelta: {
+                    snapshot: {
+                        title: title ?? null,
+                        problemDescription: problemDescription ?? null,
+                        solution: solution ?? null,
+                    },
+                    ...(edited
+                        ? {
+                            changed: {
+                                title: payload?.title ?? null,
+                                problemDescription: payload?.problemDescription ?? null,
+                                solution: payload?.solution ?? null,
+                            },
+                        }
+                        : {}),
+                },
             }));
         }
         catch {
@@ -1611,7 +1541,17 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
             entityType: 'knowledge_extraction_candidate',
             entityId: candidate.id,
             userId: adminId,
-            changes: { event: 'extraction_candidate_approved', knowledgeEntryId: entry.id },
+            changes: {
+                event: 'extraction_candidate_approved',
+                knowledgeEntryId: entry.id,
+                documentId: candidate.documentId,
+                reviewedById: adminId,
+                title: title ?? candidate.title,
+                problemDescription: problemDescription?.slice(0, 2000) ?? null,
+                solution: solution?.slice(0, 2000) ?? null,
+                documentOriginalName: doc?.originalName ?? null,
+                edited: edited,
+            },
             reason: null,
         }));
         return candidate;
@@ -1637,27 +1577,238 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                 confidence: candidate.confidence,
                 adminId,
                 reason: reason?.trim() || null,
-                editDelta: null,
+                editDelta: {
+                    snapshot: {
+                        title: candidate.title ?? null,
+                        problemDescription: candidate.problemDescription ?? null,
+                        solution: candidate.solution ?? null,
+                    },
+                },
             }));
         }
         catch {
         }
+        const docReject = await this.knowledgeDocumentsRepository.findOne({
+            where: { id: candidate.documentId },
+        });
         await this.auditLogRepository.save(this.auditLogRepository.create({
             actionType: audit_log_entity_1.ActionType.REJECT,
             entityType: 'knowledge_extraction_candidate',
             entityId: candidate.id,
             userId: adminId,
-            changes: { event: 'extraction_candidate_rejected' },
+            changes: {
+                event: 'extraction_candidate_rejected',
+                documentId: candidate.documentId,
+                reviewedById: adminId,
+                title: candidate.title,
+                problemDescription: candidate.problemDescription?.slice(0, 2000) ?? null,
+                solution: candidate.solution?.slice(0, 2000) ?? null,
+                documentOriginalName: docReject?.originalName ?? null,
+            },
             reason: reason?.trim() || null,
         }));
         return saved;
     }
-    async listRecentExtractionFeedback(limit = 200) {
-        const take = Math.min(Math.max(1, limit), 500);
-        return this.extractionFeedbackRepository.find({
-            order: { createdAt: 'DESC' },
-            take,
+    pickNonEmptyString(...values) {
+        for (const v of values) {
+            if (typeof v === 'string' && v.trim())
+                return v.trim();
+        }
+        return null;
+    }
+    resolveFeedbackTextSnapshot(editDelta, candidate, audit, knowledgeEntry) {
+        let fromDelta = {};
+        if (editDelta && typeof editDelta === 'object') {
+            const snap = editDelta.snapshot;
+            if (snap && typeof snap === 'object') {
+                fromDelta = {
+                    title: typeof snap.title === 'string' ? snap.title : undefined,
+                    problemDescription: typeof snap.problemDescription === 'string' ? snap.problemDescription : undefined,
+                    solution: typeof snap.solution === 'string' ? snap.solution : undefined,
+                };
+            }
+            else {
+                const changed = editDelta.changed;
+                fromDelta = {
+                    title: (typeof editDelta.title === 'string' ? editDelta.title : undefined) ??
+                        (typeof changed?.title === 'string' ? changed.title : undefined),
+                    problemDescription: (typeof editDelta.problemDescription === 'string'
+                        ? editDelta.problemDescription
+                        : undefined) ??
+                        (typeof changed?.problemDescription === 'string'
+                            ? changed.problemDescription
+                            : undefined),
+                    solution: (typeof editDelta.solution === 'string' ? editDelta.solution : undefined) ??
+                        (typeof changed?.solution === 'string' ? changed.solution : undefined),
+                };
+            }
+        }
+        return {
+            title: this.pickNonEmptyString(fromDelta.title, candidate?.title, audit?.title, knowledgeEntry?.title),
+            problemDescription: this.pickNonEmptyString(fromDelta.problemDescription, candidate?.problemDescription, audit?.problemDescription, knowledgeEntry?.problemDescription),
+            solution: this.pickNonEmptyString(fromDelta.solution, candidate?.solution, audit?.solution, knowledgeEntry?.solution),
+        };
+    }
+    findKnowledgeEntryForFeedbackEvent(event, entryByCandidate, entriesByDocument) {
+        const linked = entryByCandidate.get(event.candidateId);
+        if (linked)
+            return linked;
+        if (event.signal === 'reject')
+            return null;
+        const list = entriesByDocument.get(event.documentId) ?? [];
+        if (list.length === 0)
+            return null;
+        const eventMs = new Date(event.createdAt).getTime();
+        let best = null;
+        let bestDiff = Number.POSITIVE_INFINITY;
+        for (const ent of list) {
+            const diff = Math.abs(new Date(ent.createdAt).getTime() - eventMs);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = ent;
+            }
+        }
+        if (best && bestDiff <= 15 * 60 * 1000)
+            return best;
+        return list[0] ?? null;
+    }
+    async enrichExtractionFeedbackEvents(events) {
+        if (events.length === 0)
+            return [];
+        const candidateIds = [...new Set(events.map((e) => e.candidateId))];
+        const docIds = [...new Set(events.map((e) => e.documentId))];
+        const approveDocIds = [
+            ...new Set(events.filter((e) => e.signal !== 'reject').map((e) => e.documentId)),
+        ];
+        const [candidates, docs, auditLogs, kbEntries] = await Promise.all([
+            this.extractionCandidatesRepository.find({ where: { id: (0, typeorm_2.In)(candidateIds) } }),
+            this.knowledgeDocumentsRepository.find({
+                where: { id: (0, typeorm_2.In)(docIds) },
+                select: ['id', 'originalName', 'fileName'],
+            }),
+            this.auditLogRepository.find({
+                where: {
+                    entityType: 'knowledge_extraction_candidate',
+                    entityId: (0, typeorm_2.In)(candidateIds),
+                },
+                order: { timestamp: 'DESC' },
+            }),
+            approveDocIds.length > 0
+                ? this.knowledgeEntryRepository
+                    .createQueryBuilder('k')
+                    .where('k.knowledgeDocumentId IN (:...docIds)', { docIds: approveDocIds })
+                    .andWhere('k.source = :source', { source: 'pdf_extraction' })
+                    .orderBy('k.createdAt', 'DESC')
+                    .getMany()
+                : Promise.resolve([]),
+        ]);
+        const candById = new Map(candidates.map((c) => [c.id, c]));
+        const docById = new Map(docs.map((d) => [d.id, d]));
+        const auditByCandidate = new Map();
+        for (const log of auditLogs) {
+            if (!auditByCandidate.has(log.entityId)) {
+                auditByCandidate.set(log.entityId, (log.changes ?? {}));
+            }
+        }
+        const knowledgeEntryIds = [
+            ...new Set(auditLogs
+                .map((l) => l.changes?.knowledgeEntryId)
+                .filter((id) => typeof id === 'string')),
+        ];
+        const linkedEntries = knowledgeEntryIds.length > 0
+            ? await this.knowledgeEntryRepository.find({ where: { id: (0, typeorm_2.In)(knowledgeEntryIds) } })
+            : [];
+        const entryById = new Map(linkedEntries.map((e) => [e.id, e]));
+        const entryByCandidate = new Map();
+        for (const log of auditLogs) {
+            const ch = (log.changes ?? {});
+            const kid = ch.knowledgeEntryId;
+            if (typeof kid !== 'string' || entryByCandidate.has(log.entityId))
+                continue;
+            const ent = entryById.get(kid);
+            if (ent)
+                entryByCandidate.set(log.entityId, ent);
+        }
+        const entriesByDocument = new Map();
+        for (const ent of kbEntries) {
+            const docId = ent.knowledgeDocumentId;
+            if (!docId)
+                continue;
+            if (!entriesByDocument.has(docId))
+                entriesByDocument.set(docId, []);
+            entriesByDocument.get(docId).push(ent);
+        }
+        return events.map((e) => {
+            const c = candById.get(e.candidateId);
+            const d = docById.get(e.documentId);
+            const audit = auditByCandidate.get(e.candidateId);
+            const kbEntry = this.findKnowledgeEntryForFeedbackEvent(e, entryByCandidate, entriesByDocument);
+            const snap = this.resolveFeedbackTextSnapshot(e.editDelta, c, audit, kbEntry);
+            return {
+                ...e,
+                candidateTitle: snap.title,
+                candidateProblem: snap.problemDescription,
+                candidateSolution: snap.solution,
+                documentOriginalName: d?.originalName ?? d?.fileName ?? audit?.documentOriginalName ?? null,
+            };
         });
+    }
+    async getExtractionFeedbackDetail(eventId) {
+        const event = await this.extractionFeedbackRepository.findOne({ where: { id: eventId } });
+        if (!event)
+            throw new common_1.NotFoundException('Feedback event not found');
+        const [enriched] = await this.enrichExtractionFeedbackEvents([event]);
+        return enriched;
+    }
+    async listRecentExtractionFeedback(options) {
+        const page = Math.max(1, options?.page ?? 1);
+        const pageSize = Math.min(Math.max(1, options?.pageSize ?? 10), 100);
+        const skip = (page - 1) * pageSize;
+        const signal = options?.signal;
+        const where = signal ? { signal } : {};
+        const emptyCounts = { approve: 0, approve_edit: 0, reject: 0 };
+        try {
+            const [events, total, countsRaw] = await Promise.all([
+                this.extractionFeedbackRepository.find({
+                    where,
+                    order: { createdAt: 'DESC' },
+                    skip,
+                    take: pageSize,
+                }),
+                this.extractionFeedbackRepository.count({ where }),
+                this.extractionFeedbackRepository
+                    .createQueryBuilder('e')
+                    .select('e.signal', 'signal')
+                    .addSelect('COUNT(*)::int', 'cnt')
+                    .groupBy('e.signal')
+                    .getRawMany(),
+            ]);
+            const counts = { ...emptyCounts };
+            for (const row of countsRaw) {
+                if (row.signal === 'approve')
+                    counts.approve = Number(row.cnt) || 0;
+                else if (row.signal === 'approve_edit')
+                    counts.approve_edit = Number(row.cnt) || 0;
+                else if (row.signal === 'reject')
+                    counts.reject = Number(row.cnt) || 0;
+            }
+            const items = events.length === 0 ? [] : await this.enrichExtractionFeedbackEvents(events);
+            return {
+                items,
+                total,
+                page,
+                pageSize,
+                totalPages: Math.max(1, Math.ceil(total / pageSize)),
+                counts,
+            };
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (/extraction_feedback_events|relation.*does not exist|No metadata for "ExtractionFeedbackEvent"/i.test(msg)) {
+                throw new common_1.BadRequestException('Extraction feedback is not configured. Restart the backend after deploy, or run migrations (1700000000016).');
+            }
+            throw err;
+        }
     }
     async reindexManualChunksForDocument(documentId) {
         const doc = await this.findOne(documentId);
@@ -1790,9 +1941,10 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
                 actionType: audit_log_entity_1.ActionType.REJECT,
                 entityType: 'machine_name_suggestion',
                 entityId: o.id,
-                userId: o.suggestedById,
+                userId: adminId,
                 changes: {
                     forUserId: o.suggestedById,
+                    reviewedById: adminId,
                     documentId: doc.id,
                     documentOriginalName: doc.originalName,
                     proposedName: o.proposedName,
@@ -1806,9 +1958,10 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
             actionType: audit_log_entity_1.ActionType.APPROVE,
             entityType: 'machine_name_suggestion',
             entityId: suggestion.id,
-            userId: suggestion.suggestedById,
+            userId: adminId,
             changes: {
                 forUserId: suggestion.suggestedById,
+                reviewedById: adminId,
                 documentId: doc.id,
                 documentOriginalName: doc.originalName,
                 proposedName: suggestion.proposedName,
@@ -1840,9 +1993,10 @@ let KnowledgeDocumentsService = KnowledgeDocumentsService_1 = class KnowledgeDoc
             actionType: audit_log_entity_1.ActionType.REJECT,
             entityType: 'machine_name_suggestion',
             entityId: suggestion.id,
-            userId: suggestion.suggestedById,
+            userId: adminId,
             changes: {
                 forUserId: suggestion.suggestedById,
+                reviewedById: adminId,
                 documentId: doc.id,
                 documentOriginalName: doc.originalName,
                 proposedName: suggestion.proposedName,
@@ -3214,18 +3368,22 @@ exports.KnowledgeDocumentsService = KnowledgeDocumentsService = KnowledgeDocumen
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(knowledge_document_entity_1.KnowledgeDocument)),
     __param(1, (0, typeorm_1.InjectRepository)(knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate)),
-    __param(2, (0, typeorm_1.InjectRepository)(machine_name_suggestion_entity_1.MachineNameSuggestion)),
-    __param(3, (0, typeorm_1.InjectRepository)(knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis)),
-    __param(4, (0, typeorm_1.InjectRepository)(knowledge_document_job_entity_1.KnowledgeDocumentJob)),
-    __param(5, (0, typeorm_1.InjectRepository)(extraction_feedback_event_entity_1.ExtractionFeedbackEvent)),
-    __param(6, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
-    __param(7, (0, typeorm_1.InjectRepository)(pipeline_preferences_entity_1.PipelinePreferences)),
-    __param(8, (0, bull_1.InjectQueue)(queues_constants_1.GATE_QUEUE)),
-    __param(9, (0, bull_1.InjectQueue)(queues_constants_1.EXTRACTION_QUEUE)),
-    __param(10, (0, bull_1.InjectQueue)(queues_constants_1.INDEXING_QUEUE)),
-    __param(11, (0, bull_1.InjectQueue)(queues_constants_1.OCR_QUEUE)),
-    __param(12, (0, bull_1.InjectQueue)(queues_constants_1.VISION_QUEUE)),
+    __param(2, (0, typeorm_1.InjectRepository)(knowledge_extraction_tech_review_entity_1.KnowledgeExtractionTechReview)),
+    __param(3, (0, typeorm_1.InjectRepository)(machine_name_suggestion_entity_1.MachineNameSuggestion)),
+    __param(4, (0, typeorm_1.InjectRepository)(knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis)),
+    __param(5, (0, typeorm_1.InjectRepository)(knowledge_document_job_entity_1.KnowledgeDocumentJob)),
+    __param(6, (0, typeorm_1.InjectRepository)(extraction_feedback_event_entity_1.ExtractionFeedbackEvent)),
+    __param(7, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
+    __param(8, (0, typeorm_1.InjectRepository)(knowledge_entry_entity_1.KnowledgeEntry)),
+    __param(9, (0, typeorm_1.InjectRepository)(pipeline_preferences_entity_1.PipelinePreferences)),
+    __param(10, (0, bull_1.InjectQueue)(queues_constants_1.GATE_QUEUE)),
+    __param(11, (0, bull_1.InjectQueue)(queues_constants_1.EXTRACTION_QUEUE)),
+    __param(12, (0, bull_1.InjectQueue)(queues_constants_1.INDEXING_QUEUE)),
+    __param(13, (0, bull_1.InjectQueue)(queues_constants_1.OCR_QUEUE)),
+    __param(14, (0, bull_1.InjectQueue)(queues_constants_1.VISION_QUEUE)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository,

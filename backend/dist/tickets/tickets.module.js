@@ -15,6 +15,9 @@ const ticket_entity_1 = require("./entities/ticket.entity");
 const conversation_entity_1 = require("./entities/conversation.entity");
 const attachment_entity_1 = require("./entities/attachment.entity");
 const audit_log_entity_1 = require("../common/entities/audit-log.entity");
+const knowledge_document_entity_1 = require("../knowledge-documents/entities/knowledge-document.entity");
+const knowledge_document_job_entity_1 = require("../knowledge-documents/entities/knowledge-document-job.entity");
+const user_entity_1 = require("../users/entities/user.entity");
 const users_module_1 = require("../users/users.module");
 let TicketsModule = class TicketsModule {
 };
@@ -22,7 +25,15 @@ exports.TicketsModule = TicketsModule;
 exports.TicketsModule = TicketsModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            typeorm_1.TypeOrmModule.forFeature([ticket_entity_1.Ticket, conversation_entity_1.Conversation, attachment_entity_1.Attachment, audit_log_entity_1.AuditLog]),
+            typeorm_1.TypeOrmModule.forFeature([
+                ticket_entity_1.Ticket,
+                conversation_entity_1.Conversation,
+                attachment_entity_1.Attachment,
+                audit_log_entity_1.AuditLog,
+                knowledge_document_entity_1.KnowledgeDocument,
+                knowledge_document_job_entity_1.KnowledgeDocumentJob,
+                user_entity_1.User,
+            ]),
             users_module_1.UsersModule,
         ],
         controllers: [tickets_controller_1.TicketsController],

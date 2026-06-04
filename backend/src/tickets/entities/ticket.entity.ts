@@ -102,14 +102,14 @@ export class Ticket {
   @Column()
   createdById: string;
 
-  @ManyToOne(() => User, (user) => user.createdTickets)
+  @ManyToOne(() => User, (user) => user.createdTickets, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'createdById' })
   createdBy: User;
 
   @Column({ nullable: true })
   assignedToId: string;
 
-  @ManyToOne(() => User, (user) => user.assignedTickets)
+  @ManyToOne(() => User, (user) => user.assignedTickets, { onDelete: 'SET NULL' })
   @JoinColumn({ name: 'assignedToId' })
   assignedTo: User;
 

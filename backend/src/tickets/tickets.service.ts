@@ -4,13 +4,19 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { KnowledgeDocument } from '../knowledge-documents/entities/knowledge-document.entity';
+import { KnowledgeDocumentJob } from '../knowledge-documents/entities/knowledge-document-job.entity';
 import { AssignmentRequestStatus, Ticket, TicketStatus } from './entities/ticket.entity';
 import { Attachment } from './entities/attachment.entity';
 import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
 import { CreateTicketDto } from './dto/create-ticket.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
-import { UserRole } from '../users/entities/user.entity';
+import { User, UserRole } from '../users/entities/user.entity';
+
+export type ActivityLogDto = AuditLog & {
+  performedBy?: { id: string; fullName: string | null; email: string } | null;
+};
 
 @Injectable()
 export class TicketsService {
@@ -21,6 +27,12 @@ export class TicketsService {
     private attachmentsRepository: Repository<Attachment>,
     @InjectRepository(AuditLog)
     private auditLogRepository: Repository<AuditLog>,
+    @InjectRepository(KnowledgeDocument)
+    private knowledgeDocumentRepository: Repository<KnowledgeDocument>,
+    @InjectRepository(KnowledgeDocumentJob)
+    private knowledgeDocumentJobRepository: Repository<KnowledgeDocumentJob>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
   ) {}
 
   async create(createTicketDto: CreateTicketDto, userId: string): Promise<Ticket> {
@@ -47,6 +59,7 @@ export class TicketsService {
       category?: string;
       priority?: string;
       assignedToId?: string;
+      unassignedOnly?: boolean;
     },
   ): Promise<Ticket[]> {
     const queryBuilder = this.ticketsRepository
@@ -55,12 +68,20 @@ export class TicketsService {
       .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
       .leftJoinAndSelect('ticket.attachments', 'attachments');
 
-    // Role-based filtering + exclude soft-deleted tickets
+    queryBuilder.where('ticket.isDeleted = false');
+
     if (userRole === UserRole.WORKER) {
-      queryBuilder.where('ticket.createdById = :userId', { userId }).andWhere('ticket.isDeleted = false');
-    } else {
-      // Technicians, admins, superadmins see all non-deleted tickets
-      queryBuilder.where('ticket.isDeleted = false');
+      queryBuilder.andWhere('ticket.createdById = :userId', { userId });
+    } else if (userRole === UserRole.TECHNICIAN) {
+      if (filters?.unassignedOnly) {
+        queryBuilder.andWhere('ticket.assignedToId IS NULL');
+      } else {
+        queryBuilder.andWhere('ticket.assignedToId = :userId', { userId });
+      }
+    } else if (filters?.assignedToId) {
+      queryBuilder.andWhere('ticket.assignedToId = :assignedToId', {
+        assignedToId: filters.assignedToId,
+      });
     }
 
     // Apply filters
@@ -72,11 +93,6 @@ export class TicketsService {
     }
     if (filters?.priority) {
       queryBuilder.andWhere('ticket.priority = :priority', { priority: filters.priority });
-    }
-    if (filters?.assignedToId) {
-      queryBuilder.andWhere('ticket.assignedToId = :assignedToId', {
-        assignedToId: filters.assignedToId,
-      });
     }
 
     queryBuilder.orderBy('ticket.createdAt', 'DESC');
@@ -100,6 +116,8 @@ export class TicketsService {
 
     if (userRole === UserRole.WORKER) {
       exactQb.andWhere('ticket.createdById = :userId', { userId });
+    } else if (userRole === UserRole.TECHNICIAN) {
+      exactQb.andWhere('ticket.assignedToId = :userId', { userId });
     }
 
     exactQb
@@ -117,6 +135,8 @@ export class TicketsService {
 
     if (userRole === UserRole.WORKER) {
       likeQb.andWhere('ticket.createdById = :userId', { userId });
+    } else if (userRole === UserRole.TECHNICIAN) {
+      likeQb.andWhere('ticket.assignedToId = :userId', { userId });
     }
 
     likeQb
@@ -160,6 +180,8 @@ export class TicketsService {
 
     if (userRole === UserRole.WORKER) {
       qb.andWhere('ticket.createdById = :userId', { userId });
+    } else if (userRole === UserRole.TECHNICIAN) {
+      qb.andWhere('ticket.assignedToId = :userId', { userId });
     }
 
     qb.andWhere(
@@ -531,24 +553,188 @@ export class TicketsService {
     return savedTicket;
   }
 
-  async getHistory(ticketId?: string, limit = 50): Promise<AuditLog[]> {
+  async getHistory(
+    ticketId?: string,
+    limit = 50,
+    includeErrors = true,
+  ): Promise<ActivityLogDto[]> {
+    const effectiveLimit = Math.min(Math.max(limit, 1), 500);
     const qb = this.auditLogRepository
       .createQueryBuilder('log')
       .orderBy('log.timestamp', 'DESC')
-      .take(limit);
+      .take(Math.min(effectiveLimit * 2, 400));
 
     if (ticketId) {
       qb.where('log.entityType = :type', { type: 'ticket' }).andWhere(
         'log.entityId = :ticketId',
         { ticketId },
       );
-    } else {
-      qb.where('log.entityType IN (:...types)', {
-        types: ['ticket', 'user', 'knowledge_document', 'knowledge_entry'],
-      });
+      const rows = await qb.take(effectiveLimit).getMany();
+      return this.enrichActivityLogs(rows);
     }
 
-    return qb.getMany();
+    const mainTypes = [
+      'ticket',
+      'user',
+      'knowledge_document',
+      'knowledge_entry',
+    ];
+    const reviewTypes = ['knowledge_extraction_candidate', 'machine_name_suggestion'];
+    const fetchPool = Math.min(effectiveLimit * 4, 2000);
+
+    qb.where('log.entityType IN (:...types)', { types: mainTypes }).take(fetchPool);
+
+    const [mainLogs, reviewLogs] = await Promise.all([
+      qb.getMany(),
+      this.auditLogRepository.find({
+        where: { entityType: In(reviewTypes) },
+        order: { timestamp: 'DESC' },
+        take: Math.min(250, fetchPool),
+      }),
+    ]);
+
+    const byId = new Map<string, AuditLog>();
+    for (const row of [...mainLogs, ...reviewLogs]) {
+      byId.set(row.id, row);
+    }
+    const logs = [...byId.values()].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+    let merged: AuditLog[] = logs;
+    if (includeErrors) {
+      const pipelineErrors = await this.buildPipelineErrorEntries(logs, 40);
+      merged = [...logs, ...pipelineErrors].sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+      );
+    }
+    return this.enrichActivityLogs(merged.slice(0, effectiveLimit));
+  }
+
+  private resolvePerformerId(log: AuditLog): string | null {
+    const ch = log.changes as Record<string, unknown> | null;
+    if (ch && typeof ch.reviewedById === 'string') return ch.reviewedById;
+    return log.userId ?? null;
+  }
+
+  private async enrichActivityLogs(logs: AuditLog[]): Promise<ActivityLogDto[]> {
+    const performerIds = [
+      ...new Set(logs.map((l) => this.resolvePerformerId(l)).filter((id): id is string => !!id)),
+    ];
+    const users =
+      performerIds.length > 0
+        ? await this.userRepository.find({
+            where: { id: In(performerIds) },
+            select: ['id', 'fullName', 'email'],
+          })
+        : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
+
+    return logs.map((log) => {
+      const pid = this.resolvePerformerId(log);
+      const user = pid ? byId.get(pid) : undefined;
+      return {
+        ...log,
+        performedBy: user
+          ? { id: user.id, fullName: user.fullName ?? null, email: user.email }
+          : null,
+      };
+    });
+  }
+
+  private async buildPipelineErrorEntries(
+    existingLogs: AuditLog[],
+    take: number,
+  ): Promise<AuditLog[]> {
+    const entries: AuditLog[] = [];
+    const rejectDocIds = new Set(
+      existingLogs
+        .filter(
+          (l) =>
+            l.entityType === 'knowledge_document' && l.actionType === ActionType.REJECT,
+        )
+        .map((l) => l.entityId),
+    );
+
+    const failedDocs = await this.knowledgeDocumentRepository.find({
+      where: { status: In(['failed']) },
+      order: { updatedAt: 'DESC' },
+      take,
+    });
+
+    for (const doc of failedDocs) {
+      if (!doc.error?.trim()) continue;
+      entries.push({
+        id: `pipeline-doc-${doc.id}`,
+        actionType: 'error' as ActionType,
+        entityType: 'pipeline_error',
+        entityId: doc.id,
+        userId: null,
+        changes: {
+          documentOriginalName: doc.originalName,
+          status: doc.status,
+          error: doc.error,
+          source: 'knowledge_document',
+        },
+        reason: doc.error,
+        timestamp: doc.updatedAt,
+      } as AuditLog);
+    }
+
+    const partialDocs = await this.knowledgeDocumentRepository.find({
+      where: { status: 'partially_indexed' },
+      order: { updatedAt: 'DESC' },
+      take: Math.max(10, Math.floor(take / 2)),
+    });
+    for (const doc of partialDocs) {
+      if (!doc.error?.trim() || rejectDocIds.has(doc.id)) continue;
+      entries.push({
+        id: `pipeline-partial-${doc.id}`,
+        actionType: 'error' as ActionType,
+        entityType: 'pipeline_error',
+        entityId: doc.id,
+        userId: null,
+        changes: {
+          documentOriginalName: doc.originalName,
+          status: doc.status,
+          error: doc.error,
+          source: 'knowledge_document',
+        },
+        reason: doc.error,
+        timestamp: doc.updatedAt,
+      } as AuditLog);
+    }
+
+    const failedJobs = await this.knowledgeDocumentJobRepository.find({
+      where: { status: 'failed' },
+      order: { updatedAt: 'DESC' },
+      take: Math.max(15, Math.floor(take / 2)),
+    });
+
+    for (const job of failedJobs) {
+      if (!job.error?.trim()) continue;
+      const doc = await this.knowledgeDocumentRepository.findOne({
+        where: { id: job.documentId },
+        select: ['id', 'originalName'],
+      });
+      entries.push({
+        id: `pipeline-job-${job.id}`,
+        actionType: 'error' as ActionType,
+        entityType: 'pipeline_error',
+        entityId: job.documentId,
+        userId: null,
+        changes: {
+          documentOriginalName: doc?.originalName ?? 'PDF document',
+          jobType: job.jobType,
+          queueName: job.queueName,
+          error: job.error,
+          source: 'knowledge_document_job',
+        },
+        reason: job.error,
+        timestamp: job.updatedAt,
+      } as AuditLog);
+    }
+
+    return entries;
   }
 
   async getNotificationsForUser(

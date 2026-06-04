@@ -36,7 +36,7 @@ export class Attachment {
   @Column()
   uploadedById: string;
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'uploadedById' })
   uploadedBy: User;
 

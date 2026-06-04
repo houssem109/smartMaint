@@ -105,6 +105,79 @@ export function sortThreadsByActivity(
   });
 }
 
+/** Thread has no user messages yet (only Techo greeting or empty). */
+export function isGreetingOnlyThread(messages: ChatMessage[] | undefined): boolean {
+  const msgs = messages ?? [];
+  return !msgs.some((m) => m.role === 'user');
+}
+
+/** Reuse an empty active thread instead of creating another "New chat". */
+export function findReusableEmptyThread(
+  threads: ChatThread[],
+  messagesByThread: Record<string, ChatMessage[]>,
+): ChatThread | null {
+  const sorted = sortThreadsByActivity(threads, messagesByThread);
+  return sorted.find((t) => !t.archived && isGreetingOnlyThread(messagesByThread[t.id])) ?? null;
+}
+
+/** Short label for widget thread picker (avoids duplicate "New chat"). */
+export function getWidgetThreadLabel(
+  thread: ChatThread,
+  messages: ChatMessage[] | undefined,
+  allThreads: ChatThread[],
+  messagesByThread: Record<string, ChatMessage[]>,
+): string {
+  const full = getThreadDisplayTitle(thread, messages);
+  if (full !== 'New chat' && !isGenericThreadTitle(full)) {
+    return full.length > 32 ? `${full.slice(0, 31)}…` : full;
+  }
+
+  const genericThreads = sortThreadsByActivity(
+    allThreads.filter((t) => {
+      const label = getThreadDisplayTitle(t, messagesByThread[t.id]);
+      return label === 'New chat' || isGenericThreadTitle(t.title);
+    }),
+    messagesByThread,
+  );
+  const rank = genericThreads.findIndex((t) => t.id === thread.id);
+  if (genericThreads.length > 1 && rank >= 0) {
+    return `Chat ${genericThreads.length - rank}`;
+  }
+
+  const ts = getThreadLastActivity(thread, messages);
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Pick the best thread to show when the widget opens. */
+export function pickWidgetActiveThread(
+  threads: ChatThread[],
+  messagesByThread: Record<string, ChatMessage[]>,
+  preferredId: string | null,
+): ChatThread | null {
+  if (!threads.length) return null;
+  const sorted = sortThreadsByActivity(threads, messagesByThread);
+
+  if (preferredId) {
+    const preferred = sorted.find((t) => t.id === preferredId);
+    if (preferred && !preferred.archived) return preferred;
+  }
+
+  const withUser = sorted.find(
+    (t) => !t.archived && !isGreetingOnlyThread(messagesByThread[t.id]),
+  );
+  if (withUser) return withUser;
+
+  const empty = findReusableEmptyThread(threads, messagesByThread);
+  if (empty) return empty;
+
+  return sorted.find((t) => !t.archived) ?? sorted[0] ?? null;
+}
+
 /** Recent tabs for the floating widget — always includes the active thread. */
 export function pickWidgetRecentThreads(
   threads: ChatThread[],

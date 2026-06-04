@@ -10,17 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import {
+  buildNotificationPreview,
+  formatNotificationTime,
+  type NotificationEntryInput,
+} from '@/lib/notification-display';
 
-interface NotificationEntry {
-  id: string;
-  actionType: string;
-  entityId: string;
-  entityType: string;
-  userId: string | null;
-  changes: Record<string, any> | null;
-  timestamp: string;
-  ticketTitle?: string;
-}
+type NotificationEntry = NotificationEntryInput;
 
 export default function WorkerNotificationsPage() {
   const [notifications, setNotifications] = useState<NotificationEntry[]>([]);
@@ -45,55 +41,6 @@ export default function WorkerNotificationsPage() {
     const interval = setInterval(fetchNotifications, 10000);
     return () => clearInterval(interval);
   }, []);
-
-  const formatAction = (entry: NotificationEntry) => {
-    const event = entry.changes?.event;
-    if (entry.entityType === 'knowledge_entry') {
-      if (event === 'knowledge_entry_submitted') return 'Solution submitted';
-      if (event === 'knowledge_entry_approved') return 'Solution approved';
-      if (event === 'knowledge_entry_rejected') return 'Solution rejected';
-      return 'Knowledge update';
-    }
-    switch (entry.actionType) {
-      case 'create':
-        return 'Your ticket was created';
-      case 'update':
-        return 'Your ticket was updated';
-      case 'delete':
-        return 'Your ticket was moved to trash';
-      case 'rollback':
-        return 'Your ticket was restored';
-      default:
-        return entry.actionType;
-    }
-  };
-
-  const formatDetails = (entry: NotificationEntry): string => {
-    const changes = entry.changes;
-    if (!changes) return '—';
-    if (entry.entityType === 'knowledge_entry') {
-      if (changes?.event === 'knowledge_entry_rejected' && typeof changes?.rejectReason === 'string') {
-        return `Reason: ${changes.rejectReason}`;
-      }
-      if (changes?.reviewStatus && typeof changes.reviewStatus === 'string') {
-        return `Status: ${changes.reviewStatus}`;
-      }
-      return 'Knowledge entry review update';
-    }
-
-    if (changes.deletedSnapshot) return 'Ticket soft-deleted (can be restored by admin).';
-    if (changes.restoredFromDelete) return 'Ticket restored from trash.';
-
-    const parts: string[] = [];
-    for (const [key, value] of Object.entries(changes)) {
-      if (key === 'attachmentsAdded' && Array.isArray(value)) {
-        parts.push(`Attachments added: ${(value as string[]).join(', ')}`);
-      } else if (value && typeof value === 'object' && 'from' in (value as any) && 'to' in (value as any)) {
-        parts.push(`${key}: ${(value as any).from} → ${(value as any).to}`);
-      }
-    }
-    return parts.join(' | ') || '—';
-  };
 
   return (
     <ProtectedRoute allowedRoles={['worker']}>
@@ -131,47 +78,33 @@ export default function WorkerNotificationsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {notifications.map((n) => (
-                        <TableRow key={n.id} className="transition-colors">
-                          <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                            {new Date(n.timestamp).toLocaleString()}
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            <Button variant="link" size="sm" asChild className="px-0">
-                              <Link
-                                href={
-                                  n.entityType === 'knowledge_entry'
-                                    ? '/dashboard/worker/knowledge'
-                                    : `/dashboard/tickets/${n.entityId}`
-                                }
-                              >
-                                {(() => {
-                                  if (n.ticketTitle) return n.ticketTitle;
-                                  const changes: any = n.changes;
-                                  if (changes?.deletedSnapshot?.ticket?.title) {
-                                    return changes.deletedSnapshot.ticket.title;
-                                  }
-                                  if (changes?.title && typeof changes.title === 'object') {
-                                    if ('to' in changes.title) return String(changes.title.to);
-                                    if ('from' in changes.title) return String(changes.title.from);
-                                  }
-                                  return n.entityType === 'knowledge_entry'
-                                    ? `Knowledge ${n.entityId.slice(0, 8)}…`
-                                    : `Ticket ${n.entityId.slice(0, 8)}…`;
-                                })()}
-                              </Link>
-                            </Button>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="text-xs">
-                              {formatAction(n)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs text-muted-foreground max-w-lg">
-                            {formatDetails(n)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {notifications.map((n) => {
+                        const item = buildNotificationPreview(n, 'worker');
+                        return (
+                          <TableRow key={n.id} className="transition-colors">
+                            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                              {formatNotificationTime(n.timestamp)}
+                            </TableCell>
+                            <TableCell className="text-sm font-medium">
+                              {item.linkable ? (
+                                <Button variant="link" size="sm" asChild className="h-auto px-0 py-0">
+                                  <Link href={item.href}>{item.entityLabel}</Link>
+                                </Button>
+                              ) : (
+                                item.entityLabel
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={item.actionVariant} className="text-xs font-normal">
+                                {item.headline}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="max-w-lg text-xs leading-relaxed text-muted-foreground">
+                              {item.detail}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

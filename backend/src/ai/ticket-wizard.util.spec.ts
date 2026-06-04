@@ -30,6 +30,11 @@ describe('ticket-wizard.util', () => {
     expect(analyzeTicketCreationIntent('How do I reset the PLC timer?').kind).toBe('none');
   });
 
+  it('does not start ticket wizard for sales order problems', () => {
+    expect(analyzeTicketCreationIntent('i have commande 25109760 dont work').kind).toBe('none');
+    expect(shouldStartTicketWizard('i have commande 25109760 dont work')).toBe(false);
+  });
+
   it('detects "create a ticket" (substring trap)', () => {
     expect('create a ticket'.includes('create ticket')).toBe(false);
     expect(isTicketWizardTrigger('create a ticket')).toBe(true);

@@ -1,15 +1,24 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import { existsSync, unlinkSync } from 'fs';
 import { KnowledgeDocument } from './entities/knowledge-document.entity';
 import { KnowledgeExtractionCandidate } from './entities/knowledge-extraction-candidate.entity';
+import { KnowledgeExtractionTechReview } from './entities/knowledge-extraction-tech-review.entity';
 import { MachineNameSuggestion } from './entities/machine-name-suggestion.entity';
 import { KnowledgeDocumentPageAnalysis } from './entities/knowledge-document-page-analysis.entity';
 import { KnowledgeDocumentJob } from './entities/knowledge-document-job.entity';
 import { PipelinePreferences } from './entities/pipeline-preferences.entity';
 import { ExtractionFeedbackEvent } from './entities/extraction-feedback-event.entity';
+import { KnowledgeEntry } from '../knowledge/entities/knowledge-entry.entity';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { AiService } from '../ai/ai.service';
 import { getOllamaVisionModel } from '../ai/ollama-vision.util';
@@ -112,6 +121,8 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     private readonly knowledgeDocumentsRepository: Repository<KnowledgeDocument>,
     @InjectRepository(KnowledgeExtractionCandidate)
     private readonly extractionCandidatesRepository: Repository<KnowledgeExtractionCandidate>,
+    @InjectRepository(KnowledgeExtractionTechReview)
+    private readonly extractionTechReviewsRepository: Repository<KnowledgeExtractionTechReview>,
     @InjectRepository(MachineNameSuggestion)
     private readonly machineNameSuggestionsRepository: Repository<MachineNameSuggestion>,
     @InjectRepository(KnowledgeDocumentPageAnalysis)
@@ -122,6 +133,8 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     private readonly extractionFeedbackRepository: Repository<ExtractionFeedbackEvent>,
     @InjectRepository(AuditLog)
     private readonly auditLogRepository: Repository<AuditLog>,
+    @InjectRepository(KnowledgeEntry)
+    private readonly knowledgeEntryRepository: Repository<KnowledgeEntry>,
     @InjectRepository(PipelinePreferences)
     private readonly pipelinePreferencesRepository: Repository<PipelinePreferences>,
     @InjectQueue(GATE_QUEUE)
@@ -385,9 +398,18 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return { document: doc, jobId: tracking.id };
   }
 
-  async findAll(opts?: { includeSuperseded?: boolean }): Promise<KnowledgeDocument[]> {
+  async findAll(opts?: {
+    includeSuperseded?: boolean;
+    uploadedById?: string;
+  }): Promise<KnowledgeDocument[]> {
+    const where: Record<string, unknown> = opts?.includeSuperseded
+      ? {}
+      : { status: Not('superseded') };
+    if (opts?.uploadedById) {
+      where.uploadedById = opts.uploadedById;
+    }
     return this.knowledgeDocumentsRepository.find({
-      ...(opts?.includeSuperseded ? {} : { where: { status: Not('superseded') } }),
+      where,
       order: { createdAt: 'DESC' },
       relations: ['uploadedBy'],
     });
@@ -404,10 +426,111 @@ export class KnowledgeDocumentsService implements OnModuleInit {
 
   async getExtractionsForDocument(documentId: string): Promise<KnowledgeExtractionCandidate[]> {
     await this.findOne(documentId); // ensure exists
-    return this.extractionCandidatesRepository.find({
-      where: { documentId },
-      order: { createdAt: 'DESC' },
+    const rows = await this.extractionCandidatesRepository
+      .createQueryBuilder('candidate')
+      .leftJoinAndSelect('candidate.techReviews', 'techReview')
+      .leftJoinAndSelect('techReview.technician', 'technician')
+      .leftJoinAndSelect('candidate.reviewedBy', 'reviewedBy')
+      .where('candidate.documentId = :documentId', { documentId })
+      .orderBy('candidate.createdAt', 'DESC')
+      .addOrderBy('techReview.createdAt', 'ASC')
+      .getMany();
+
+    for (const row of rows) {
+      if (row.techReviews?.length) {
+        row.techReviews.sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
+      }
+    }
+
+    return rows;
+  }
+
+  async submitTechExtractionReview(
+    candidateId: string,
+    technicianId: string,
+    payload: {
+      action: 'approve' | 'approve_edit' | 'reject';
+      title?: string;
+      problemDescription?: string;
+      solution?: string;
+      reason?: string;
+    },
+  ): Promise<KnowledgeExtractionTechReview> {
+    const candidate = await this.extractionCandidatesRepository.findOne({
+      where: { id: candidateId },
     });
+    if (!candidate) throw new NotFoundException('Extraction candidate not found');
+    if (candidate.status !== 'candidate') {
+      throw new BadRequestException('This suggestion was already finalized by an admin');
+    }
+
+    const existing = await this.extractionTechReviewsRepository.findOne({
+      where: { candidateId, technicianId },
+    });
+    if (existing) {
+      throw new BadRequestException('You already reviewed this suggestion');
+    }
+
+    const action = payload.action;
+    let editedTitle: string | null = null;
+    let editedProblemDescription: string | null = null;
+    let editedSolution: string | null = null;
+    let rejectReason: string | null = null;
+
+    if (action === 'approve_edit') {
+      const title = payload.title?.trim();
+      const problemDescription = payload.problemDescription?.trim();
+      const solution = payload.solution?.trim();
+      if (!title || !problemDescription || !solution) {
+        throw new BadRequestException('Title, problem, and solution are required when editing');
+      }
+      editedTitle = title;
+      editedProblemDescription = problemDescription;
+      editedSolution = solution;
+    } else if (action === 'reject') {
+      rejectReason = payload.reason?.trim() || null;
+    }
+
+    const review = await this.extractionTechReviewsRepository.save(
+      this.extractionTechReviewsRepository.create({
+        candidateId,
+        technicianId,
+        action,
+        editedTitle,
+        editedProblemDescription,
+        editedSolution,
+        rejectReason,
+      }),
+    );
+
+    const doc = await this.knowledgeDocumentsRepository.findOne({ where: { id: candidate.documentId } });
+    const withRelations = await this.extractionTechReviewsRepository.findOne({
+      where: { id: review.id },
+      relations: ['technician', 'candidate'],
+    });
+    const techUser = withRelations?.technician;
+    await this.auditLogRepository.save(
+      this.auditLogRepository.create({
+        actionType: ActionType.UPDATE,
+        entityType: 'knowledge_extraction_candidate',
+        entityId: candidate.id,
+        userId: technicianId,
+        changes: {
+          event: 'extraction_candidate_tech_reviewed',
+          techReviewId: review.id,
+          techReviewStatus: action,
+          documentId: candidate.documentId,
+          documentOriginalName: doc?.originalName ?? null,
+          techReviewerName: techUser?.fullName?.trim() || techUser?.email || null,
+          title: candidate.title,
+        },
+        reason: payload.reason?.trim() || null,
+      }),
+    );
+
+    return withRelations as KnowledgeExtractionTechReview;
   }
 
   async getExtractionStats(documentId: string): Promise<{
@@ -1068,223 +1191,6 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           scope: 'shared',
           purpose: 'Ticket file attachments (separate from knowledge PDFs)',
         },
-      ],
-    };
-  }
-
-  /**
-   * 20 success criteria vs current implementation (curated; aligns with `PDF_KNOWLEDGE_ARCHITECTURE.md` 20).
-   */
-  getQaSuccessCriteria(): {
-    checkedAt: string;
-    rows: { id: string; goal: string; status: 'shipped' | 'partial' | 'gap' | 'aspirational'; notes: string }[];
-  } {
-    return {
-      checkedAt: new Date().toISOString(),
-      rows: [
-        {
-          id: 'gate-irrelevant',
-          goal: 'Irrelevant PDFs blocked at the gate without calling the LLM in obvious cases',
-          status: 'partial',
-          notes:
-            'Tier 1/2 heuristics + embedding similarity often decide without LLM; Tier 3 LLM still runs when confidence is borderline.',
-        },
-        {
-          id: 'machine-cover',
-          goal: 'Machine name and manufacturer auto-detected from PDF cover / early pages',
-          status: 'partial',
-          notes:
-            'Machine name from gate/extraction + suggestions flow; manufacturer on `machine_profiles` is often manual or inferred — not a guaranteed auto-fill for every PDF.',
-        },
-        {
-          id: 'pages-covered',
-          goal: 'All pages covered by text extraction, OCR, or vision',
-          status: 'partial',
-          notes:
-            'Poppler text + OCR queues + bounded vision pass; caps (`PDF_OCR_MAX_PAGES`, `PDF_VISION_MAX_PAGES`) mean very large manuals may not run OCR/vision on every page.',
-        },
-        {
-          id: 'upload-latency',
-          goal: 'Very large PDFs do not block the backend — upload returns in under ~1 second',
-          status: 'aspirational',
-          notes:
-            'Handler returns 202 after accepting the file, but disk write + validation still scale with bytes — treat as ops benchmark, not a guaranteed SLA.',
-        },
-        {
-          id: 'concurrent-uploads',
-          goal: 'Multiple PDFs can upload and process concurrently without crashes',
-          status: 'partial',
-          notes: 'Bull queues isolate work; no formal load test or back-pressure policy is checked in CI.',
-        },
-        {
-          id: 'progress-realtime',
-          goal: 'Progress visible from 0% to 100% in near real time',
-          status: 'partial',
-          notes:
-            'Postgres progress fields + `document:progress` WebSocket; some stages are coarse and polling via `GET …/status` is still used for some clients.',
-        },
-        {
-          id: 'chat-latency',
-          goal: 'Chatbot has access to fault tables within ~2 minutes of upload',
-          status: 'gap',
-          notes: 'No automated SLA; depends on queue depth, extraction chunk limits, and model speed.',
-        },
-        {
-          id: 'unreadable-nonblocking',
-          goal: 'Unreadable pages never block the pipeline',
-          status: 'shipped',
-          notes:
-            'Low-text pages are routed to inline/async vision (page explanation); pipeline continues without a manual fix queue.',
-        },
-        {
-          id: 'admin-fix-index',
-          goal: 'Manual chunk re-index after page content changes',
-          status: 'partial',
-          notes:
-            '`POST …/reindex-manual-chunks` on PDF detail; Qdrant write failures are log-only (Postgres + page_analysis remain source of truth).',
-        },
-        {
-          id: 'tech-in-chat',
-          goal: 'Technician experience entries appear in chatbot answers alongside PDF knowledge',
-          status: 'shipped',
-          notes: 'Approved `knowledge_entries` are embedded and merged into RAG retrieval for Techo.',
-        },
-        {
-          id: 'attribution',
-          goal: 'Chatbot shows source attribution (page, document, technician where applicable)',
-          status: 'partial',
-          notes:
-            '`POST /chat/message` returns `sources` and the widget can show them; persisting sources on stored conversation rows for audit replay is still pending.',
-        },
-        {
-          id: 'cross-dedup',
-          goal: 'Cross-document dedup reduces duplicate answers (fingerprint + chunk hashes + supersede)',
-          status: 'partial',
-          notes: 'Fingerprint gate + `vector_chunk_hashes` + superseded manual vector purge; not a semantic duplicate detector for all phrasings.',
-        },
-        {
-          id: 'crash-resume',
-          goal: 'System recovers from worker crashes without reprocessing from page 1',
-          status: 'gap',
-          notes:
-            'Bull retries and re-queued jobs help, but there is no fully documented durable “checkpoint resume” story per page across arbitrary failure modes.',
-        },
-        {
-          id: 'tri-lang-ocr',
-          goal: 'French, English, and Arabic PDFs extract correctly via OCR stack',
-          status: 'partial',
-          notes:
-            'Dockerfile includes Arabic tess data and `.env.example` suggests `eng+fra+ara`; scan quality and mixed-language layouts still vary.',
-        },
-      ],
-    };
-  }
-
-  /**
-   * 22 troubleshooting / structured extraction — read-only snapshot for architecture doc + admin UI.
-   */
-  getTroubleshootingExtractionReference(): {
-    checkedAt: string;
-    responsibility: string;
-    implementation: { service: string; method: string; bullQueue: string; bullJobType: string };
-    systemPromptRelativePaths: string[];
-    envKeys: string[];
-    textWindowNote: string;
-    persistence: {
-      table: string;
-      entity: string;
-      statusValues: string[];
-      requiredCandidateFields: string[];
-      optionalCandidateFields: string[];
-    };
-    pageSectionLabels: string[];
-    chunkSectionLabels: string[];
-    extractionUserMessageSchema: string;
-    entryTypesFromLlm: string[];
-    relatedEndpoints: { method: string; path: string; note: string }[];
-    notes: string[];
-  } {
-    return {
-      checkedAt: new Date().toISOString(),
-      responsibility:
-        'Problem/solution-style rows are produced by the same PDF extraction pass as other structured knowledge — implemented in KnowledgeDocumentsService (no separate PdfTroubleshootingExtractorService).',
-      implementation: {
-        service: 'KnowledgeDocumentsService',
-        method: 'processDocumentExtraction(documentId)',
-        bullQueue: EXTRACTION_QUEUE,
-        bullJobType: EXTRACTION_JOB,
-      },
-      systemPromptRelativePaths: [
-        'backend/src/ai/prompts/techo-pdf-extractor-system.prompt.md',
-        '(runtime fallbacks: dist-relative paths in processDocumentExtraction)',
-      ],
-      envKeys: [
-        'DOC_EXTRACTION_MAX_CHUNKS',
-        'DOC_EXTRACTION_MAX_CANDIDATES',
-        'DOC_EXTRACTION_MAX_CANDIDATES_PER_CHUNK',
-        'DOC_EXTRACTION_CHUNK_SIZE',
-        'DOC_EXTRACTION_CHUNK_OVERLAP',
-      ],
-      textWindowNote:
-        'If the lowercased full-PDF text contains the substring "troubleshooting", extraction and manual re-index use text from that offset onward; otherwise the entire extracted string is used. Manuals that only use headings like "Dépannage" without the English word keep the full text.',
-      persistence: {
-        table: 'knowledge_extraction_candidates',
-        entity: 'KnowledgeExtractionCandidate',
-        statusValues: ['candidate', 'approved', 'rejected'],
-        requiredCandidateFields: ['title', 'problemDescription', 'solution'],
-        optionalCandidateFields: [
-          'tags',
-          'entryType',
-          'symptom',
-          'rootCause',
-          'sourcePages',
-          'confidence',
-          'sectionType',
-        ],
-      },
-      pageSectionLabels: [
-        'fault_table',
-        'alarm_list',
-        'wiring',
-        'warning_notice',
-        'procedure_steps',
-        'specification',
-        'general',
-      ],
-      chunkSectionLabels: [
-        'fault_table',
-        'alarm_list',
-        'wiring',
-        'warning_notice',
-        'procedure_steps',
-        'specification',
-        'general_text',
-      ],
-      extractionUserMessageSchema:
-        'Per chunk: JSON with top-level key "candidates" (array). Each item: entryType, title, problemDescription, solution, symptom, rootCause, tags, sourcePages, confidence — see inline string in processDocumentExtraction.',
-      entryTypesFromLlm: ['fault', 'procedure', 'safety', 'wiring', 'spec'],
-      relatedEndpoints: [
-        { method: 'GET', path: '/knowledge-documents/:id/extractions', note: 'List candidates for one PDF' },
-        {
-          method: 'POST',
-          path: '/knowledge-documents/extractions/:candidateId/approve',
-          note: 'Promote candidate into knowledge_entries (optional body edits)',
-        },
-        {
-          method: 'POST',
-          path: '/knowledge-documents/extractions/:candidateId/reject',
-          note: 'Reject candidate; logs extraction_feedback_events (14) best-effort',
-        },
-        {
-          method: 'GET',
-          path: '/export/problems-solutions',
-          note: 'Curated columns export; filters machine, documentId (UUID, knowledge_documents FK on entry), severity, from/to, format — see 23',
-        },
-      ],
-      notes: [
-        'Per-page sectionType uses detectSectionType (regex on page text); chunk hints use classifyChunkSection (chunk + docType).',
-        'buildRoutedChunks + prioritizeChunksForExtraction order chunks before the LLM pass.',
-        'RAG manual re-index (reindexManualChunksForDocument) reuses the same troubleshooting slice + routing.',
       ],
     };
   }
@@ -2060,17 +1966,24 @@ export class KnowledgeDocumentsService implements OnModuleInit {
     return out.trim();
   }
 
-  async deleteDocument(documentId: string, adminId: string): Promise<void> {
+  async deleteDocument(
+    documentId: string,
+    userId: string,
+    role: UserRole,
+  ): Promise<void> {
     const doc = await this.findOne(documentId);
+
+    if (role === UserRole.TECHNICIAN) {
+      if (doc.uploadedById !== userId) {
+        throw new ForbiddenException('You can only delete PDFs you uploaded');
+      }
+    }
 
     try {
       await this.ragService.purgeManualIndexForDocument(doc.id);
     } catch {
       // best-effort
     }
-
-    // Admin/superadmin are allowed to delete any document.
-    // We keep auth logic in the controller; here we only do the work.
     // Delete candidates and name suggestions first to avoid FK issues on older DBs.
     await this.extractionCandidatesRepository.delete({ documentId: doc.id });
     await this.machineNameSuggestionsRepository.delete({ documentId: doc.id });
@@ -2156,13 +2069,22 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           confidence: candidate.confidence,
           adminId,
           reason: null,
-          editDelta: edited
-            ? {
-                title: payload?.title ?? null,
-                problemDescription: payload?.problemDescription ?? null,
-                solution: payload?.solution ?? null,
-              }
-            : null,
+          editDelta: {
+            snapshot: {
+              title: title ?? null,
+              problemDescription: problemDescription ?? null,
+              solution: solution ?? null,
+            },
+            ...(edited
+              ? {
+                  changed: {
+                    title: payload?.title ?? null,
+                    problemDescription: payload?.problemDescription ?? null,
+                    solution: payload?.solution ?? null,
+                  },
+                }
+              : {}),
+          },
         }),
       );
     } catch {
@@ -2175,7 +2097,17 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         entityType: 'knowledge_extraction_candidate',
         entityId: candidate.id,
         userId: adminId,
-        changes: { event: 'extraction_candidate_approved', knowledgeEntryId: entry.id },
+        changes: {
+          event: 'extraction_candidate_approved',
+          knowledgeEntryId: entry.id,
+          documentId: candidate.documentId,
+          reviewedById: adminId,
+          title: title ?? candidate.title,
+          problemDescription: problemDescription?.slice(0, 2000) ?? null,
+          solution: solution?.slice(0, 2000) ?? null,
+          documentOriginalName: doc?.originalName ?? null,
+          edited: edited,
+        },
         reason: null,
       }),
     );
@@ -2209,31 +2141,319 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           confidence: candidate.confidence,
           adminId,
           reason: reason?.trim() || null,
-          editDelta: null,
+          editDelta: {
+            snapshot: {
+              title: candidate.title ?? null,
+              problemDescription: candidate.problemDescription ?? null,
+              solution: candidate.solution ?? null,
+            },
+          },
         }),
       );
     } catch {
       // best-effort analytics
     }
+    const docReject = await this.knowledgeDocumentsRepository.findOne({
+      where: { id: candidate.documentId },
+    });
     await this.auditLogRepository.save(
       this.auditLogRepository.create({
         actionType: ActionType.REJECT,
         entityType: 'knowledge_extraction_candidate',
         entityId: candidate.id,
         userId: adminId,
-        changes: { event: 'extraction_candidate_rejected' },
+        changes: {
+          event: 'extraction_candidate_rejected',
+          documentId: candidate.documentId,
+          reviewedById: adminId,
+          title: candidate.title,
+          problemDescription: candidate.problemDescription?.slice(0, 2000) ?? null,
+          solution: candidate.solution?.slice(0, 2000) ?? null,
+          documentOriginalName: docReject?.originalName ?? null,
+        },
         reason: reason?.trim() || null,
       }),
     );
     return saved;
   }
 
-  async listRecentExtractionFeedback(limit = 200): Promise<ExtractionFeedbackEvent[]> {
-    const take = Math.min(Math.max(1, limit), 500);
-    return this.extractionFeedbackRepository.find({
-      order: { createdAt: 'DESC' },
-      take,
+  private pickNonEmptyString(...values: (string | null | undefined)[]): string | null {
+    for (const v of values) {
+      if (typeof v === 'string' && v.trim()) return v.trim();
+    }
+    return null;
+  }
+
+  private resolveFeedbackTextSnapshot(
+    editDelta: Record<string, unknown> | null | undefined,
+    candidate?: KnowledgeExtractionCandidate | null,
+    audit?: Record<string, unknown> | null,
+    knowledgeEntry?: KnowledgeEntry | null,
+  ): { title: string | null; problemDescription: string | null; solution: string | null } {
+    let fromDelta: {
+      title?: string;
+      problemDescription?: string;
+      solution?: string;
+    } = {};
+    if (editDelta && typeof editDelta === 'object') {
+      const snap = editDelta.snapshot as Record<string, unknown> | undefined;
+      if (snap && typeof snap === 'object') {
+        fromDelta = {
+          title: typeof snap.title === 'string' ? snap.title : undefined,
+          problemDescription:
+            typeof snap.problemDescription === 'string' ? snap.problemDescription : undefined,
+          solution: typeof snap.solution === 'string' ? snap.solution : undefined,
+        };
+      } else {
+        const changed = editDelta.changed as Record<string, unknown> | undefined;
+        fromDelta = {
+          title:
+            (typeof editDelta.title === 'string' ? editDelta.title : undefined) ??
+            (typeof changed?.title === 'string' ? changed.title : undefined),
+          problemDescription:
+            (typeof editDelta.problemDescription === 'string'
+              ? editDelta.problemDescription
+              : undefined) ??
+            (typeof changed?.problemDescription === 'string'
+              ? changed.problemDescription
+              : undefined),
+          solution:
+            (typeof editDelta.solution === 'string' ? editDelta.solution : undefined) ??
+            (typeof changed?.solution === 'string' ? changed.solution : undefined),
+        };
+      }
+    }
+    return {
+      title: this.pickNonEmptyString(
+        fromDelta.title,
+        candidate?.title,
+        audit?.title as string,
+        knowledgeEntry?.title,
+      ),
+      problemDescription: this.pickNonEmptyString(
+        fromDelta.problemDescription,
+        candidate?.problemDescription,
+        audit?.problemDescription as string,
+        knowledgeEntry?.problemDescription,
+      ),
+      solution: this.pickNonEmptyString(
+        fromDelta.solution,
+        candidate?.solution,
+        audit?.solution as string,
+        knowledgeEntry?.solution,
+      ),
+    };
+  }
+
+  private findKnowledgeEntryForFeedbackEvent(
+    event: ExtractionFeedbackEvent,
+    entryByCandidate: Map<string, KnowledgeEntry>,
+    entriesByDocument: Map<string, KnowledgeEntry[]>,
+  ): KnowledgeEntry | null {
+    const linked = entryByCandidate.get(event.candidateId);
+    if (linked) return linked;
+    if (event.signal === 'reject') return null;
+    const list = entriesByDocument.get(event.documentId) ?? [];
+    if (list.length === 0) return null;
+    const eventMs = new Date(event.createdAt).getTime();
+    let best: KnowledgeEntry | null = null;
+    let bestDiff = Number.POSITIVE_INFINITY;
+    for (const ent of list) {
+      const diff = Math.abs(new Date(ent.createdAt).getTime() - eventMs);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = ent;
+      }
+    }
+    if (best && bestDiff <= 15 * 60 * 1000) return best;
+    return list[0] ?? null;
+  }
+
+  private async enrichExtractionFeedbackEvents(events: ExtractionFeedbackEvent[]): Promise<
+    Array<
+      ExtractionFeedbackEvent & {
+        candidateTitle: string | null;
+        candidateProblem: string | null;
+        candidateSolution: string | null;
+        documentOriginalName: string | null;
+      }
+    >
+  > {
+    if (events.length === 0) return [];
+
+    const candidateIds = [...new Set(events.map((e) => e.candidateId))];
+    const docIds = [...new Set(events.map((e) => e.documentId))];
+    const approveDocIds = [
+      ...new Set(events.filter((e) => e.signal !== 'reject').map((e) => e.documentId)),
+    ];
+
+    const [candidates, docs, auditLogs, kbEntries] = await Promise.all([
+      this.extractionCandidatesRepository.find({ where: { id: In(candidateIds) } }),
+      this.knowledgeDocumentsRepository.find({
+        where: { id: In(docIds) },
+        select: ['id', 'originalName', 'fileName'],
+      }),
+      this.auditLogRepository.find({
+        where: {
+          entityType: 'knowledge_extraction_candidate',
+          entityId: In(candidateIds),
+        },
+        order: { timestamp: 'DESC' },
+      }),
+      approveDocIds.length > 0
+        ? this.knowledgeEntryRepository
+            .createQueryBuilder('k')
+            .where('k.knowledgeDocumentId IN (:...docIds)', { docIds: approveDocIds })
+            .andWhere('k.source = :source', { source: 'pdf_extraction' })
+            .orderBy('k.createdAt', 'DESC')
+            .getMany()
+        : Promise.resolve([] as KnowledgeEntry[]),
+    ]);
+
+    const candById = new Map(candidates.map((c) => [c.id, c]));
+    const docById = new Map(docs.map((d) => [d.id, d]));
+    const auditByCandidate = new Map<string, Record<string, unknown>>();
+    for (const log of auditLogs) {
+      if (!auditByCandidate.has(log.entityId)) {
+        auditByCandidate.set(log.entityId, (log.changes ?? {}) as Record<string, unknown>);
+      }
+    }
+
+    const knowledgeEntryIds = [
+      ...new Set(
+        auditLogs
+          .map((l) => (l.changes as Record<string, unknown> | null)?.knowledgeEntryId)
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const linkedEntries =
+      knowledgeEntryIds.length > 0
+        ? await this.knowledgeEntryRepository.find({ where: { id: In(knowledgeEntryIds) } })
+        : [];
+    const entryById = new Map(linkedEntries.map((e) => [e.id, e]));
+    const entryByCandidate = new Map<string, KnowledgeEntry>();
+    for (const log of auditLogs) {
+      const ch = (log.changes ?? {}) as Record<string, unknown>;
+      const kid = ch.knowledgeEntryId;
+      if (typeof kid !== 'string' || entryByCandidate.has(log.entityId)) continue;
+      const ent = entryById.get(kid);
+      if (ent) entryByCandidate.set(log.entityId, ent);
+    }
+
+    const entriesByDocument = new Map<string, KnowledgeEntry[]>();
+    for (const ent of kbEntries) {
+      const docId = ent.knowledgeDocumentId;
+      if (!docId) continue;
+      if (!entriesByDocument.has(docId)) entriesByDocument.set(docId, []);
+      entriesByDocument.get(docId)!.push(ent);
+    }
+
+    return events.map((e) => {
+      const c = candById.get(e.candidateId);
+      const d = docById.get(e.documentId);
+      const audit = auditByCandidate.get(e.candidateId);
+      const kbEntry = this.findKnowledgeEntryForFeedbackEvent(e, entryByCandidate, entriesByDocument);
+      const snap = this.resolveFeedbackTextSnapshot(e.editDelta, c, audit, kbEntry);
+      return {
+        ...e,
+        candidateTitle: snap.title,
+        candidateProblem: snap.problemDescription,
+        candidateSolution: snap.solution,
+        documentOriginalName:
+          d?.originalName ?? d?.fileName ?? (audit?.documentOriginalName as string) ?? null,
+      };
     });
+  }
+
+  async getExtractionFeedbackDetail(eventId: string): Promise<
+    ExtractionFeedbackEvent & {
+      candidateTitle: string | null;
+      candidateProblem: string | null;
+      candidateSolution: string | null;
+      documentOriginalName: string | null;
+    }
+  > {
+    const event = await this.extractionFeedbackRepository.findOne({ where: { id: eventId } });
+    if (!event) throw new NotFoundException('Feedback event not found');
+    const [enriched] = await this.enrichExtractionFeedbackEvents([event]);
+    return enriched;
+  }
+
+  async listRecentExtractionFeedback(options?: {
+    page?: number;
+    pageSize?: number;
+    signal?: 'approve' | 'approve_edit' | 'reject';
+  }): Promise<{
+    items: Array<
+      ExtractionFeedbackEvent & {
+        candidateTitle: string | null;
+        candidateProblem: string | null;
+        candidateSolution: string | null;
+        documentOriginalName: string | null;
+      }
+    >;
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    counts: { approve: number; approve_edit: number; reject: number };
+  }> {
+    const page = Math.max(1, options?.page ?? 1);
+    const pageSize = Math.min(Math.max(1, options?.pageSize ?? 10), 100);
+    const skip = (page - 1) * pageSize;
+    const signal = options?.signal;
+    const where = signal ? { signal } : {};
+
+    const emptyCounts = { approve: 0, approve_edit: 0, reject: 0 };
+
+    try {
+      const [events, total, countsRaw] = await Promise.all([
+        this.extractionFeedbackRepository.find({
+          where,
+          order: { createdAt: 'DESC' },
+          skip,
+          take: pageSize,
+        }),
+        this.extractionFeedbackRepository.count({ where }),
+        this.extractionFeedbackRepository
+          .createQueryBuilder('e')
+          .select('e.signal', 'signal')
+          .addSelect('COUNT(*)::int', 'cnt')
+          .groupBy('e.signal')
+          .getRawMany<{ signal: string; cnt: number }>(),
+      ]);
+
+      const counts = { ...emptyCounts };
+      for (const row of countsRaw) {
+        if (row.signal === 'approve') counts.approve = Number(row.cnt) || 0;
+        else if (row.signal === 'approve_edit') counts.approve_edit = Number(row.cnt) || 0;
+        else if (row.signal === 'reject') counts.reject = Number(row.cnt) || 0;
+      }
+
+      const items =
+        events.length === 0 ? [] : await this.enrichExtractionFeedbackEvents(events);
+
+      return {
+        items,
+        total,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(total / pageSize)),
+        counts,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (
+        /extraction_feedback_events|relation.*does not exist|No metadata for "ExtractionFeedbackEvent"/i.test(
+          msg,
+        )
+      ) {
+        throw new BadRequestException(
+          'Extraction feedback is not configured. Restart the backend after deploy, or run migrations (1700000000016).',
+        );
+      }
+      throw err;
+    }
   }
 
   /**
@@ -2401,9 +2621,10 @@ export class KnowledgeDocumentsService implements OnModuleInit {
           actionType: ActionType.REJECT,
           entityType: 'machine_name_suggestion',
           entityId: o.id,
-          userId: o.suggestedById,
+          userId: adminId,
           changes: {
             forUserId: o.suggestedById,
+            reviewedById: adminId,
             documentId: doc.id,
             documentOriginalName: doc.originalName,
             proposedName: o.proposedName,
@@ -2420,9 +2641,10 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         actionType: ActionType.APPROVE,
         entityType: 'machine_name_suggestion',
         entityId: suggestion.id,
-        userId: suggestion.suggestedById,
+        userId: adminId,
         changes: {
           forUserId: suggestion.suggestedById,
+          reviewedById: adminId,
           documentId: doc.id,
           documentOriginalName: doc.originalName,
           proposedName: suggestion.proposedName,
@@ -2464,9 +2686,10 @@ export class KnowledgeDocumentsService implements OnModuleInit {
         actionType: ActionType.REJECT,
         entityType: 'machine_name_suggestion',
         entityId: suggestion.id,
-        userId: suggestion.suggestedById,
+        userId: adminId,
         changes: {
           forUserId: suggestion.suggestedById,
+          reviewedById: adminId,
           documentId: doc.id,
           documentOriginalName: doc.originalName,
           proposedName: suggestion.proposedName,

@@ -6,11 +6,22 @@ import { Ticket } from './entities/ticket.entity';
 import { Conversation } from './entities/conversation.entity';
 import { Attachment } from './entities/attachment.entity';
 import { AuditLog } from '../common/entities/audit-log.entity';
+import { KnowledgeDocument } from '../knowledge-documents/entities/knowledge-document.entity';
+import { KnowledgeDocumentJob } from '../knowledge-documents/entities/knowledge-document-job.entity';
+import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Ticket, Conversation, Attachment, AuditLog]),
+    TypeOrmModule.forFeature([
+      Ticket,
+      Conversation,
+      Attachment,
+      AuditLog,
+      KnowledgeDocument,
+      KnowledgeDocumentJob,
+      User,
+    ]),
     UsersModule,
   ],
   controllers: [TicketsController],

@@ -12,8 +12,8 @@ export declare class TicketsController {
     create(createTicketDto: CreateTicketDto, req: any): Promise<import("./entities/ticket.entity").Ticket>;
     uploadAttachments(ticketId: string, files: Express.Multer.File[], req: any): Promise<Attachment[]>;
     downloadAttachment(attachmentId: string, res: Response): Promise<void>;
-    findAll(req: any, status?: TicketStatus, category?: string, priority?: string, assignedToId?: string): Promise<import("./entities/ticket.entity").Ticket[]>;
-    history(ticketId?: string, limit?: string): Promise<import("../common/entities/audit-log.entity").AuditLog[]>;
+    findAll(req: any, status?: TicketStatus, category?: string, priority?: string, assignedToId?: string, unassignedOnly?: string): Promise<import("./entities/ticket.entity").Ticket[]>;
+    history(ticketId?: string, limit?: string, includeErrors?: string): Promise<import("./tickets.service").ActivityLogDto[]>;
     notifications(req: any, limit?: string): Promise<(import("../common/entities/audit-log.entity").AuditLog & {
         ticketTitle?: string;
     })[]>;

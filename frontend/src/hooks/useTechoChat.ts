@@ -8,6 +8,7 @@ import api from '@/lib/api';
 import { displayChatContent } from '@/lib/techo-chat-display';
 import {
   deriveThreadTitleFromMessages,
+  findReusableEmptyThread,
   getThreadDisplayTitle,
   isGenericThreadTitle,
   sortThreadsByActivity,
@@ -259,6 +260,12 @@ export function useTechoChat() {
 
   const startNewConversation = () => {
     if (!user?.id) return null;
+    const state = useChatStore.getState();
+    const reusable = findReusableEmptyThread(state.threads, state.messagesByThread);
+    if (reusable) {
+      setActiveThread(reusable.id);
+      return reusable.id;
+    }
     const id = createThread(undefined, user.id);
     addMessage(id, { role: 'assistant', content: greeting });
     return id;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
@@ -34,23 +34,30 @@ export default function WorkerDashboard() {
   const pageSize = 10;
 
   useEffect(() => {
-    fetchTickets();
-  }, [statusFilter, priorityFilter]);
+    setPage(1);
+  }, [search, statusFilter, priorityFilter]);
 
-  const fetchTickets = async () => {
+  const fetchTickets = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const params: Record<string, string> = {};
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
-      const response = await api.get('/tickets', { params });
+      const response = await api.get<Ticket[]>('/tickets', { params });
       setTickets(response.data);
-    } catch (error: any) {
-      console.error('Failed to fetch tickets:', error);
-      toast.error(error.response?.data?.message || 'Failed to load tickets');
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { message?: string } } };
+      toast.error(err.response?.data?.message || 'Failed to load tickets');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
-  };
+  }, [statusFilter, priorityFilter]);
+
+  useEffect(() => {
+    void fetchTickets();
+    const interval = setInterval(() => void fetchTickets(true), 5000);
+    return () => clearInterval(interval);
+  }, [fetchTickets]);
 
   const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
     const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -96,6 +103,9 @@ export default function WorkerDashboard() {
               <Button asChild variant="outline" className="w-fit">
                 <Link href="/dashboard/worker/knowledge">Knowledge Base</Link>
               </Button>
+              <Button asChild variant="outline" className="w-fit">
+                <Link href="/dashboard/worker/knowledge-pdfs">PDF library</Link>
+              </Button>
               <Button asChild className="w-fit">
                 <Link href="/dashboard/create-ticket">Create New Ticket</Link>
               </Button>
@@ -137,9 +147,6 @@ export default function WorkerDashboard() {
                     <option value="high">High</option>
                     <option value="critical">Critical</option>
                   </Select>
-                  <Button variant="outline" onClick={fetchTickets}>
-                    🔄
-                  </Button>
                 </div>
               </div>
             </CardContent>

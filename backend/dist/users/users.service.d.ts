@@ -13,6 +13,9 @@ export declare class UsersService {
     update(id: string, updateData: Partial<User>): Promise<User>;
     remove(id: string): Promise<void>;
     findTechnicians(): Promise<User[]>;
-    restore(id: string, currentUserRole: UserRole): Promise<User>;
+    restore(id: string, currentUserRole: UserRole): Promise<{
+        user: User;
+        passwordWasRegenerated: boolean;
+    }>;
     private logUserAction;
 }

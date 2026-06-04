@@ -1,9 +1,29 @@
-import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
+import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'crypto';
 import { User, UserRole } from './entities/user.entity';
-import { RegisterDto } from '../auth/dto/register.dto';
 import { AuditLog, ActionType } from '../common/entities/audit-log.entity';
+
+/** Fields persisted in audit log when a user is deleted (password is bcrypt hash only). */
+type UserDeleteSnapshot = {
+  id: string;
+  email: string;
+  username: string;
+  role: UserRole;
+  fullName?: string | null;
+  phoneNumber?: string | null;
+  factoryId?: string | null;
+  isActive: boolean;
+  passwordHash?: string;
+};
 
 @Injectable()
 export class UsersService {
@@ -86,7 +106,17 @@ export class UsersService {
 
   async remove(id: string): Promise<void> {
     const user = await this.findOne(id);
-    await this.usersRepository.delete(id);
+
+    try {
+      await this.usersRepository.delete(id);
+    } catch (err) {
+      if (err instanceof QueryFailedError && (err as QueryFailedError & { code?: string }).code === '23503') {
+        throw new BadRequestException(
+          'Cannot delete this user because related records still reference them. Run database migrations and try again.',
+        );
+      }
+      throw err;
+    }
 
     await this.logUserAction(id, ActionType.DELETE, null, {
       deletedSnapshot: {
@@ -96,8 +126,10 @@ export class UsersService {
         role: user.role,
         fullName: user.fullName,
         phoneNumber: user.phoneNumber,
+        factoryId: user.factoryId,
         isActive: user.isActive,
-      },
+        passwordHash: user.password,
+      } satisfies UserDeleteSnapshot,
     });
   }
 
@@ -108,14 +140,17 @@ export class UsersService {
     });
   }
 
-  async restore(id: string, currentUserRole: UserRole): Promise<User> {
+  async restore(
+    id: string,
+    currentUserRole: UserRole,
+  ): Promise<{ user: User; passwordWasRegenerated: boolean }> {
     if (currentUserRole !== UserRole.SUPERADMIN) {
       throw new ForbiddenException('Only superadmin can restore users');
     }
 
     const existing = await this.usersRepository.findOne({ where: { id } });
     if (existing) {
-      return existing;
+      return { user: existing, passwordWasRegenerated: false };
     }
 
     const log = await this.auditLogRepository.findOne({
@@ -123,19 +158,47 @@ export class UsersService {
       order: { timestamp: 'DESC' },
     });
 
-    const snapshot = log?.changes?.deletedSnapshot as Partial<User> | undefined;
-    if (!snapshot) {
+    const snapshot = log?.changes?.deletedSnapshot as UserDeleteSnapshot | undefined;
+    if (!snapshot?.id || !snapshot.email || !snapshot.username) {
       throw new NotFoundException('No restore information found for this user');
     }
 
-    const restored = this.usersRepository.create(snapshot);
+    const emailTaken = await this.usersRepository.findOne({ where: { email: snapshot.email } });
+    if (emailTaken) {
+      throw new ConflictException(
+        `Cannot restore user: email "${snapshot.email}" is already used by another account`,
+      );
+    }
+    const usernameTaken = await this.usersRepository.findOne({ where: { username: snapshot.username } });
+    if (usernameTaken) {
+      throw new ConflictException(
+        `Cannot restore user: username "${snapshot.username}" is already used by another account`,
+      );
+    }
+
+    const passwordHash =
+      snapshot.passwordHash ?? (await bcrypt.hash(randomBytes(32).toString('hex'), 10));
+    const passwordWasRegenerated = !snapshot.passwordHash;
+
+    const restored = this.usersRepository.create({
+      id: snapshot.id,
+      email: snapshot.email,
+      username: snapshot.username,
+      role: snapshot.role,
+      fullName: snapshot.fullName ?? null,
+      phoneNumber: snapshot.phoneNumber ?? null,
+      factoryId: snapshot.factoryId ?? null,
+      isActive: snapshot.isActive ?? true,
+      password: passwordHash,
+    });
     const saved = await this.usersRepository.save(restored);
 
     await this.logUserAction(id, ActionType.ROLLBACK, null, {
       restoredFromDelete: true,
+      passwordWasRegenerated,
     });
 
-    return saved;
+    return { user: saved, passwordWasRegenerated };
   }
 
   private async logUserAction(

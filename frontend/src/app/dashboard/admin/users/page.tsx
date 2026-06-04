@@ -23,6 +23,11 @@ import {
 import ConfirmModal from '@/components/ConfirmModal';
 import { UserPlus, Pencil, Trash2, X, UserCheck, UserX } from 'lucide-react';
 
+const formInputClass =
+  'h-10 border-border bg-background shadow-none focus-visible:ring-0 focus-visible:border-primary';
+const formSelectClass =
+  'h-10 border-border bg-background shadow-none focus:ring-0 focus:border-primary focus:ring-offset-0';
+
 interface User {
   id: string;
   username: string;
@@ -386,22 +391,34 @@ export default function AdminUsersPage() {
 
         {/* Create / Edit modal */}
         {modalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-md shadow-xl">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle>
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="user-form-title"
+          >
+            <Card accentBand className="w-full max-w-md border-border">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 py-3 border-b border-border">
+                <CardTitle id="user-form-title" className="text-base font-semibold">
                   {editingId ? 'Edit user' : 'Create new user'}
                 </CardTitle>
-                <Button variant="ghost" size="icon" onClick={closeModal}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={closeModal}
+                  className="h-8 w-8 shrink-0"
+                  aria-label="Close"
+                >
                   <X className="h-4 w-4" />
                 </Button>
               </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
+              <CardContent className="px-4 py-4">
+                <form onSubmit={handleSubmit} className="space-y-3">
+                  <div className="space-y-1.5">
                     <Label htmlFor="fullName">Full name</Label>
                     <Input
                       id="fullName"
+                      className={formInputClass}
                       value={form.fullName}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, fullName: e.target.value }))
@@ -410,10 +427,11 @@ export default function AdminUsersPage() {
                       required
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="username">Username</Label>
                     <Input
                       id="username"
+                      className={formInputClass}
                       value={form.username}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, username: e.target.value }))
@@ -422,24 +440,26 @@ export default function AdminUsersPage() {
                       required
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
                       type="email"
+                      className={formInputClass}
                       value={form.email}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, email: e.target.value }))
                       }
-                      placeholder="john@smartmaint.com"
+                      placeholder="john@company.com"
                       required
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="phoneNumber">Mobile phone</Label>
                     <Input
                       id="phoneNumber"
                       type="tel"
+                      className={formInputClass}
                       value={form.phoneNumber}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, phoneNumber: e.target.value }))
@@ -447,13 +467,20 @@ export default function AdminUsersPage() {
                       placeholder="+1 234 567 8900"
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="password">
-                      Password {editingId && '(leave empty to keep current)'}
+                      Password
+                      {editingId && (
+                        <span className="font-normal text-muted-foreground">
+                          {' '}
+                          (leave empty to keep)
+                        </span>
+                      )}
                     </Label>
                     <Input
                       id="password"
                       type="password"
+                      className={formInputClass}
                       value={form.password}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, password: e.target.value }))
@@ -463,10 +490,11 @@ export default function AdminUsersPage() {
                       minLength={6}
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="role">Role</Label>
                     <Select
                       id="role"
+                      className={formSelectClass}
                       value={form.role}
                       onChange={(e) =>
                         setForm((f) => ({ ...f, role: e.target.value }))
@@ -480,10 +508,10 @@ export default function AdminUsersPage() {
                     </Select>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <Button type="button" variant="outline" onClick={closeModal}>
+                    <Button type="button" variant="outline" onClick={closeModal} className="flex-1">
                       Cancel
                     </Button>
-                    <Button type="submit" disabled={saving}>
+                    <Button type="submit" disabled={saving} className="flex-1">
                       {saving ? 'Saving…' : editingId ? 'Update' : 'Create'}
                     </Button>
                   </div>

@@ -113,6 +113,7 @@ export function isContextualTicketRequest(
 export function isProblemReportPhrase(text: string): boolean {
   const lower = text.toLowerCase();
   if (isTriggerOnlyPhrase(text)) return false;
+  if (/\b(commande|order)\b/i.test(lower) && /\b\d{8}\b/.test(text)) return false;
 
   const strongPatterns = [
     /\bi have (a |an )?(problem|issue|trouble)\b/,

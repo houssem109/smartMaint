@@ -282,7 +282,7 @@ export default function WorkerKnowledgePage() {
 
         {modalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <Card accentBand className="w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl">
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle>Add knowledge entry</CardTitle>
                 <Button variant="ghost" size="icon" onClick={closeModal}>
@@ -395,7 +395,7 @@ export default function WorkerKnowledgePage() {
 
         {detailsOpen && selectedEntry && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <Card accentBand className="w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl">
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle>{selectedEntry.title}</CardTitle>
                 <Button variant="ghost" size="icon" onClick={closeDetails}>

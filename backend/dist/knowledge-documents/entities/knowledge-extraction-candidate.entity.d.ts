@@ -1,5 +1,8 @@
 import { KnowledgeDocument } from './knowledge-document.entity';
+import { User } from '../../users/entities/user.entity';
+import { KnowledgeExtractionTechReview } from './knowledge-extraction-tech-review.entity';
 export type KnowledgeExtractionStatus = 'candidate' | 'approved' | 'rejected';
+export type TechExtractionReviewStatus = 'approve' | 'approve_edit' | 'reject';
 export declare class KnowledgeExtractionCandidate {
     id: string;
     documentId: string;
@@ -17,6 +20,16 @@ export declare class KnowledgeExtractionCandidate {
     status: KnowledgeExtractionStatus;
     createdById: string;
     reviewedById: string | null;
+    reviewedBy: User | null;
+    techReviewStatus: TechExtractionReviewStatus | null;
+    techReviewedById: string | null;
+    techReviewedBy: User | null;
+    techReviewedAt: Date | null;
+    techEditedTitle: string | null;
+    techEditedProblemDescription: string | null;
+    techEditedSolution: string | null;
+    techRejectReason: string | null;
+    techReviews: KnowledgeExtractionTechReview[];
     createdAt: Date;
     updatedAt: Date;
 }

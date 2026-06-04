@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
+import ConfirmModal from '@/components/ConfirmModal';
 import api from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -19,7 +21,24 @@ import {
 } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { X, Plus, Pencil, Trash2 } from 'lucide-react';
+import {
+  X,
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  RefreshCw,
+  BookOpen,
+  Loader2,
+  Clock,
+  User,
+  Tag,
+  Wrench,
+  CircleAlert,
+  Lightbulb,
+  ImageIcon,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
 
 interface KnowledgeEntry {
   id: string;
@@ -58,13 +77,84 @@ interface PendingEntry extends KnowledgeEntry {
   createdById?: string;
 }
 
+function getSeverityVariant(
+  severity?: string | null,
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  const s = severity?.toLowerCase();
+  if (s === 'high' || s === 'critical') return 'destructive';
+  if (s === 'medium') return 'default';
+  return 'outline';
+}
+
+function ModalOverlay({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+      role="presentation"
+    >
+      {children}
+    </div>
+  );
+}
+
+function FormSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-4 rounded-lg border border-border/50 bg-muted/15 p-4">
+      <div>
+        <h4 className="text-sm font-semibold tracking-tight">{title}</h4>
+        {description && (
+          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DetailBlock({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <div className="rounded-lg border border-border/50 bg-muted/20 p-4 text-sm leading-relaxed whitespace-pre-wrap">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminKnowledgePage() {
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [pending, setPending] = useState<PendingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 5;
   const [modalOpen, setModalOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -72,6 +162,7 @@ export default function AdminKnowledgePage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeEntry | null>(null);
 
   const fetchEntries = async () => {
     setLoading(true);
@@ -110,34 +201,6 @@ export default function AdminKnowledgePage() {
     }
   };
 
-  const exportCsv = async () => {
-    try {
-      const res = await api.get('/knowledge/export/csv', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'knowledge-entries.csv';
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Export failed');
-    }
-  };
-
-  const exportXlsx = async () => {
-    try {
-      const res = await api.get('/knowledge/export/xlsx', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'knowledge-entries.xlsx';
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Excel export failed');
-    }
-  };
-
   useEffect(() => {
     fetchEntries();
   }, []);
@@ -154,7 +217,8 @@ export default function AdminKnowledgePage() {
         e.title.toLowerCase().includes(q) ||
         e.problemDescription.toLowerCase().includes(q) ||
         e.solution.toLowerCase().includes(q) ||
-        (e.tags || '').toLowerCase().includes(q)
+        (e.tags || '').toLowerCase().includes(q) ||
+        (e.machineName || '').toLowerCase().includes(q)
       );
     });
   }, [entries, search]);
@@ -169,8 +233,9 @@ export default function AdminKnowledgePage() {
     return filteredEntries.slice(start, start + pageSize);
   }, [filteredEntries, currentPage]);
 
-  const startIndex = filteredEntries.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const endIndex = Math.min(currentPage * pageSize, filteredEntries.length);
+  const totalCount = filteredEntries.length;
+  const rangeStart = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const rangeEnd = Math.min(currentPage * pageSize, totalCount);
 
   const openCreate = () => {
     setEditingId(null);
@@ -195,6 +260,7 @@ export default function AdminKnowledgePage() {
     });
     setPhotoFile(null);
     setModalOpen(true);
+    setDetailsOpen(false);
   };
 
   const closeModal = () => {
@@ -259,11 +325,13 @@ export default function AdminKnowledgePage() {
     }
   };
 
-  const handleDelete = async (entry: KnowledgeEntry) => {
-    if (!window.confirm(`Delete "${entry.title}"? This cannot be undone.`)) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await api.delete(`/knowledge/${entry.id}`);
+      await api.delete(`/knowledge/${deleteTarget.id}`);
       toast.success('Knowledge entry deleted');
+      if (selectedEntry?.id === deleteTarget.id) closeDetails();
+      setDeleteTarget(null);
       fetchEntries();
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to delete entry');
@@ -275,45 +343,43 @@ export default function AdminKnowledgePage() {
       <Layout title="Knowledge Base" showSidebar={true}>
         <div className="space-y-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">Problem & solution library</h2>
-              <p className="text-sm text-muted-foreground">
-                Centralize known issues and their fixes to help technicians and AI.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={exportCsv} className="gap-2 w-fit">
-                Export CSV
-              </Button>
-              <Button variant="outline" onClick={exportXlsx} className="gap-2 w-fit">
-                Export Excel
-              </Button>
-              <Button onClick={openCreate} className="gap-2 w-fit">
-                <Plus className="h-4 w-4" />
-                Add problem & solution
-              </Button>
-            </div>
+            <h2 className="text-xl font-semibold tracking-tight">Knowledge base</h2>
+            <Button onClick={openCreate} className="w-fit gap-2">
+              <Plus className="h-4 w-4" />
+              Add entry
+            </Button>
           </div>
 
           {pending.length > 0 && (
-            <Card className="border-amber-500/30 bg-amber-500/5 shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-lg">Pending technician submissions ({pending.length})</CardTitle>
+            <Card className="border-amber-500/40 bg-amber-500/5 shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Clock className="h-5 w-5 text-amber-600" />
+                  Pending review
+                  <Badge variant="secondary" className="ml-1 font-normal">
+                    {pending.length}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  Technician submissions — approve to publish to the knowledge base.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {pending.map((p) => (
                   <div
                     key={p.id}
-                    className="flex flex-col gap-2 rounded-md border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-3 rounded-lg border border-border/60 bg-card p-4 sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div>
-                      <div className="font-medium">{p.title}</div>
-                      <div className="text-xs text-muted-foreground line-clamp-2">{p.problemDescription}</div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        By {p.createdBy?.fullName || p.createdBy?.email || p.createdById}
-                      </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{p.title}</p>
+                      <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                        {p.problemDescription}
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Submitted by {p.createdBy?.fullName || p.createdBy?.email || 'technician'}
+                      </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex shrink-0 gap-2">
                       <Button size="sm" onClick={() => approvePending(p.id)}>
                         Approve
                       </Button>
@@ -328,283 +394,445 @@ export default function AdminKnowledgePage() {
           )}
 
           <Card className="border-border/50 shadow-sm">
-            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle className="text-lg">Knowledge entries</CardTitle>
-              <Input
-                placeholder="Search by title, problem, solution, tags..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="max-w-md"
-              />
+            <CardHeader className="space-y-4">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <BookOpen className="h-5 w-5 text-muted-foreground" />
+                Published entries
+              </CardTitle>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search title, problem, solution, tags, machine…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => void fetchEntries()}
+                  title="Refresh"
+                >
+                  <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
                   Loading…
                 </div>
               ) : filteredEntries.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground">
-                  No knowledge entries yet.
-                </div>
-              ) : (
-                <div className="rounded-lg border border-border/50 overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead>Title</TableHead>
-                        <TableHead>Tags</TableHead>
-                        <TableHead>Created by</TableHead>
-                        <TableHead>Created at</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {paginatedEntries.map((entry) => (
-                        <TableRow key={entry.id} className="align-top">
-                          <TableCell
-                            className="py-3 cursor-pointer hover:bg-muted/30 transition-colors"
-                            onClick={() => openDetails(entry)}
-                            title="Click to view details"
-                          >
-                            <div className="font-medium">{entry.title}</div>
-                          </TableCell>
-                          <TableCell className="py-3">
-                            {entry.tags ? (
-                              <div className="flex flex-wrap gap-1">
-                                {entry.tags.split(',').map((tag) => (
-                                  <Badge key={tag} variant="secondary" className="text-[10px]">
-                                    {tag.trim()}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="py-3 text-xs text-muted-foreground">
-                            {entry.createdBy?.fullName || entry.createdBy?.email || '—'}
-                          </TableCell>
-                          <TableCell className="py-3 text-xs text-muted-foreground whitespace-nowrap">
-                            {new Date(entry.createdAt).toLocaleString()}
-                          </TableCell>
-                          <TableCell className="py-3 text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openEdit(entry)}
-                                title="Edit"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDelete(entry)}
-                                title="Delete"
-                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                  {filteredEntries.length > 0 && (
-                    <div className="flex items-center justify-between border-t border-border/40 px-4 py-2">
-                      <span className="text-xs text-muted-foreground">
-                        Showing {startIndex}-{endIndex} of {filteredEntries.length} entries
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                          disabled={currentPage === 1}
-                        >
-                          Previous
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setCurrentPage((p) => Math.min(totalPages, p + 1))
-                          }
-                          disabled={currentPage === totalPages}
-                        >
-                          Next
-                        </Button>
-                      </div>
-                    </div>
+                <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+                  <BookOpen className="h-10 w-10 text-muted-foreground/50" />
+                  <p className="text-muted-foreground">
+                    {entries.length === 0
+                      ? 'No knowledge entries yet.'
+                      : 'No entries match your search.'}
+                  </p>
+                  {entries.length === 0 && (
+                    <Button variant="outline" onClick={openCreate} className="gap-2">
+                      <Plus className="h-4 w-4" />
+                      Add first entry
+                    </Button>
                   )}
                 </div>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-border/50 overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead>Title</TableHead>
+                          <TableHead>Machine</TableHead>
+                          <TableHead>Tags</TableHead>
+                          <TableHead>Author</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedEntries.map((entry) => (
+                          <TableRow
+                            key={entry.id}
+                            className="cursor-pointer transition-colors hover:bg-muted/40"
+                            onClick={() => openDetails(entry)}
+                          >
+                            <TableCell>
+                              <div className="font-medium">{entry.title}</div>
+                              {entry.severity && (
+                                <Badge
+                                  variant={getSeverityVariant(entry.severity)}
+                                  className="mt-1 text-[10px] capitalize"
+                                >
+                                  {entry.severity}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {entry.machineName || '—'}
+                            </TableCell>
+                            <TableCell>
+                              {entry.tags ? (
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {entry.tags.split(',').slice(0, 3).map((tag) => (
+                                    <Badge key={tag} variant="secondary" className="text-[10px] font-normal">
+                                      {tag.trim()}
+                                    </Badge>
+                                  ))}
+                                  {entry.tags.split(',').length > 3 && (
+                                    <span className="text-[10px] text-muted-foreground">+more</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {entry.createdBy?.fullName || entry.createdBy?.email || '—'}
+                            </TableCell>
+                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openEdit(entry)}
+                                  title="Edit"
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteTarget(entry);
+                                  }}
+                                  title="Delete"
+                                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex items-center justify-between px-1 pt-3 text-sm text-muted-foreground">
+                    <span>
+                      Showing {rangeStart}–{rangeEnd} of {totalCount}
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
         </div>
 
         {modalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle>{editingId ? 'Edit knowledge entry' : 'Add knowledge entry'}</CardTitle>
-                <Button variant="ghost" size="icon" onClick={closeModal}>
+          <ModalOverlay onClose={closeModal}>
+            <Card
+              accentBand
+              className="max-h-[90vh] w-full max-w-2xl border-border/50 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-4">
+                <div className="flex gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    {editingId ? <Pencil className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg">
+                      {editingId ? 'Edit knowledge entry' : 'Add knowledge entry'}
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      {editingId
+                        ? 'Update problem, solution, and metadata.'
+                        : 'Publish a new problem and solution for search and technicians.'}
+                    </CardDescription>
+                  </div>
+                </div>
+                <Button variant="ghost" size="icon" onClick={closeModal} aria-label="Close">
                   <X className="h-4 w-4" />
                 </Button>
               </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="title">Title</Label>
-                    <Input
-                      id="title"
-                      value={form.title}
-                      onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-                      placeholder="Example: Machine X - Overheating error E42"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="problemDescription">Problem description</Label>
-                    <Textarea
-                      id="problemDescription"
-                      value={form.problemDescription}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, problemDescription: e.target.value }))
-                      }
-                      placeholder="Describe the symptoms, alarms, logs, and when it happens…"
-                      rows={4}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="solution">Solution (step-by-step)</Label>
-                    <Textarea
-                      id="solution"
-                      value={form.solution}
-                      onChange={(e) => setForm((f) => ({ ...f, solution: e.target.value }))}
-                      placeholder="1) Check...\n2) Reset...\n3) Replace...\n4) Test..."
-                      rows={6}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="tags">Tags (comma separated)</Label>
-                    <Input
-                      id="tags"
-                      value={form.tags || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
-                      placeholder="machine-x, overheating, error-e42"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="machineName">Machine name (optional)</Label>
-                    <Input
-                      id="machineName"
-                      value={form.machineName || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, machineName: e.target.value }))}
-                      placeholder="e.g. Danao line 3"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="symptom">Symptom (optional)</Label>
-                    <Textarea
-                      id="symptom"
-                      value={form.symptom || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, symptom: e.target.value }))}
-                      rows={2}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="rootCause">Root cause (optional)</Label>
-                    <Textarea
-                      id="rootCause"
-                      value={form.rootCause || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))}
-                      rows={2}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="severity">Severity (optional)</Label>
-                    <Input
-                      id="severity"
-                      value={form.severity || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}
-                      placeholder="low / medium / high"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="photo">Field photo (optional, JPEG/PNG/WebP)</Label>
-                    <Input
-                      id="photo"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
-                    />
-                  </div>
-                  <div className="flex gap-2 pt-2">
+              <CardContent className="max-h-[calc(90vh-7rem)] overflow-y-auto">
+                <form onSubmit={handleSubmit} className="space-y-5 pb-2">
+                  <FormSection title="Main content" description="Required fields">
+                    <div className="space-y-2">
+                      <Label htmlFor="title">Title</Label>
+                      <Input
+                        id="title"
+                        value={form.title}
+                        onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                        placeholder="e.g. Motor overheating — error E42"
+                        className="h-11"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="problemDescription">Problem</Label>
+                      <Textarea
+                        id="problemDescription"
+                        value={form.problemDescription}
+                        onChange={(e) =>
+                          setForm((f) => ({ ...f, problemDescription: e.target.value }))
+                        }
+                        rows={4}
+                        className="min-h-[100px] resize-y"
+                        placeholder="What went wrong?"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="solution">Solution</Label>
+                      <Textarea
+                        id="solution"
+                        value={form.solution}
+                        onChange={(e) => setForm((f) => ({ ...f, solution: e.target.value }))}
+                        rows={5}
+                        className="min-h-[120px] resize-y"
+                        placeholder="Steps taken to fix it"
+                        required
+                      />
+                    </div>
+                  </FormSection>
+
+                  <FormSection title="Classification" description="Optional but helpful for search">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="tags" className="flex items-center gap-1.5">
+                          <Tag className="h-3.5 w-3.5 text-muted-foreground" />
+                          Tags
+                        </Label>
+                        <Input
+                          id="tags"
+                          value={form.tags || ''}
+                          onChange={(e) => setForm((f) => ({ ...f, tags: e.target.value }))}
+                          placeholder="motor, electrical"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="machineName" className="flex items-center gap-1.5">
+                          <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+                          Machine
+                        </Label>
+                        <Input
+                          id="machineName"
+                          value={form.machineName || ''}
+                          onChange={(e) => setForm((f) => ({ ...f, machineName: e.target.value }))}
+                          placeholder="e.g. Line 2 filler"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="severity">Severity</Label>
+                        <Input
+                          id="severity"
+                          value={form.severity || ''}
+                          onChange={(e) => setForm((f) => ({ ...f, severity: e.target.value }))}
+                          placeholder="low, medium, high"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="photo" className="flex items-center gap-1.5">
+                          <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                          Photo
+                        </Label>
+                        <Input
+                          id="photo"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="text-sm"
+                          onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+                        />
+                        {photoFile && (
+                          <p className="text-xs text-muted-foreground truncate">{photoFile.name}</p>
+                        )}
+                      </div>
+                    </div>
+                  </FormSection>
+
+                  <FormSection title="Extra detail" description="Optional">
+                    <div className="space-y-2">
+                      <Label htmlFor="symptom">Symptom</Label>
+                      <Textarea
+                        id="symptom"
+                        value={form.symptom || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, symptom: e.target.value }))}
+                        rows={2}
+                        className="resize-y"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="rootCause">Root cause</Label>
+                      <Textarea
+                        id="rootCause"
+                        value={form.rootCause || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, rootCause: e.target.value }))}
+                        rows={2}
+                        className="resize-y"
+                      />
+                    </div>
+                  </FormSection>
+
+                  <div className="flex gap-3 border-t border-border/50 pt-4">
+                    <Button type="submit" disabled={saving} className="min-w-[140px] gap-2">
+                      {saving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Saving…
+                        </>
+                      ) : editingId ? (
+                        'Save changes'
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4" />
+                          Create entry
+                        </>
+                      )}
+                    </Button>
                     <Button type="button" variant="outline" onClick={closeModal}>
                       Cancel
-                    </Button>
-                    <Button type="submit" disabled={saving}>
-                      {saving ? 'Saving…' : editingId ? 'Update' : 'Create'}
                     </Button>
                   </div>
                 </form>
               </CardContent>
             </Card>
-          </div>
+          </ModalOverlay>
         )}
 
         {detailsOpen && selectedEntry && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle>{selectedEntry.title}</CardTitle>
-                <Button variant="ghost" size="icon" onClick={closeDetails}>
+          <ModalOverlay onClose={closeDetails}>
+            <Card
+              accentBand
+              className="max-h-[90vh] w-full max-w-2xl border-border/50 shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-3">
+                <div className="flex min-w-0 flex-1 gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <BookOpen className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <CardTitle className="text-xl leading-snug break-words">
+                      {selectedEntry.title}
+                    </CardTitle>
+                    <CardDescription className="flex flex-wrap items-center gap-x-1 gap-y-1">
+                      <User className="inline h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {selectedEntry.createdBy?.fullName ||
+                          selectedEntry.createdBy?.email ||
+                          'Unknown'}
+                      </span>
+                      <span>·</span>
+                      <span>{new Date(selectedEntry.createdAt).toLocaleString()}</span>
+                    </CardDescription>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedEntry.machineName && (
+                        <Badge variant="outline" className="gap-1 font-normal">
+                          <Wrench className="h-3 w-3" />
+                          {selectedEntry.machineName}
+                        </Badge>
+                      )}
+                      {selectedEntry.severity && (
+                        <Badge
+                          variant={getSeverityVariant(selectedEntry.severity)}
+                          className="capitalize"
+                        >
+                          {selectedEntry.severity}
+                        </Badge>
+                      )}
+                      {selectedEntry.reviewStatus && (
+                        <Badge variant="secondary" className="capitalize font-normal">
+                          {selectedEntry.reviewStatus}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <Button variant="ghost" size="icon" onClick={closeDetails} aria-label="Close">
                   <X className="h-4 w-4" />
                 </Button>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {selectedEntry.reviewStatus && (
-                  <Badge
-                    variant={selectedEntry.reviewStatus === 'approved' ? 'default' : 'secondary'}
-                    className="capitalize"
-                  >
-                    {selectedEntry.reviewStatus}
-                  </Badge>
-                )}
-                <div className="space-y-1">
-                  <Label>Problem</Label>
-                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
-                    {selectedEntry.problemDescription}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Solution</Label>
-                  <div className="rounded-md border border-border/50 bg-muted/20 p-3 text-sm whitespace-pre-wrap">
-                    {selectedEntry.solution}
-                  </div>
-                </div>
-                {(selectedEntry.machineName ||
-                  selectedEntry.symptom ||
+              <CardContent className="max-h-[calc(90vh-8rem)] space-y-5 overflow-y-auto pb-6">
+                <DetailBlock icon={CircleAlert} label="Problem">
+                  {selectedEntry.problemDescription}
+                </DetailBlock>
+                <DetailBlock icon={Lightbulb} label="Solution">
+                  {selectedEntry.solution}
+                </DetailBlock>
+                {(selectedEntry.symptom ||
                   selectedEntry.rootCause ||
-                  selectedEntry.severity) && (
-                  <div className="flex flex-wrap gap-2">
-                    {selectedEntry.machineName && <Badge variant="outline">Machine: {selectedEntry.machineName}</Badge>}
-                    {selectedEntry.severity && <Badge variant="outline">Severity: {selectedEntry.severity}</Badge>}
-                    {selectedEntry.symptom && <Badge variant="outline">Symptom: {selectedEntry.symptom}</Badge>}
-                    {selectedEntry.rootCause && <Badge variant="outline">Root cause: {selectedEntry.rootCause}</Badge>}
+                  selectedEntry.tags) && (
+                  <div className="rounded-lg border border-border/50 bg-muted/10 p-4 space-y-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Additional info
+                    </p>
+                    {selectedEntry.symptom && (
+                      <p className="text-sm">
+                        <span className="font-medium text-muted-foreground">Symptom · </span>
+                        <span className="text-foreground/90">{selectedEntry.symptom}</span>
+                      </p>
+                    )}
+                    {selectedEntry.rootCause && (
+                      <p className="text-sm">
+                        <span className="font-medium text-muted-foreground">Root cause · </span>
+                        <span className="text-foreground/90">{selectedEntry.rootCause}</span>
+                      </p>
+                    )}
+                    {selectedEntry.tags && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {selectedEntry.tags.split(',').map((tag) => (
+                          <Badge key={tag} variant="secondary" className="font-normal">
+                            {tag.trim()}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </CardContent>
             </Card>
-          </div>
+          </ModalOverlay>
         )}
+
+        <ConfirmModal
+          isOpen={!!deleteTarget}
+          title="Delete knowledge entry"
+          message={
+            deleteTarget
+              ? `Are you sure you want to delete "${deleteTarget.title}"? This cannot be undone.`
+              : ''
+          }
+          confirmText="Delete"
+          cancelText="Cancel"
+          type="danger"
+          onConfirm={confirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
       </Layout>
     </ProtectedRoute>
   );
 }
-

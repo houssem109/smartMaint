@@ -38,7 +38,6 @@ interface Ticket {
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'open', label: 'Open' },
-  { value: 'in_review', label: 'In review' },
 ];
 
 const PRIORITY_OPTIONS = [
@@ -87,9 +86,10 @@ export default function TechnicianTicketRequestsPage() {
       const params: Record<string, string> = {};
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
-      const res = await api.get<Ticket[]>('/tickets', { params });
-      const openUnassigned = res.data.filter((t) => !t.assignedToId);
-      setTickets(openUnassigned);
+      const res = await api.get<Ticket[]>('/tickets', {
+        params: { unassignedOnly: 'true' },
+      });
+      setTickets(res.data);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Failed to load tickets');
     } finally {

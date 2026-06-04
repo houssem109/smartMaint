@@ -16,15 +16,20 @@ exports.TicketsService = void 0;
 const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
+const knowledge_document_entity_1 = require("../knowledge-documents/entities/knowledge-document.entity");
+const knowledge_document_job_entity_1 = require("../knowledge-documents/entities/knowledge-document-job.entity");
 const ticket_entity_1 = require("./entities/ticket.entity");
 const attachment_entity_1 = require("./entities/attachment.entity");
 const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const user_entity_1 = require("../users/entities/user.entity");
 let TicketsService = class TicketsService {
-    constructor(ticketsRepository, attachmentsRepository, auditLogRepository) {
+    constructor(ticketsRepository, attachmentsRepository, auditLogRepository, knowledgeDocumentRepository, knowledgeDocumentJobRepository, userRepository) {
         this.ticketsRepository = ticketsRepository;
         this.attachmentsRepository = attachmentsRepository;
         this.auditLogRepository = auditLogRepository;
+        this.knowledgeDocumentRepository = knowledgeDocumentRepository;
+        this.knowledgeDocumentJobRepository = knowledgeDocumentJobRepository;
+        this.userRepository = userRepository;
     }
     async create(createTicketDto, userId) {
         const ticket = this.ticketsRepository.create({
@@ -45,11 +50,22 @@ let TicketsService = class TicketsService {
             .leftJoinAndSelect('ticket.createdBy', 'createdBy')
             .leftJoinAndSelect('ticket.assignedTo', 'assignedTo')
             .leftJoinAndSelect('ticket.attachments', 'attachments');
+        queryBuilder.where('ticket.isDeleted = false');
         if (userRole === user_entity_1.UserRole.WORKER) {
-            queryBuilder.where('ticket.createdById = :userId', { userId }).andWhere('ticket.isDeleted = false');
+            queryBuilder.andWhere('ticket.createdById = :userId', { userId });
         }
-        else {
-            queryBuilder.where('ticket.isDeleted = false');
+        else if (userRole === user_entity_1.UserRole.TECHNICIAN) {
+            if (filters?.unassignedOnly) {
+                queryBuilder.andWhere('ticket.assignedToId IS NULL');
+            }
+            else {
+                queryBuilder.andWhere('ticket.assignedToId = :userId', { userId });
+            }
+        }
+        else if (filters?.assignedToId) {
+            queryBuilder.andWhere('ticket.assignedToId = :assignedToId', {
+                assignedToId: filters.assignedToId,
+            });
         }
         if (filters?.status) {
             queryBuilder.andWhere('ticket.status = :status', { status: filters.status });
@@ -59,11 +75,6 @@ let TicketsService = class TicketsService {
         }
         if (filters?.priority) {
             queryBuilder.andWhere('ticket.priority = :priority', { priority: filters.priority });
-        }
-        if (filters?.assignedToId) {
-            queryBuilder.andWhere('ticket.assignedToId = :assignedToId', {
-                assignedToId: filters.assignedToId,
-            });
         }
         queryBuilder.orderBy('ticket.createdAt', 'DESC');
         return queryBuilder.getMany();
@@ -79,6 +90,9 @@ let TicketsService = class TicketsService {
         if (userRole === user_entity_1.UserRole.WORKER) {
             exactQb.andWhere('ticket.createdById = :userId', { userId });
         }
+        else if (userRole === user_entity_1.UserRole.TECHNICIAN) {
+            exactQb.andWhere('ticket.assignedToId = :userId', { userId });
+        }
         exactQb
             .andWhere('LOWER(ticket.title) = LOWER(:title)', { title: q })
             .orderBy('ticket.createdAt', 'DESC')
@@ -92,6 +106,9 @@ let TicketsService = class TicketsService {
             .where('ticket.isDeleted = false');
         if (userRole === user_entity_1.UserRole.WORKER) {
             likeQb.andWhere('ticket.createdById = :userId', { userId });
+        }
+        else if (userRole === user_entity_1.UserRole.TECHNICIAN) {
+            likeQb.andWhere('ticket.assignedToId = :userId', { userId });
         }
         likeQb
             .andWhere('LOWER(ticket.title) LIKE LOWER(:titleLike)', { titleLike: `%${q}%` })
@@ -124,6 +141,9 @@ let TicketsService = class TicketsService {
             .where('ticket.isDeleted = false');
         if (userRole === user_entity_1.UserRole.WORKER) {
             qb.andWhere('ticket.createdById = :userId', { userId });
+        }
+        else if (userRole === user_entity_1.UserRole.TECHNICIAN) {
+            qb.andWhere('ticket.assignedToId = :userId', { userId });
         }
         qb.andWhere('(LOWER(ticket.title) LIKE LOWER(:like) OR LOWER(ticket.description) LIKE LOWER(:like) OR CAST(ticket.id AS text) LIKE :like)', { like })
             .orderBy('ticket.createdAt', 'DESC')
@@ -396,20 +416,157 @@ let TicketsService = class TicketsService {
         });
         return savedTicket;
     }
-    async getHistory(ticketId, limit = 50) {
+    async getHistory(ticketId, limit = 50, includeErrors = true) {
+        const effectiveLimit = Math.min(Math.max(limit, 1), 500);
         const qb = this.auditLogRepository
             .createQueryBuilder('log')
             .orderBy('log.timestamp', 'DESC')
-            .take(limit);
+            .take(Math.min(effectiveLimit * 2, 400));
         if (ticketId) {
             qb.where('log.entityType = :type', { type: 'ticket' }).andWhere('log.entityId = :ticketId', { ticketId });
+            const rows = await qb.take(effectiveLimit).getMany();
+            return this.enrichActivityLogs(rows);
         }
-        else {
-            qb.where('log.entityType IN (:...types)', {
-                types: ['ticket', 'user', 'knowledge_document', 'knowledge_entry'],
+        const mainTypes = [
+            'ticket',
+            'user',
+            'knowledge_document',
+            'knowledge_entry',
+        ];
+        const reviewTypes = ['knowledge_extraction_candidate', 'machine_name_suggestion'];
+        const fetchPool = Math.min(effectiveLimit * 4, 2000);
+        qb.where('log.entityType IN (:...types)', { types: mainTypes }).take(fetchPool);
+        const [mainLogs, reviewLogs] = await Promise.all([
+            qb.getMany(),
+            this.auditLogRepository.find({
+                where: { entityType: (0, typeorm_2.In)(reviewTypes) },
+                order: { timestamp: 'DESC' },
+                take: Math.min(250, fetchPool),
+            }),
+        ]);
+        const byId = new Map();
+        for (const row of [...mainLogs, ...reviewLogs]) {
+            byId.set(row.id, row);
+        }
+        const logs = [...byId.values()].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        let merged = logs;
+        if (includeErrors) {
+            const pipelineErrors = await this.buildPipelineErrorEntries(logs, 40);
+            merged = [...logs, ...pipelineErrors].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        }
+        return this.enrichActivityLogs(merged.slice(0, effectiveLimit));
+    }
+    resolvePerformerId(log) {
+        const ch = log.changes;
+        if (ch && typeof ch.reviewedById === 'string')
+            return ch.reviewedById;
+        return log.userId ?? null;
+    }
+    async enrichActivityLogs(logs) {
+        const performerIds = [
+            ...new Set(logs.map((l) => this.resolvePerformerId(l)).filter((id) => !!id)),
+        ];
+        const users = performerIds.length > 0
+            ? await this.userRepository.find({
+                where: { id: (0, typeorm_2.In)(performerIds) },
+                select: ['id', 'fullName', 'email'],
+            })
+            : [];
+        const byId = new Map(users.map((u) => [u.id, u]));
+        return logs.map((log) => {
+            const pid = this.resolvePerformerId(log);
+            const user = pid ? byId.get(pid) : undefined;
+            return {
+                ...log,
+                performedBy: user
+                    ? { id: user.id, fullName: user.fullName ?? null, email: user.email }
+                    : null,
+            };
+        });
+    }
+    async buildPipelineErrorEntries(existingLogs, take) {
+        const entries = [];
+        const rejectDocIds = new Set(existingLogs
+            .filter((l) => l.entityType === 'knowledge_document' && l.actionType === audit_log_entity_1.ActionType.REJECT)
+            .map((l) => l.entityId));
+        const failedDocs = await this.knowledgeDocumentRepository.find({
+            where: { status: (0, typeorm_2.In)(['failed']) },
+            order: { updatedAt: 'DESC' },
+            take,
+        });
+        for (const doc of failedDocs) {
+            if (!doc.error?.trim())
+                continue;
+            entries.push({
+                id: `pipeline-doc-${doc.id}`,
+                actionType: 'error',
+                entityType: 'pipeline_error',
+                entityId: doc.id,
+                userId: null,
+                changes: {
+                    documentOriginalName: doc.originalName,
+                    status: doc.status,
+                    error: doc.error,
+                    source: 'knowledge_document',
+                },
+                reason: doc.error,
+                timestamp: doc.updatedAt,
             });
         }
-        return qb.getMany();
+        const partialDocs = await this.knowledgeDocumentRepository.find({
+            where: { status: 'partially_indexed' },
+            order: { updatedAt: 'DESC' },
+            take: Math.max(10, Math.floor(take / 2)),
+        });
+        for (const doc of partialDocs) {
+            if (!doc.error?.trim() || rejectDocIds.has(doc.id))
+                continue;
+            entries.push({
+                id: `pipeline-partial-${doc.id}`,
+                actionType: 'error',
+                entityType: 'pipeline_error',
+                entityId: doc.id,
+                userId: null,
+                changes: {
+                    documentOriginalName: doc.originalName,
+                    status: doc.status,
+                    error: doc.error,
+                    source: 'knowledge_document',
+                },
+                reason: doc.error,
+                timestamp: doc.updatedAt,
+            });
+        }
+        const failedJobs = await this.knowledgeDocumentJobRepository.find({
+            where: { status: 'failed' },
+            order: { updatedAt: 'DESC' },
+            take: Math.max(15, Math.floor(take / 2)),
+        });
+        for (const job of failedJobs) {
+            if (!job.error?.trim())
+                continue;
+            const doc = await this.knowledgeDocumentRepository.findOne({
+                where: { id: job.documentId },
+                select: ['id', 'originalName'],
+            });
+            entries.push({
+                id: `pipeline-job-${job.id}`,
+                actionType: 'error',
+                entityType: 'pipeline_error',
+                entityId: job.documentId,
+                userId: null,
+                changes: {
+                    documentOriginalName: doc?.originalName ?? 'PDF document',
+                    jobType: job.jobType,
+                    queueName: job.queueName,
+                    error: job.error,
+                    source: 'knowledge_document_job',
+                },
+                reason: job.error,
+                timestamp: job.updatedAt,
+            });
+        }
+        return entries;
     }
     async getNotificationsForUser(userId, userRole, limit = 50) {
         let tickets = [];
@@ -503,7 +660,13 @@ exports.TicketsService = TicketsService = __decorate([
     __param(0, (0, typeorm_1.InjectRepository)(ticket_entity_1.Ticket)),
     __param(1, (0, typeorm_1.InjectRepository)(attachment_entity_1.Attachment)),
     __param(2, (0, typeorm_1.InjectRepository)(audit_log_entity_1.AuditLog)),
+    __param(3, (0, typeorm_1.InjectRepository)(knowledge_document_entity_1.KnowledgeDocument)),
+    __param(4, (0, typeorm_1.InjectRepository)(knowledge_document_job_entity_1.KnowledgeDocumentJob)),
+    __param(5, (0, typeorm_1.InjectRepository)(user_entity_1.User)),
     __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository,
+        typeorm_2.Repository,
+        typeorm_2.Repository,
         typeorm_2.Repository,
         typeorm_2.Repository])
 ], TicketsService);

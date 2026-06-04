@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { Toaster } from 'sonner';
 import { useThemeStore } from '@/store/theme-store';
 import TechoChatWidget from '@/components/TechoChatWidget';
@@ -12,21 +13,23 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   const { theme } = useThemeStore();
+  const pathname = usePathname();
+  const isLoginPage = pathname === '/login';
 
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-    } else {
+    if (isLoginPage || theme === 'light') {
       root.classList.remove('dark');
+    } else {
+      root.classList.add('dark');
     }
-  }, [theme]);
+  }, [theme, isLoginPage]);
 
   return (
     <html lang="en" className={theme}>
       <body>
         {children}
-        <TechoChatWidget />
+        {!isLoginPage && <TechoChatWidget />}
         <Toaster
           position="bottom-left"
           theme={theme}

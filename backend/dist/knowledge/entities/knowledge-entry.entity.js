@@ -98,7 +98,7 @@ __decorate([
     __metadata("design:type", String)
 ], KnowledgeEntry.prototype, "createdById", void 0);
 __decorate([
-    (0, typeorm_1.ManyToOne)(() => user_entity_1.User),
+    (0, typeorm_1.ManyToOne)(() => user_entity_1.User, { onDelete: 'CASCADE' }),
     (0, typeorm_1.JoinColumn)({ name: 'createdById' }),
     __metadata("design:type", user_entity_1.User)
 ], KnowledgeEntry.prototype, "createdBy", void 0);

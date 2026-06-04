@@ -51,17 +51,20 @@ let TicketsController = class TicketsController {
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.fileName)}"`);
         return res.sendFile(attachment.filePath, { root: process.cwd() });
     }
-    findAll(req, status, category, priority, assignedToId) {
+    findAll(req, status, category, priority, assignedToId, unassignedOnly) {
+        const wantsUnassigned = unassignedOnly === 'true' || unassignedOnly === '1' || unassignedOnly === 'yes';
         return this.ticketsService.findAll(req.user.id, req.user.role, {
             status,
             category,
             priority,
             assignedToId,
+            unassignedOnly: wantsUnassigned,
         });
     }
-    async history(ticketId, limit) {
+    async history(ticketId, limit, includeErrors) {
         const take = limit ? Number(limit) || 50 : 50;
-        return this.ticketsService.getHistory(ticketId, take);
+        const withErrors = includeErrors !== 'false';
+        return this.ticketsService.getHistory(ticketId, take, withErrors);
     }
     async notifications(req, limit) {
         const take = limit ? Number(limit) || 50 : 50;
@@ -138,13 +141,19 @@ __decorate([
     (0, swagger_1.ApiQuery)({ name: 'category', required: false }),
     (0, swagger_1.ApiQuery)({ name: 'priority', required: false }),
     (0, swagger_1.ApiQuery)({ name: 'assignedToId', required: false }),
+    (0, swagger_1.ApiQuery)({
+        name: 'unassignedOnly',
+        required: false,
+        description: 'Technicians only: list unassigned tickets (e.g. self-assign requests)',
+    }),
     __param(0, (0, common_1.Request)()),
     __param(1, (0, common_1.Query)('status')),
     __param(2, (0, common_1.Query)('category')),
     __param(3, (0, common_1.Query)('priority')),
     __param(4, (0, common_1.Query)('assignedToId')),
+    __param(5, (0, common_1.Query)('unassignedOnly')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String, String, String]),
+    __metadata("design:paramtypes", [Object, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], TicketsController.prototype, "findAll", null);
 __decorate([
@@ -152,10 +161,16 @@ __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Get ticket history (latest changes)' }),
     (0, swagger_1.ApiQuery)({ name: 'ticketId', required: false }),
     (0, swagger_1.ApiQuery)({ name: 'limit', required: false, type: Number }),
+    (0, swagger_1.ApiQuery)({
+        name: 'includeErrors',
+        required: false,
+        description: 'Include PDF pipeline failures (default true)',
+    }),
     __param(0, (0, common_1.Query)('ticketId')),
     __param(1, (0, common_1.Query)('limit')),
+    __param(2, (0, common_1.Query)('includeErrors')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", Promise)
 ], TicketsController.prototype, "history", null);
 __decorate([

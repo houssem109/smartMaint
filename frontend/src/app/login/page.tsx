@@ -2,36 +2,51 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { toast } from 'sonner';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import SmartMaintWordmark from '@/components/SmartMaintWordmark';
+
+const loginSchema = z.object({
+  email: z.string().min(1, 'Email is required').email('Enter a valid email'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+type LoginForm = z.infer<typeof loginSchema>;
+
+const inputClassName =
+  'flex h-10 w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-2 text-base text-[#1E293B] transition-colors placeholder:text-[#64748B] focus-visible:border-[#1E40AF] focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50';
 
 export default function LoginPage() {
   const router = useRouter();
   const { setAuth } = useAuthStore();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isSubmitting },
+  } = useForm<LoginForm>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: '', password: '' },
+  });
 
-    const toastId = toast.loading('Logging in...');
+  const onSubmit = async (data: LoginForm) => {
+    setServerError('');
+    const toastId = toast.loading('Signing in...');
+
     try {
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/auth/login', data);
       const { access_token, user } = response.data;
 
       setAuth(user, access_token);
-      toast.success(`Welcome back, ${user.fullName || user.email}!`, { id: toastId });
+      toast.success(`Welcome, ${user.fullName || user.email}`, { id: toastId });
 
-      // Redirect based on role
       setTimeout(() => {
         if (user.role === 'admin' || user.role === 'superadmin') {
           router.push('/dashboard/admin');
@@ -40,78 +55,108 @@ export default function LoginPage() {
         } else {
           router.push('/dashboard/worker');
         }
-      }, 500);
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.message || 'Login failed. Please check your credentials.';
-      setError(errorMessage);
-      // Show the toast error for longer so the user can read it
-      toast.error(errorMessage, { id: toastId, duration: 8000 });
-      // Note: the inline error box on the form will stay visible
-      // until the user submits again (where we clear it at the top of handleSubmit).
-    } finally {
-      setLoading(false);
+      }, 400);
+    } catch (err: unknown) {
+      const errorMessage =
+        (err as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message || 'Invalid email or password.';
+      setServerError(errorMessage);
+      toast.error(errorMessage, { id: toastId, duration: 6000 });
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 p-4">
-      <Card className="max-w-md w-full">
-        <CardHeader className="text-center">
-          <CardTitle className="text-3xl mb-2">🚀 SmartMaint AI</CardTitle>
-          <CardDescription>Maintenance Management System</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <div className="bg-destructive/15 border border-destructive text-destructive px-4 py-3 rounded-md text-sm">
-                {error}
+    <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] px-4 py-8">
+      <div className="w-full max-w-[400px]">
+        <div className="overflow-hidden rounded-lg border border-[#E2E8F0] bg-white">
+          <div className="accent-band-top" aria-hidden />
+
+          <div className="p-6 sm:p-8">
+            <header className="mb-6">
+              <h1 className="m-0">
+                <SmartMaintWordmark size="lg" variant="login" />
+              </h1>
+              <p className="mt-2 text-sm text-[#64748B]">Welcome back</p>
+            </header>
+
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {serverError && (
+                <p className="text-sm text-red-600" role="alert">
+                  {serverError}
+                </p>
+              )}
+
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="email"
+                  className="text-sm font-medium text-[#1E293B]"
+                >
+                  Email
+                </label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@company.com"
+                  className={cn(
+                    inputClassName,
+                    errors.email && 'border-red-500 focus-visible:border-red-500',
+                  )}
+                  {...register('email')}
+                />
+                {errors.email && (
+                  <p className="text-xs text-red-600">{errors.email.message}</p>
+                )}
               </div>
-            )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="admin@smartmaint.com"
-              />
-            </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="password"
+                  className="text-sm font-medium text-[#1E293B]"
+                >
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    className={cn(
+                      inputClassName,
+                      'pr-14',
+                      errors.password &&
+                        'border-red-500 focus-visible:border-red-500',
+                    )}
+                    {...register('password')}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((prev) => !prev)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#64748B] hover:text-[#1E293B]"
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                {errors.password && (
+                  <p className="text-xs text-red-600">
+                    {errors.password.message}
+                  </p>
+                )}
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                placeholder="••••••••"
-              />
-            </div>
-
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full"
-              size="lg"
-            >
-              {loading ? 'Logging in...' : 'Login'}
-            </Button>
-          </form>
-
-          <div className="mt-6 pt-6 border-t">
-            <p className="text-sm text-muted-foreground text-center mb-2">Default Credentials:</p>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p>Admin: admin@smartmaint.com / admin123</p>
-              <p>Technician: tech@smartmaint.com / tech123</p>
-              <p>Worker: worker@smartmaint.com / worker123</p>
-            </div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="mt-2 h-10 w-full rounded-md bg-[#1E40AF] text-sm font-medium text-white transition-colors hover:bg-[#1E3A8A] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSubmitting ? 'Signing in...' : 'Login'}
+              </button>
+            </form>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

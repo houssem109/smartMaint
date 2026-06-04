@@ -18,11 +18,13 @@ const audit_log_entity_1 = require("../common/entities/audit-log.entity");
 const knowledge_entry_entity_1 = require("../knowledge/entities/knowledge-entry.entity");
 const knowledge_document_entity_1 = require("../knowledge-documents/entities/knowledge-document.entity");
 const knowledge_extraction_candidate_entity_1 = require("../knowledge-documents/entities/knowledge-extraction-candidate.entity");
+const knowledge_extraction_tech_review_entity_1 = require("../knowledge-documents/entities/knowledge-extraction-tech-review.entity");
 const machine_name_suggestion_entity_1 = require("../knowledge-documents/entities/machine-name-suggestion.entity");
 const knowledge_document_page_analysis_entity_1 = require("../knowledge-documents/entities/knowledge-document-page-analysis.entity");
 const knowledge_document_job_entity_1 = require("../knowledge-documents/entities/knowledge-document-job.entity");
 const machine_profile_entity_1 = require("../machine-profiles/entities/machine-profile.entity");
 const pipeline_preferences_entity_1 = require("../knowledge-documents/entities/pipeline-preferences.entity");
+const extraction_feedback_event_entity_1 = require("../knowledge-documents/entities/extraction-feedback-event.entity");
 const vector_chunk_hash_entity_1 = require("../ai/entities/vector-chunk-hash.entity");
 let DatabaseModule = class DatabaseModule {
 };
@@ -48,9 +50,11 @@ exports.DatabaseModule = DatabaseModule = __decorate([
                         knowledge_entry_entity_1.KnowledgeEntry,
                         knowledge_document_entity_1.KnowledgeDocument,
                         knowledge_extraction_candidate_entity_1.KnowledgeExtractionCandidate,
+                        knowledge_extraction_tech_review_entity_1.KnowledgeExtractionTechReview,
                         machine_name_suggestion_entity_1.MachineNameSuggestion,
                         knowledge_document_page_analysis_entity_1.KnowledgeDocumentPageAnalysis,
                         knowledge_document_job_entity_1.KnowledgeDocumentJob,
+                        extraction_feedback_event_entity_1.ExtractionFeedbackEvent,
                         machine_profile_entity_1.MachineProfile,
                         pipeline_preferences_entity_1.PipelinePreferences,
                         vector_chunk_hash_entity_1.VectorChunkHash,

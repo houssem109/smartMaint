@@ -6,6 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Search, Plus, RefreshCw, Download } from 'lucide-react';
+import { Search, Plus, RefreshCw } from 'lucide-react';
 
 interface Ticket {
   id: string;
@@ -83,6 +84,7 @@ function getPriorityVariant(priority: string): 'default' | 'secondary' | 'destru
 }
 
 export default function AdminTicketsPage() {
+  const router = useRouter();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,7 +94,7 @@ export default function AdminTicketsPage() {
   const [technicianFilter, setTechnicianFilter] = useState('');
   const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 5;
   const [reviewingRequestTicketId, setReviewingRequestTicketId] = useState<string | null>(null);
 
   const fetchTechnicians = async () => {
@@ -157,6 +159,12 @@ export default function AdminTicketsPage() {
 
   const totalPages = Math.max(1, Math.ceil(assignmentFilteredTickets.length / pageSize));
   const paginatedTickets = assignmentFilteredTickets.slice((page - 1) * pageSize, page * pageSize);
+  const totalCount = assignmentFilteredTickets.length;
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, totalCount);
+  const showAssignmentActions = paginatedTickets.some(
+    (t) => t.assignmentRequestStatus === 'pending',
+  );
 
   return (
     <ProtectedRoute allowedRoles={['admin', 'superadmin']}>
@@ -165,12 +173,6 @@ export default function AdminTicketsPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-xl font-semibold tracking-tight">All Tickets</h2>
             <div className="flex flex-wrap gap-2">
-              <Button variant="outline" asChild className="w-fit gap-2">
-                <Link href="/dashboard/admin/tickets-export">
-                  <Download className="h-4 w-4" />
-                  Export
-                </Link>
-              </Button>
               <Button asChild className="w-fit gap-2">
                 <Link href="/dashboard/create-ticket">
                   <Plus className="h-4 w-4" />
@@ -274,12 +276,18 @@ export default function AdminTicketsPage() {
                           <TableHead>Created</TableHead>
                           <TableHead>Assigned to</TableHead>
                           <TableHead>Self-assign request</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          {showAssignmentActions && (
+                            <TableHead className="text-right">Actions</TableHead>
+                          )}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {paginatedTickets.map((ticket) => (
-                          <TableRow key={ticket.id} className="transition-colors">
+                          <TableRow
+                            key={ticket.id}
+                            className="cursor-pointer transition-colors hover:bg-muted/50"
+                            onClick={() => router.push(`/dashboard/tickets/${ticket.id}`)}
+                          >
                             <TableCell>
                               <div className="font-medium">{ticket.title}</div>
                               <div className="text-sm text-muted-foreground truncate max-w-xs">
@@ -316,7 +324,11 @@ export default function AdminTicketsPage() {
                                 <span className="text-muted-foreground text-sm">—</span>
                               )}
                             </TableCell>
-                            <TableCell className="text-right">
+                            {showAssignmentActions && (
+                            <TableCell
+                              className="text-right"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <div className="flex items-center justify-end gap-2">
                                 {ticket.assignmentRequestStatus === 'pending' && (
                                   <>
@@ -324,7 +336,8 @@ export default function AdminTicketsPage() {
                                       variant="outline"
                                       size="sm"
                                       disabled={reviewingRequestTicketId === ticket.id}
-                                      onClick={async () => {
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
                                         setReviewingRequestTicketId(ticket.id);
                                         try {
                                           await api.post(`/tickets/${ticket.id}/assignment-request/approve`);
@@ -343,7 +356,8 @@ export default function AdminTicketsPage() {
                                       variant="outline"
                                       size="sm"
                                       disabled={reviewingRequestTicketId === ticket.id}
-                                      onClick={async () => {
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
                                         setReviewingRequestTicketId(ticket.id);
                                         try {
                                           await api.post(`/tickets/${ticket.id}/assignment-request/reject`, {
@@ -362,13 +376,9 @@ export default function AdminTicketsPage() {
                                     </Button>
                                   </>
                                 )}
-                                <Button variant="ghost" size="sm" asChild>
-                                  <Link href={`/dashboard/tickets/${ticket.id}`}>
-                                    View details
-                                  </Link>
-                                </Button>
                               </div>
                             </TableCell>
+                            )}
                           </TableRow>
                         ))}
                       </TableBody>
@@ -376,7 +386,7 @@ export default function AdminTicketsPage() {
                   </div>
                   <div className="flex items-center justify-between px-4 py-3 text-sm text-muted-foreground">
                     <span>
-                      Page {page} of {totalPages}
+                      Showing {rangeStart}–{rangeEnd} of {totalCount} · Page {page} of {totalPages}
                     </span>
                     <div className="flex gap-2">
                       <Button

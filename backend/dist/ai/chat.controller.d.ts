@@ -67,17 +67,6 @@ export declare class ChatController {
         reply: string;
         ticketId: string;
         sources: any[];
-        ticketWizard: boolean;
-        archiveThread?: undefined;
-        ticketUpdated?: undefined;
-        ticketCreated?: undefined;
-        orderMode?: undefined;
-        orderNumber?: undefined;
-        detectedError?: undefined;
-    } | {
-        reply: string;
-        ticketId: string;
-        sources: any[];
         orderMode: "order_data" | "order_wizard" | "order_wizard_complete" | "order_facts";
         orderNumber: string;
         detectedError: import("../order-techo/order-errors").OrderErrorCode;
@@ -85,6 +74,17 @@ export declare class ChatController {
         ticketUpdated?: undefined;
         ticketCreated?: undefined;
         ticketWizard?: undefined;
+    } | {
+        reply: string;
+        ticketId: string;
+        sources: any[];
+        ticketWizard: boolean;
+        archiveThread?: undefined;
+        ticketUpdated?: undefined;
+        ticketCreated?: undefined;
+        orderMode?: undefined;
+        orderNumber?: undefined;
+        detectedError?: undefined;
     } | {
         reply: string;
         ticketId: string;

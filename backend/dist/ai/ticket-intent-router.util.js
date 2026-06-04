@@ -13,6 +13,7 @@ exports.routeImpliesTicketLookup = routeImpliesTicketLookup;
 exports.routeImpliesTicketCreate = routeImpliesTicketCreate;
 exports.routeImpliesWizardContinue = routeImpliesWizardContinue;
 const ticket_action_util_1 = require("./ticket-action.util");
+const order_intent_util_1 = require("../order-techo/order-intent.util");
 const ticket_inquiry_util_1 = require("./ticket-inquiry.util");
 const ticket_wizard_util_1 = require("./ticket-wizard.util");
 const CONFIDENCE_FLOOR = 0.4;
@@ -43,7 +44,7 @@ function buildTurnRouterPrompt(ctx) {
         `Reply with JSON ONLY (no markdown):\n` +
         `{"intent":"...","action":null|"delete"|"close"|"reopen"|"update","search_query":null|"text","confidence":0.0-1.0,"reason":"short"}\n\n` +
         `intent values:\n` +
-        `- general_chat: manuals, how-to, greetings, off-topic, general maintenance Q&A\n` +
+        `- general_chat: manuals, how-to, greetings, off-topic, general maintenance Q&A, sales orders (commande + 8-digit order number)\n` +
         `- ticket_lookup: user wants info on an EXISTING ticket (status, description, assignment)\n` +
         `- ticket_action: user wants to change/remove a ticket (delete, close, reopen, update priority/description)\n` +
         `- ticket_create: user reports a new problem or asks to create/open a ticket\n` +
@@ -57,11 +58,14 @@ function buildTurnRouterPrompt(ctx) {
         `- "machine down on line 3" / "create a ticket" → ticket_create\n` +
         `- Pronouns (it, this, that) refer to Last ticket discussed when present\n` +
         `- action_confirm / action_cancel only when Pending action or wizard confirm is active\n` +
-        `- Prefer ticket_action over ticket_lookup when user asks to DO something to the ticket\n\n` +
+        `- Prefer ticket_action over ticket_lookup when user asks to DO something to the ticket\n` +
+        `- "commande 25109760" / "order 25108223 blocked" → general_chat (NOT ticket_lookup)\n` +
+        `- 8-digit numbers are usually sales order references, not ticket IDs (tickets use UUIDs)\n\n` +
         `Examples:\n` +
         `User: "can you delete it?" (after ticket HMI frozen) → {"intent":"ticket_action","action":"delete","search_query":null,"confidence":0.9,"reason":"delete pronoun"}\n` +
         `User: "is it still open?" → {"intent":"ticket_lookup","action":null,"search_query":null,"confidence":0.85,"reason":"status question"}\n` +
         `User: "HMI screen frozen" (after "which ticket?") → {"intent":"ticket_lookup","action":null,"search_query":"HMI screen frozen","confidence":0.88,"reason":"search term"}\n` +
+        `User: "i have commande 25109760 dont work" → {"intent":"general_chat","action":null,"search_query":null,"confidence":0.92,"reason":"sales order"}\n` +
         `User: "yes" (pending delete confirm) → {"intent":"action_confirm","action":null,"search_query":null,"confidence":0.95,"reason":"confirm"}\n\n` +
         `${ticketLine}\n${pendingLine}\n${wizardLine}\n\n` +
         `Recent chat:\n${recent || '(empty)'}\n\n` +
@@ -116,6 +120,15 @@ function parseTurnRouterJson(raw) {
 function detectTurnRouteHeuristic(ctx) {
     const { message, history, lastTicket, pendingActionKind, wizardStep, hasCachedTicket } = ctx;
     const hist = history ?? [];
+    if ((0, order_intent_util_1.isOrderIntentMessage)(message, hist)) {
+        return {
+            intent: 'general_chat',
+            action: null,
+            searchQuery: null,
+            confidence: 0.96,
+            reason: 'sales order',
+        };
+    }
     if (pendingActionKind && (0, ticket_action_util_1.isActionConfirmation)(message)) {
         return {
             intent: 'action_confirm',

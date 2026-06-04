@@ -151,6 +151,10 @@ export class UsersController {
   @Roles(UserRole.ADMIN, UserRole.SUPERADMIN)
   @ApiOperation({ summary: 'Delete user (Admin/Superadmin only; admin cannot delete other admins)' })
   async remove(@Request() req, @Param('id') id: string) {
+    if (req.user.id === id) {
+      throw new ForbiddenException('You cannot delete your own account');
+    }
+
     if (req.user.role === UserRole.ADMIN) {
       const target = await this.usersService.findOne(id);
       if (target.role === UserRole.ADMIN || target.role === UserRole.SUPERADMIN) {
