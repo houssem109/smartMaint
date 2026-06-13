@@ -578,6 +578,7 @@ export class TicketsService {
       'user',
       'knowledge_document',
       'knowledge_entry',
+      'reference_data',
     ];
     const reviewTypes = ['knowledge_extraction_candidate', 'machine_name_suggestion'];
     const fetchPool = Math.min(effectiveLimit * 4, 2000);

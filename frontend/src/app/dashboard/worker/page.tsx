@@ -1,65 +1,166 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import api from '@/lib/api';
-import Link from 'next/link';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/native-select';
-import { Search } from 'lucide-react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import StatusDonut from '@/components/dashboard/StatusDonut';
+import { cn } from '@/lib/utils';
 
 interface Ticket {
   id: string;
   title: string;
-  description: string;
   status: string;
   priority: string;
-  category: string;
   createdAt: string;
 }
+
+const statCards = [
+  { key: 'totalTickets', label: 'My Tickets', accent: 'border-l-primary' },
+  { key: 'openTickets', label: 'Open', accent: 'border-l-primary', valueClass: 'text-primary' },
+  { key: 'inReviewTickets', label: 'In Review', accent: 'border-l-amber-500' },
+  { key: 'inProgressTickets', label: 'In Progress', accent: 'border-l-blue-400' },
+  {
+    key: 'solvedClosed',
+    label: 'Solved / Closed',
+    accent: 'border-l-accent',
+    valueClass: 'text-accent',
+  },
+] as const;
+
+const STATUS_SEGMENTS = [
+  { key: 'open', label: 'Open', stroke: '#1E40AF' },
+  { key: 'in_review', label: 'In review', stroke: '#EAB308' },
+  { key: 'in_progress', label: 'In progress', stroke: '#60A5FA' },
+  { key: 'solved', label: 'Solved', stroke: '#16A34A' },
+  { key: 'closed', label: 'Closed', stroke: '#94A3B8' },
+] as const;
 
 export default function WorkerDashboard() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState('');
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
 
   useEffect(() => {
-    setPage(1);
-  }, [search, statusFilter, priorityFilter]);
-
-  const fetchTickets = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    try {
-      const params: Record<string, string> = {};
-      if (statusFilter) params.status = statusFilter;
-      if (priorityFilter) params.priority = priorityFilter;
-      const response = await api.get<Ticket[]>('/tickets', { params });
-      setTickets(response.data);
-    } catch (error: unknown) {
-      const err = error as { response?: { data?: { message?: string } } };
-      toast.error(err.response?.data?.message || 'Failed to load tickets');
-    } finally {
-      if (!quiet) setLoading(false);
-    }
-  }, [statusFilter, priorityFilter]);
-
-  useEffect(() => {
-    void fetchTickets();
-    const interval = setInterval(() => void fetchTickets(true), 5000);
+    fetchTickets();
+    const interval = setInterval(fetchTickets, 5000);
     return () => clearInterval(interval);
-  }, [fetchTickets]);
+  }, []);
 
-  const getStatusVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
+  const fetchTickets = async () => {
+    try {
+      const res = await api.get<Ticket[]>('/tickets');
+      setTickets(res.data);
+    } catch (error: unknown) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message || 'Failed to load tickets';
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const stats = useMemo(() => {
+    const openTickets = tickets.filter((t) => t.status === 'open').length;
+    const inReviewTickets = tickets.filter((t) => t.status === 'in_review').length;
+    const inProgressTickets = tickets.filter((t) => t.status === 'in_progress').length;
+    const solvedTickets = tickets.filter((t) => t.status === 'solved').length;
+    const closedTickets = tickets.filter((t) => t.status === 'closed').length;
+    const totalTickets = tickets.length;
+    const resolved = solvedTickets + closedTickets;
+    const active = openTickets + inReviewTickets + inProgressTickets;
+    return {
+      totalTickets,
+      openTickets,
+      inReviewTickets,
+      inProgressTickets,
+      solvedTickets,
+      closedTickets,
+      resolutionRate: totalTickets ? Math.round((resolved / totalTickets) * 100) : 0,
+      activeRate: totalTickets ? Math.round((active / totalTickets) * 100) : 0,
+    };
+  }, [tickets]);
+
+  const statValues: Record<string, number> = {
+    totalTickets: stats.totalTickets,
+    openTickets: stats.openTickets,
+    inReviewTickets: stats.inReviewTickets,
+    inProgressTickets: stats.inProgressTickets,
+    solvedClosed: stats.solvedTickets + stats.closedTickets,
+  };
+
+  const statusSegments = useMemo(
+    () =>
+      STATUS_SEGMENTS.map(({ key, label, stroke }) => ({
+        label,
+        stroke,
+        value: tickets.filter((t) => t.status === key).length,
+      })),
+    [tickets],
+  );
+
+  const priorityStats = useMemo(
+    () => ({
+      low: tickets.filter((t) => t.priority === 'low').length,
+      medium: tickets.filter((t) => t.priority === 'medium').length,
+      high: tickets.filter((t) => t.priority === 'high').length,
+      critical: tickets.filter((t) => t.priority === 'critical').length,
+    }),
+    [tickets],
+  );
+
+  const ticketsByDay = useMemo(() => {
+    const days = 7;
+    const buckets: { label: string; short: string; value: number }[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - i);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 1);
+      const count = tickets.filter((t) => {
+        const created = new Date(t.createdAt);
+        return created >= start && created < end;
+      }).length;
+      buckets.push({
+        label: start.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }),
+        short: start.toLocaleDateString(undefined, { weekday: 'short' }),
+        value: count,
+      });
+    }
+    return buckets;
+  }, [tickets]);
+
+  const maxDayCount = Math.max(...ticketsByDay.map((d) => d.value), 1);
+  const priorityMax = Math.max(
+    priorityStats.low,
+    priorityStats.medium,
+    priorityStats.high,
+    priorityStats.critical,
+    1,
+  );
+
+  const recentTickets = useMemo(
+    () =>
+      [...tickets]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5),
+    [tickets],
+  );
+
+  const allStatusSegments =
+    stats.totalTickets === 0
+      ? STATUS_SEGMENTS.map(({ label, stroke }) => ({ label, value: 0, stroke }))
+      : statusSegments.filter((s) => s.value > 0);
+
+  const getStatusVariant = (
+    status: string,
+  ): 'default' | 'secondary' | 'destructive' | 'outline' => {
     const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
       open: 'default',
       in_review: 'secondary',
@@ -70,178 +171,230 @@ export default function WorkerDashboard() {
     return variants[status] || 'secondary';
   };
 
-  const getPriorityVariant = (priority: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    const variants: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-      low: 'outline',
-      medium: 'secondary',
-      high: 'default',
-      critical: 'destructive',
-    };
-    return variants[priority] || 'secondary';
-  };
-
-  const filteredTickets = tickets.filter((ticket) => {
-    const q = search.trim().toLowerCase();
-    if (q) {
-      const inTitle = ticket.title.toLowerCase().includes(q);
-      const inDesc = ticket.description?.toLowerCase().includes(q);
-      if (!inTitle && !inDesc) return false;
-    }
-    return true;
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filteredTickets.length / pageSize));
-  const paginatedTickets = filteredTickets.slice((page - 1) * pageSize, page * pageSize);
-
   return (
     <ProtectedRoute allowedRoles={['worker']}>
       <Layout title="Worker Dashboard">
         <div className="space-y-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">My Tickets</h2>
-            <div className="flex items-center gap-2">
-              <Button asChild variant="outline" className="w-fit">
-                <Link href="/dashboard/worker/knowledge">Knowledge Base</Link>
-              </Button>
-              <Button asChild variant="outline" className="w-fit">
-                <Link href="/dashboard/worker/knowledge-pdfs">PDF library</Link>
-              </Button>
-              <Button asChild className="w-fit">
-                <Link href="/dashboard/create-ticket">Create New Ticket</Link>
-              </Button>
-            </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {statCards.map(({ key, label, accent, valueClass }) => (
+              <Card key={key} className={cn('border-l-[3px] overflow-hidden', accent)}>
+                <CardHeader className="pb-1 pt-4 px-4">
+                  <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="px-4 pb-4 pt-0">
+                  <p
+                    className={cn(
+                      'text-2xl font-semibold tracking-tight tabular-nums',
+                      valueClass,
+                    )}
+                  >
+                    {loading && statValues[key] === 0 ? '—' : statValues[key]}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
           </div>
 
-          {/* Search + filters */}
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    placeholder="Search by title or description..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <Select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                  >
-                    <option value="">All statuses</option>
-                    <option value="open">Open</option>
-                    <option value="in_review">In review</option>
-                    <option value="in_progress">In progress</option>
-                    <option value="solved">Solved</option>
-                    <option value="closed">Closed</option>
-                  </Select>
-                  <Select
-                    value={priorityFilter}
-                    onChange={(e) => setPriorityFilter(e.target.value)}
-                  >
-                    <option value="">All priorities</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="critical">Critical</option>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <Card className="lg:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Tickets submitted</CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">Last 7 days</p>
+              </CardHeader>
+              <CardContent>
+                {loading && tickets.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-8 text-center">Loading…</p>
+                ) : (
+                  <div className="flex items-end justify-between gap-2 h-36 px-1">
+                    {ticketsByDay.map((day) => (
+                      <div
+                        key={day.label}
+                        className="flex flex-1 flex-col items-center gap-1.5 min-w-0"
+                      >
+                        <span className="text-xs font-semibold tabular-nums text-foreground">
+                          {day.value}
+                        </span>
+                        <div className="w-full flex items-end justify-center h-24">
+                          <div
+                            className={cn(
+                              'w-full max-w-9 rounded-t-md transition-all duration-500',
+                              day.value > 0 ? 'bg-primary' : 'bg-border',
+                            )}
+                            style={{
+                              height: `${Math.max((day.value / maxDayCount) * 100, day.value ? 8 : 4)}%`,
+                            }}
+                            title={`${day.label}: ${day.value}`}
+                          />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground truncate w-full text-center">
+                          {day.short}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-          {loading ? (
             <Card>
-              <CardContent className="py-12">
-                <p className="text-center text-muted-foreground">Loading tickets...</p>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Overview</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-border bg-secondary/40 p-4">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                    Resolved
+                  </p>
+                  <p className="mt-1 text-3xl font-semibold tabular-nums text-accent">
+                    {stats.resolutionRate}%
+                  </p>
+                  <div className="mt-2 h-1.5 w-full rounded-full bg-border overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-accent transition-all duration-500"
+                      style={{ width: `${stats.resolutionRate}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Solved or closed vs your tickets
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border bg-secondary/40 p-4">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide">
+                    Still active
+                  </p>
+                  <p className="mt-1 text-3xl font-semibold tabular-nums text-primary">
+                    {stats.activeRate}%
+                  </p>
+                  <div className="mt-2 h-1.5 w-full rounded-full bg-border overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-500"
+                      style={{ width: `${stats.activeRate}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Open, in review, or in progress
+                  </p>
+                </div>
               </CardContent>
             </Card>
-          ) : filteredTickets.length === 0 ? (
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card>
-              <CardContent className="py-12 text-center">
-                <p className="mb-4 text-muted-foreground">No tickets yet</p>
-                <Button variant="link" asChild>
-                  <Link href="/dashboard/create-ticket">Create your first ticket</Link>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Status breakdown</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading && tickets.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+                ) : (
+                  <StatusDonut segments={allStatusSegments} centerLabel="mine" />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base font-semibold">Recent tickets</CardTitle>
+                <Button variant="link" size="sm" className="h-auto p-0" asChild>
+                  <Link href="/dashboard/worker/tickets">See all</Link>
                 </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Priority</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paginatedTickets.map((ticket) => (
-                      <TableRow key={ticket.id}>
-                        <TableCell>
-                          <div className="font-medium">{ticket.title}</div>
-                          <div className="text-sm text-muted-foreground truncate max-w-xs">
-                            {ticket.description}
+              </CardHeader>
+              <CardContent>
+                {loading && tickets.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">Loading…</p>
+                ) : recentTickets.length === 0 ? (
+                  <div className="py-6 text-center">
+                    <p className="text-sm text-muted-foreground mb-3">No tickets yet</p>
+                    <Button size="sm" asChild>
+                      <Link href="/dashboard/create-ticket">Create your first ticket</Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {recentTickets.map((ticket) => (
+                      <li key={ticket.id}>
+                        <Link
+                          href={`/dashboard/tickets/${ticket.id}`}
+                          className="flex items-center justify-between gap-3 py-3 hover:bg-secondary/40 -mx-2 px-2 rounded-md transition-colors"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{ticket.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(ticket.createdAt).toLocaleDateString()}
+                            </p>
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getStatusVariant(ticket.status)}>
+                          <Badge variant={getStatusVariant(ticket.status)} className="shrink-0 capitalize">
                             {ticket.status.replace('_', ' ')}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getPriorityVariant(ticket.priority)}>
-                            {ticket.priority}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{ticket.category}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {new Date(ticket.createdAt).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" asChild>
-                            <Link href={`/dashboard/tickets/${ticket.id}`}>View</Link>
-                          </Button>
-                        </TableCell>
-                      </TableRow>
+                        </Link>
+                      </li>
                     ))}
-                  </TableBody>
-                </Table>
+                  </ul>
+                )}
               </CardContent>
             </Card>
-          )}
+          </div>
 
-          {!loading && filteredTickets.length > 0 && (
-            <div className="flex items-center justify-between px-1 py-3 text-sm text-muted-foreground">
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page === 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page === totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                >
-                  Next
-                </Button>
-              </div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground mb-3">By priority</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                {
+                  label: 'Low',
+                  value: priorityStats.low,
+                  badgeVariant: 'outline' as const,
+                  bar: 'bg-muted-foreground/50',
+                  accent: 'border-l-muted-foreground/40',
+                },
+                {
+                  label: 'Medium',
+                  value: priorityStats.medium,
+                  badgeVariant: 'secondary' as const,
+                  bar: 'bg-primary/60',
+                  accent: 'border-l-primary/50',
+                },
+                {
+                  label: 'High',
+                  value: priorityStats.high,
+                  badgeVariant: 'default' as const,
+                  bar: 'bg-primary',
+                  accent: 'border-l-primary',
+                },
+                {
+                  label: 'Critical',
+                  value: priorityStats.critical,
+                  badgeVariant: 'destructive' as const,
+                  bar: 'bg-destructive',
+                  accent: 'border-l-destructive',
+                },
+              ].map(({ label, value, badgeVariant, bar, accent }) => (
+                <Card key={label} className={cn('border-l-[3px] overflow-hidden', accent)}>
+                  <CardHeader className="pb-1 pt-4 px-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {label}
+                      </CardTitle>
+                      <Badge variant={badgeVariant} className="text-[10px] px-1.5 shrink-0">
+                        {value}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-4 pb-4 pt-0 space-y-2">
+                    <p className="text-2xl font-semibold tabular-nums">{value}</p>
+                    <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full transition-all duration-500', bar)}
+                        style={{ width: `${(value / priorityMax) * 100}%` }}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
-          )}
+          </div>
         </div>
       </Layout>
     </ProtectedRoute>

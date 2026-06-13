@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
@@ -16,11 +18,7 @@ import {
   MessageCircle,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
-
-interface TechnicianSidebarProps {
-  isOpen: boolean;
-  onToggle: () => void;
-}
+import { type SidebarProps, sidebarShellClassName } from '@/components/sidebar-types';
 
 const navItems = [
   { href: '/dashboard/technician', label: 'Dashboard', icon: LayoutDashboard },
@@ -32,10 +30,16 @@ const navItems = [
   { href: '/dashboard/technician/notifications', label: 'Notifications', icon: Bell },
 ];
 
-export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSidebarProps) {
+export default function TechnicianSidebar({
+  isOpen,
+  onToggle,
+  mobileOpen,
+  onNavigate,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
+  const showLabel = isOpen || mobileOpen;
 
   const handleLogout = () => {
     logout();
@@ -43,18 +47,13 @@ export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSideba
   };
 
   return (
-    <aside
-      className={cn(
-        'sticky top-0 flex h-screen flex-col border-r border-border bg-card transition-[width] duration-300 ease-in-out shrink-0',
-        isOpen ? 'w-56' : 'w-[4.25rem]',
-      )}
-    >
+    <aside className={sidebarShellClassName(isOpen, mobileOpen)}>
       <div className="accent-band-top" aria-hidden />
 
       <div
         className={cn(
           'flex h-14 items-center border-b border-border shrink-0',
-          isOpen ? 'gap-2 px-3' : 'justify-center px-0',
+          showLabel ? 'gap-2 px-3' : 'justify-center px-0',
         )}
       >
         <Button
@@ -70,7 +69,7 @@ export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSideba
             <PanelLeft className="h-5 w-5" />
           )}
         </Button>
-        {isOpen && (
+        {showLabel && (
           <div className="flex flex-1 justify-center pr-6">
             <span className="font-semibold text-foreground truncate tracking-tight">
               Smart<span className="text-primary">Maint</span>
@@ -90,16 +89,17 @@ export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSideba
             <Link
               key={href}
               href={href}
-              title={!isOpen ? label : undefined}
+              title={!showLabel ? label : undefined}
+              onClick={onNavigate}
               className={cn(
                 'sidebar-nav-link',
-                isOpen ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
+                showLabel ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
                 isActive && 'sidebar-nav-link-active',
                 isActive && isTecho && 'ring-1 ring-accent/30',
               )}
             >
               <Icon className="h-5 w-5 shrink-0" />
-              {isOpen && <span className="truncate">{label}</span>}
+              {showLabel && <span className="truncate">{label}</span>}
             </Link>
           );
         })}
@@ -108,31 +108,31 @@ export default function TechnicianSidebar({ isOpen, onToggle }: TechnicianSideba
       <div className="border-t border-border p-2 shrink-0 space-y-0.5">
         <Link
           href="/dashboard/settings"
-          title={!isOpen ? 'Settings' : undefined}
+          title={!showLabel ? 'Settings' : undefined}
+          onClick={onNavigate}
           className={cn(
             'sidebar-nav-link',
-            isOpen ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
+            showLabel ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
             (pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/')) &&
               'sidebar-nav-link-active',
           )}
         >
           <Settings className="h-5 w-5 shrink-0" />
-          {isOpen && <span>Settings</span>}
+          {showLabel && <span>Settings</span>}
         </Link>
         <Button
           variant="ghost"
           className={cn(
             'w-full text-foreground/80 hover:bg-destructive/10 hover:text-destructive text-sm font-medium',
-            isOpen ? 'justify-start gap-3 px-3 py-2 h-auto' : 'justify-center p-2.5 h-auto',
+            showLabel ? 'justify-start gap-3 px-3 py-2 h-auto' : 'justify-center p-2.5 h-auto',
           )}
           onClick={handleLogout}
-          title={!isOpen ? 'Log out' : undefined}
+          title={!showLabel ? 'Log out' : undefined}
         >
           <LogOut className="h-5 w-5 shrink-0" />
-          {isOpen && <span>Log out</span>}
+          {showLabel && <span>Log out</span>}
         </Button>
       </div>
     </aside>
   );
 }
-

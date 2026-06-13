@@ -175,8 +175,13 @@ services:
     container_name: smartmaint-frontend
     environment:
       NODE_ENV: ${NODE_ENV:-development}
+      INTERNAL_API_URL: http://backend:3001
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      ALLOWED_DEV_ORIGINS: ${ALLOWED_DEV_ORIGINS:-}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
       NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:3001}
+      NEXT_PUBLIC_MOBILE_APP_URL: ${NEXT_PUBLIC_MOBILE_APP_URL:-}
+      NEXT_PUBLIC_BACKEND_PORT: ${BACKEND_PORT:-3001}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     volumes:

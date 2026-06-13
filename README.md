@@ -11,10 +11,10 @@ SmartMaint AI is a full-stack application built with a microservices-oriented ar
 ┌─────────────────────────────────────────────────────────────┐
 │                    Client Layer (Frontend)                   │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  Next.js 14 (React 18, TypeScript, Tailwind CSS)     │  │
+│  │  Next.js 16 (React 19, TypeScript, Tailwind CSS)     │  │
 │  │  - Server-Side Rendering (SSR)                        │  │
 │  │  - Client-Side Rendering (CSR)                        │  │
-│  │  - Progressive Web App (PWA) Ready                   │  │
+│  │  - Progressive Web App (PWA: manifest + SW)          │  │
 │  │  - Dark/Light Mode Support                           │  │
 │  └──────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
@@ -35,27 +35,29 @@ SmartMaint AI is a full-stack application built with a microservices-oriented ar
 │                    Data Layer                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
 │  │ PostgreSQL  │  │    Redis     │  │  Vector DB   │     │
-│  │   (Primary)  │  │   (Cache)    │  │  (ChromaDB)  │     │
+│  │   (Primary)  │  │ (Cache/Bull) │  │   (Qdrant)   │     │
 │  │              │  │              │  │              │     │
 │  │ - Users      │  │ - Sessions   │  │ - Embeddings │     │
-│  │ - Tickets    │  │ - Real-time  │  │ - Knowledge  │     │
-│  │ - Logs       │  │   Data       │  │   Base       │     │
+│  │ - Tickets    │  │ - Job queues │  │ - Manual     │     │
+│  │ - Logs       │  │ - Real-time  │  │   chunks     │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────┘
                             ↕
 ┌─────────────────────────────────────────────────────────────┐
-│              AI/ML Layer (Future Phases)                      │
+│                      AI/ML Layer                              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │    Ollama    │  │  LangChain   │  │  Embeddings  │     │
-│  │   (LLM)      │  │  (RAG)       │  │  (Vectors)   │     │
+│  │    Ollama    │  │  OpenRouter  │  │ PaddleOCR-VL │     │
+│  │ (LLM + RAG   │  │ (Vision LLM, │  │ (GPU OCR     │     │
+│  │  embeddings) │  │  fallback)   │  │  sidecar)    │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────┘
                             ↕
 ┌─────────────────────────────────────────────────────────────┐
-│          Integration Layer (Future Phases)                    │
+│                   Integration Layer                           │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │     n8n      │  │   Twilio     │  │     SMTP     │     │
-│  │ (Automation) │  │  (WhatsApp)  │  │   (Email)    │     │
+│  │     SMTP     │  │   Twilio     │  │     n8n      │     │
+│  │ (Nodemailer) │  │  (WhatsApp,  │  │ (Automation, │     │
+│  │              │  │   future)    │  │   future)    │     │
 │  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -63,66 +65,81 @@ SmartMaint AI is a full-stack application built with a microservices-oriented ar
 ## 🛠️ Technology Stack
 
 ### Frontend Technologies
-- **Framework**: Next.js 14.2+ (React 18.2, TypeScript 5.3)
-- **Styling**: Tailwind CSS 3.4+ with Dark Mode support
+- **Framework**: Next.js 16 (App Router) — React 19, TypeScript 5.6
+- **Styling**: Tailwind CSS 3.4+ (`tailwindcss-animate`, dark mode), PostCSS + Autoprefixer
+- **UI Components**: Custom components built on Radix UI primitives (`@radix-ui/react-label`, `react-select`, `react-slot`) with `class-variance-authority`, `clsx`, and `tailwind-merge`
+- **Icons**: Lucide React
 - **State Management**: Zustand 4.4+ (with persistence)
 - **HTTP Client**: Axios 1.6+
-- **Notifications**: react-hot-toast 2.6+
-- **Form Handling**: React Hook Form 7.49+ with Zod validation
-- **UI Components**: Custom components with Tailwind
-- **Routing**: Next.js App Router (file-based routing)
+- **Real-Time**: Socket.io Client 4.8+ (WebSocket updates, document progress)
+- **Notifications**: Sonner (toasts)
+- **Form Handling**: React Hook Form 7.49+ with Zod validation (`@hookform/resolvers`)
+- **Dates**: date-fns 3
+- **QR Codes**: qrcode.react (mobile install / PWA QR)
+- **PWA**: Web App Manifest (`src/app/manifest.ts`) + custom service worker (`public/sw.js`)
 
 ### Backend Technologies
 - **Framework**: NestJS 10.3+ (Node.js 18+, TypeScript 5.3)
 - **Runtime**: Node.js 18+ (Alpine Linux)
 - **HTTP Server**: Express.js (via NestJS)
-- **Authentication**: JWT (JSON Web Tokens) with Passport.js
+- **Authentication**: JWT (`@nestjs/jwt`) with Passport.js (`passport-jwt`, `passport-local`), bcrypt password hashing
 - **Authorization**: Role-Based Access Control (RBAC)
-- **API Documentation**: Swagger/OpenAPI 3.0
-- **WebSockets**: Socket.io 4.6+ (for real-time features)
+- **ORM**: TypeORM 0.3 (`@nestjs/typeorm`) with migrations
+- **Job Queues**: Bull 4 (`@nestjs/bull`) backed by Redis — PDF ingestion/OCR pipeline
+- **WebSockets**: Socket.io 4.6+ (`@nestjs/websockets`, `@nestjs/platform-socket.io`)
+- **API Documentation**: Swagger/OpenAPI (`@nestjs/swagger`)
 - **Validation**: class-validator & class-transformer
+- **File Uploads**: Multer (PDF manuals, knowledge photos)
+- **Email**: Nodemailer (SMTP)
+- **PDF/Files**: pdf-parse (text extraction), Sharp (image processing), ExcelJS (Excel import/export), uuid
+- **Reactive**: RxJS 7
 
 ### Database & Storage
 - **Primary Database**: PostgreSQL 15 (Alpine)
-  - ACID compliance
-  - Full-text search support
-  - JSON/JSONB support for flexible schemas
-- **Cache Layer**: Redis 7 (Alpine)
-  - Session storage
-  - Real-time data caching
-  - Pub/Sub for notifications
-- **Vector Database**: ChromaDB (Future - Phase 2)
-  - Document embeddings storage
-  - Semantic search capabilities
+  - ACID compliance, JSON/JSONB support
+  - Schema managed via TypeORM migrations (no auto-sync)
+- **DB Admin UI**: pgAdmin 4 (Docker service, http://localhost:5050)
+- **Cache / Queues**: Redis 7 (Alpine)
+  - Bull job queues (document processing)
+  - Session/real-time data caching
+- **Vector Database**: Qdrant
+  - Manual chunk embeddings (`manual_chunks` collection)
+  - Semantic search for RAG retrieval
+
+### AI/ML Stack
+- **LLM Runtime**: Ollama (local, on host machine)
+  - Chat/routing model: `qwen2.5:7b` (configurable, e.g. `llama3.1:8b`)
+  - Embeddings: `nomic-embed-text`
+  - Optional local vision: `llava`
+- **Cloud LLM (fallback/vision)**: OpenRouter — `anthropic/claude-3.5-haiku` (text), `google/gemini-2.5-flash` (vision)
+- **RAG**: Custom pipeline in `backend/src/ai` (chunking → Ollama embeddings → Qdrant → retrieval for Techo assistant)
+- **OCR Microservice**: PaddleOCR-VL (`services/paddle-ocr`)
+  - Python 3 + FastAPI + Uvicorn
+  - PyTorch (CUDA/GPU), Hugging Face Transformers, Accelerate, SafeTensors
+  - Pillow, NumPy, SentencePiece, einops
+- **PDF Rendering**: Poppler (`pdftoppm`, in backend Docker image) — PDF pages → images for OCR/vision
+
+### Integration Tools
+- **Email Service**: SMTP via Nodemailer (notifications)
+- **WhatsApp API**: Twilio WhatsApp Business API (future)
+- **Workflow Automation**: n8n (future)
 
 ### DevOps & Infrastructure
-- **Containerization**: Docker & Docker Compose
+- **Containerization**: Docker & Docker Compose (Postgres, pgAdmin, Redis, Qdrant, PaddleOCR, backend, frontend)
+- **GPU**: NVIDIA GPU passthrough for the PaddleOCR container
 - **Reverse Proxy**: Nginx (Future - Production)
 - **Monitoring**: Prometheus + Grafana (Future)
-- **Logging**: ELK Stack (Future)
 - **CI/CD**: GitHub Actions (Future)
 
 ### Development Tools
 - **Package Manager**: npm
-- **Type Checking**: TypeScript
-- **Linting**: ESLint 8.56+
+- **Type Checking**: TypeScript (frontend 5.6 / backend 5.3)
+- **Linting**: ESLint (+ `eslint-config-next`, `@typescript-eslint`)
 - **Code Formatting**: Prettier 3.1+
+- **Testing**: Jest 29 + ts-jest, Supertest (e2e)
+- **DB Tooling**: TypeORM CLI (`migration:generate/run/revert`), seed scripts (`db:init`, `db:seed`)
 - **Version Control**: Git
 - **API Testing**: Swagger UI (built-in)
-
-### AI/ML Stack (Future Phases)
-- **LLM Runtime**: Ollama (Local deployment)
-- **LLM Models**: Llama 3.1 8B / Mistral 7B
-- **RAG Framework**: LangChain
-- **Embeddings**: Sentence Transformers (all-MiniLM-L6-v2)
-- **Vector Database**: ChromaDB / Qdrant
- - **AI Module**: `backend/src/ai` (Techo assistant, chat API, future RAG integration)
-
-### Integration Tools (Future Phases)
-- **Workflow Automation**: n8n
-- **WhatsApp API**: Twilio WhatsApp Business API
-- **Email Service**: SMTP/IMAP (Nodemailer)
-- **Push Notifications**: Web Push API
 
 ## 📋 Prerequisites
 
@@ -130,6 +147,11 @@ SmartMaint AI is a full-stack application built with a microservices-oriented ar
 - Docker Compose v2.0+
 - Git
 - Node.js 18+ (for local development without Docker)
+- [Ollama](https://ollama.com) installed on the host with the models pulled:
+  - `ollama pull qwen2.5:7b` (chat / routing)
+  - `ollama pull nomic-embed-text` (embeddings)
+  - `ollama pull llava` (optional, local vision)
+- NVIDIA GPU + drivers (for the PaddleOCR-VL container)
 
 ## 🚀 Quick Start
 
@@ -151,8 +173,11 @@ docker-compose up -d
 ```
 
 This will start:
-- PostgreSQL database (port 5432)
+- PostgreSQL database (host port 5433)
+- pgAdmin web UI (port 5050)
 - Redis cache (port 6379)
+- Qdrant vector database (port 6333)
+- PaddleOCR-VL service (port 8008, GPU)
 - NestJS backend API (port 3001)
 - Next.js frontend (port 3000)
 
@@ -339,8 +364,11 @@ npm run migration:revert
 
 ### Container Services
 - **smartmaint-postgres**: PostgreSQL 15 database
-- **smartmaint-redis**: Redis 7 cache
-- **smartmaint-backend**: NestJS API server
+- **smartmaint-pgadmin**: pgAdmin 4 web UI for PostgreSQL
+- **smartmaint-redis**: Redis 7 cache + Bull queues
+- **smartmaint-qdrant**: Qdrant vector database (RAG)
+- **smartmaint-paddle-ocr**: PaddleOCR-VL OCR microservice (FastAPI, GPU)
+- **smartmaint-backend**: NestJS API server (includes Poppler for PDF rendering)
 - **smartmaint-frontend**: Next.js web application
 
 ### Network Architecture
@@ -350,11 +378,18 @@ npm run migration:revert
   - Frontend: `3000:3000`
   - Backend: `3001:3001`
   - PostgreSQL: `5433:5432` (host:container)
+  - pgAdmin: `5050:80`
   - Redis: `6379:6379`
+  - Qdrant: `6333:6333`
+  - PaddleOCR: `8008:8000`
+- **Ollama**: runs on the host machine, reached from the backend via `host.docker.internal:11434`
 
 ### Volume Management
 - **postgres_data**: Persistent PostgreSQL data
+- **pgadmin_data**: Persistent pgAdmin configuration
 - **redis_data**: Persistent Redis data
+- **qdrant_data**: Persistent Qdrant vector storage
+- **paddle_ocr_models**: Hugging Face model cache for PaddleOCR-VL
 - **Code Volumes**: Live code mounting for hot reload
 
 ### Docker Commands

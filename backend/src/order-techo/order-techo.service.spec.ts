@@ -2,6 +2,14 @@ import { OrderRuleEngineService } from './order-rule-engine.service';
 import { OrderDataService } from './order-data.service';
 import { OrderTechoService } from './order-techo.service';
 import { AiService } from '../ai/ai.service';
+import { ReferenceDataLoadLogService } from './reference-data-load-log.service';
+
+function mockLoadLog(): ReferenceDataLoadLogService {
+  return {
+    logSuccess: jest.fn().mockResolvedValue(undefined),
+    logFailure: jest.fn().mockResolvedValue(undefined),
+  } as unknown as ReferenceDataLoadLogService;
+}
 
 describe('Order Techo (integration with CSV)', () => {
   let data: OrderDataService;
@@ -9,7 +17,7 @@ describe('Order Techo (integration with CSV)', () => {
 
   beforeAll(() => {
     process.env.ORDER_TECHO_ENABLED = 'true';
-    data = new OrderDataService();
+    data = new OrderDataService(mockLoadLog());
     data.onModuleInit();
     rules = new OrderRuleEngineService(data);
   });
@@ -38,7 +46,7 @@ describe('Order Techo follow-up', () => {
   let orderTecho: OrderTechoService;
 
   beforeAll(() => {
-    const data = new OrderDataService();
+    const data = new OrderDataService(mockLoadLog());
     data.onModuleInit();
     orderTecho = new OrderTechoService(data, new OrderRuleEngineService(data), {
       chat: async () => 'should not be called',

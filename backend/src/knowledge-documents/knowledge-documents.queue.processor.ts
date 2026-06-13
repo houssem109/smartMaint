@@ -5,6 +5,8 @@ import { KnowledgeDocumentsService } from './knowledge-documents.service';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 import { RagService } from '../ai/rag.service';
 import {
+  BASIC_PIPELINE_JOB,
+  BASIC_PIPELINE_QUEUE,
   EXTRACTION_JOB,
   EXTRACTION_QUEUE,
   GATE_JOB,
@@ -16,6 +18,7 @@ import {
   VISION_JOB,
   VISION_QUEUE,
 } from './queues.constants';
+import { PdfBasicPipelineService } from './pdf-basic-pipeline.service';
 
 @Injectable()
 @Processor(GATE_QUEUE)
@@ -119,6 +122,30 @@ export class KnowledgeDocumentsVisionQueueProcessor {
       const msg = e?.message ? String(e.message) : String(e);
       this.logger.error(`Vision job failed for ${documentId}: ${msg}`);
       await this.knowledgeDocumentsService.markTrackingJobFailed(trackingJobId, msg);
+      throw e;
+    }
+  }
+}
+
+@Injectable()
+@Processor(BASIC_PIPELINE_QUEUE)
+export class PdfBasicPipelineQueueProcessor {
+  private readonly logger = new Logger(PdfBasicPipelineQueueProcessor.name);
+
+  constructor(private readonly pdfBasicPipelineService: PdfBasicPipelineService) {}
+
+  @Process(BASIC_PIPELINE_JOB)
+  async handleBasicPipeline(job: Job<{ documentId: string; trackingJobId?: string }>) {
+    const { documentId, trackingJobId } = job.data;
+    await this.pdfBasicPipelineService.markTrackingJobActive(trackingJobId, String(job.id));
+    try {
+      await this.pdfBasicPipelineService.runPipeline(documentId);
+      await this.pdfBasicPipelineService.markTrackingJobCompleted(trackingJobId);
+    } catch (e: any) {
+      const msg = e?.message ? String(e.message) : String(e);
+      this.logger.error(`Basic pipeline failed for ${documentId}: ${msg}`);
+      await this.pdfBasicPipelineService.markPipelineFailed(documentId, msg);
+      await this.pdfBasicPipelineService.markTrackingJobFailed(trackingJobId, msg);
       throw e;
     }
   }

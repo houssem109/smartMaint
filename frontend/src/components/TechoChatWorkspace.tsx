@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  ArrowLeft,
   Send,
   Plus,
   Trash2,
@@ -92,6 +93,7 @@ export default function TechoChatWorkspace() {
 
   const [filter, setFilter] = useState<ThreadFilter>('all');
   const [input, setInput] = useState('');
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'chat'>('list');
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [deleteThreadId, setDeleteThreadId] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -151,10 +153,15 @@ export default function TechoChatWorkspace() {
   };
 
   return (
-    <div className="surface-card relative flex h-[calc(100vh-7rem)] min-h-[34rem] overflow-hidden shadow-sm">
+    <div className="surface-card relative flex h-[calc(100vh-5.5rem)] min-h-[28rem] overflow-hidden shadow-sm md:h-[calc(100vh-7rem)] md:min-h-[34rem]">
       <div className="accent-band-top absolute inset-x-0 top-0 z-10 pointer-events-none" aria-hidden />
 
-      <aside className="relative flex w-full max-w-[17rem] flex-col border-r border-border/80 bg-muted/25 sm:max-w-xs">
+      <aside
+        className={cn(
+          'relative flex w-full max-w-[17rem] flex-col border-r border-border/80 bg-muted/25 sm:max-w-xs',
+          mobilePanel === 'chat' && 'hidden md:flex',
+        )}
+      >
         <div className="space-y-4 border-b border-border/80 p-4 pt-5">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -168,7 +175,10 @@ export default function TechoChatWorkspace() {
             <Button
               type="button"
               size="sm"
-              onClick={() => startNewConversation()}
+              onClick={() => {
+                startNewConversation();
+                setMobilePanel('chat');
+              }}
               className="shrink-0 shadow-sm"
             >
               <Plus className="h-4 w-4" />
@@ -221,7 +231,10 @@ export default function TechoChatWorkspace() {
                   <li key={t.id}>
                     <button
                       type="button"
-                      onClick={() => setActiveThread(t.id)}
+                      onClick={() => {
+                        setActiveThread(t.id);
+                        setMobilePanel('chat');
+                      }}
                       className={cn(
                         'w-full rounded-xl border px-3 py-3 text-left transition-all',
                         isActive
@@ -268,9 +281,24 @@ export default function TechoChatWorkspace() {
         </div>
       </aside>
 
-      <section className="relative flex min-w-0 flex-1 flex-col bg-background">
+      <section
+        className={cn(
+          'relative flex min-w-0 flex-1 flex-col bg-background',
+          mobilePanel === 'list' && 'hidden md:flex',
+        )}
+      >
         <header className="flex items-center justify-between gap-3 border-b border-border/80 bg-card/80 px-4 py-3 backdrop-blur-sm sm:px-5">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 md:hidden"
+              onClick={() => setMobilePanel('list')}
+              aria-label="Back to conversations"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
             <TechoAvatar />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold tracking-tight">

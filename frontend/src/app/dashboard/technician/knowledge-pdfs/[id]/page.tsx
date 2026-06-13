@@ -5,7 +5,8 @@ import { io, type Socket } from 'socket.io-client';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Layout from '@/components/Layout';
 import ConfirmModal from '@/components/ConfirmModal';
-import api, { API_URL } from '@/lib/api';
+import api from '@/lib/api';
+import { resolveDirectBackendUrl } from '@/lib/runtime-url';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, ExternalLink, Loader2, X } from 'lucide-react';
 import {
   candidateTechReviews,
   findTechReviewByTechnician,
@@ -68,6 +69,7 @@ export default function TechnicianKnowledgePdfDetailPage() {
   const [resume, setResume] = useState<{ message?: string } | null>(null);
   const [liveStatus, setLiveStatus] = useState<DocStatusPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openingPdf, setOpeningPdf] = useState(false);
   const [proposedName, setProposedName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [extractions, setExtractions] = useState<KnowledgeExtractionCandidate[]>([]);
@@ -145,7 +147,7 @@ export default function TechnicianKnowledgePdfDetailPage() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
     if (!token) return;
 
-    const socket: Socket = io(`${API_URL}/documents`, {
+    const socket: Socket = io(`${resolveDirectBackendUrl()}/documents`, {
       auth: { token },
       transports: ['websocket', 'polling'],
     });
@@ -270,6 +272,30 @@ export default function TechnicianKnowledgePdfDetailPage() {
     }
   };
 
+  const handleOpenPdf = async () => {
+    if (!doc) return;
+    setOpeningPdf(true);
+    try {
+      const res = await api.get(`/knowledge-documents/${doc.id}/download`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data as BlobPart], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 120_000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to open PDF');
+    } finally {
+      setOpeningPdf(false);
+    }
+  };
+
   const handleSuggest = async () => {
     if (!id || !proposedName.trim()) {
       toast.error('Enter a suggested machine name');
@@ -350,6 +376,25 @@ export default function TechnicianKnowledgePdfDetailPage() {
               <Badge variant={statusVariant(doc?.status || 'uploaded') as any} className="text-xs capitalize">
                 {doc?.status || '…'}
               </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void handleOpenPdf()}
+                disabled={!doc || openingPdf}
+              >
+                {openingPdf ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Opening…
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="h-4 w-4" />
+                    Open PDF
+                  </>
+                )}
+              </Button>
               <Button variant="outline" size="sm" onClick={handleDownload} disabled={!doc}>
                 Download
               </Button>

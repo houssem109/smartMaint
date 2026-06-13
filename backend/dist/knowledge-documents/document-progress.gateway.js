@@ -16,6 +16,7 @@ const config_1 = require("@nestjs/config");
 const jwt_1 = require("@nestjs/jwt");
 const websockets_1 = require("@nestjs/websockets");
 const socket_io_1 = require("socket.io");
+const cors_util_1 = require("../common/cors.util");
 let DocumentProgressGateway = DocumentProgressGateway_1 = class DocumentProgressGateway {
     constructor(jwtService, configService) {
         this.jwtService = jwtService;
@@ -83,7 +84,9 @@ exports.DocumentProgressGateway = DocumentProgressGateway = DocumentProgressGate
     (0, websockets_1.WebSocketGateway)({
         namespace: '/documents',
         cors: {
-            origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+            origin: process.env.NODE_ENV === 'development'
+                ? true
+                : (0, cors_util_1.parseCorsOrigins)(process.env.FRONTEND_URL),
             credentials: true,
         },
     }),

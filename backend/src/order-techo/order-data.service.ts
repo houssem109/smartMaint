@@ -1,6 +1,11 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { existsSync, statSync, watch, type FSWatcher } from 'fs';
 import { join } from 'path';
 import { CsvRow, parseSemicolonCsv, resolveOrderDataDir, splitCsvList } from './order-csv.util';
+import {
+  ReferenceDataLoadLogService,
+  ReferenceDataLoadSource,
+} from './reference-data-load-log.service';
 
 export interface OrderLinePair {
   articleRef: string;
@@ -38,22 +43,42 @@ export interface MagasinRow {
   status: number;
 }
 
+const REFERENCE_CSV_FILES = [
+  'data_plus.csv',
+  'order_lines.csv',
+  'article.csv',
+  'magasin.csv',
+] as const;
+
 @Injectable()
-export class OrderDataService implements OnModuleInit {
+export class OrderDataService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrderDataService.name);
   private loaded = false;
+  private fileWatchers: FSWatcher[] = [];
+  private reloadDebounce: ReturnType<typeof setTimeout> | null = null;
+  private fileFingerprints = new Map<string, string>();
 
   private dataPlusByDoco = new Map<string, DataPlusRow>();
   private orderLinesByKey = new Map<string, OrderLineExpanded>();
   private articlesByKey = new Map<string, ArticleRow>();
   private magasinByName = new Map<string, MagasinRow>();
 
+  constructor(private readonly loadLog: ReferenceDataLoadLogService) {}
+
   onModuleInit(): void {
     if (String(process.env.ORDER_TECHO_ENABLED ?? 'true').toLowerCase() === 'false') {
       this.logger.log('Order Techo disabled (ORDER_TECHO_ENABLED=false)');
       return;
     }
-    this.loadAll();
+    this.loadAll('startup');
+  }
+
+  onModuleDestroy(): void {
+    this.stopFileWatch();
+    if (this.reloadDebounce) {
+      clearTimeout(this.reloadDebounce);
+      this.reloadDebounce = null;
+    }
   }
 
   isReady(): boolean {
@@ -61,11 +86,12 @@ export class OrderDataService implements OnModuleInit {
   }
 
   reload(): void {
-    this.loadAll();
+    this.loadAll('manual_reload');
   }
 
-  private loadAll(): void {
+  private loadAll(source: ReferenceDataLoadSource = 'startup', changedFiles?: string[]): void {
     const dir = resolveOrderDataDir();
+
     try {
       const articles = parseSemicolonCsv(join(dir, 'article.csv'));
       const magasins = parseSemicolonCsv(join(dir, 'magasin.csv'));
@@ -132,13 +158,93 @@ export class OrderDataService implements OnModuleInit {
       }
 
       this.loaded = true;
+      const counts = {
+        dataPlus: this.dataPlusByDoco.size,
+        orderLines: this.orderLinesByKey.size,
+        articles: this.articlesByKey.size,
+        magasins: this.magasinByName.size,
+      };
+
       this.logger.log(
-        `Order Techo data loaded from ${dir}: data_plus=${this.dataPlusByDoco.size}, order_lines=${this.orderLinesByKey.size}, articles=${this.articlesByKey.size}, magasins=${this.magasinByName.size}`,
+        `Order Techo data loaded from ${dir}: data_plus=${counts.dataPlus}, order_lines=${counts.orderLines}, articles=${counts.articles}, magasins=${counts.magasins}`,
       );
+
+      this.fileFingerprints = this.captureFingerprints(dir);
+      if (source === 'startup' && process.env.NODE_ENV !== 'test') {
+        this.startFileWatch(dir);
+      }
+
+      void this.loadLog.logSuccess(source, dir, counts, changedFiles).catch((err) => {
+        this.logger.warn(
+          `Failed to write reference data activity log: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     } catch (e) {
       this.loaded = false;
-      this.logger.error(`Failed to load order CSV from ${dir}: ${e instanceof Error ? e.message : e}`);
+      const message = e instanceof Error ? e.message : String(e);
+      this.logger.error(`Failed to load order CSV from ${dir}: ${message}`);
+      void this.loadLog.logFailure(source, dir, message).catch((err) => {
+        this.logger.warn(
+          `Failed to write reference data error log: ${err instanceof Error ? err.message : err}`,
+        );
+      });
     }
+  }
+
+  private captureFingerprints(dir: string): Map<string, string> {
+    const fingerprints = new Map<string, string>();
+    for (const file of REFERENCE_CSV_FILES) {
+      fingerprints.set(file, this.fingerprintFile(join(dir, file)));
+    }
+    return fingerprints;
+  }
+
+  private fingerprintFile(filePath: string): string {
+    try {
+      const stat = statSync(filePath);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
+      return '';
+    }
+  }
+
+  private startFileWatch(dir: string): void {
+    this.stopFileWatch();
+    for (const file of REFERENCE_CSV_FILES) {
+      const fullPath = join(dir, file);
+      if (!existsSync(fullPath)) continue;
+      try {
+        const watcher = watch(fullPath, () => this.scheduleReloadFromFileChange(dir));
+        this.fileWatchers.push(watcher);
+      } catch (e) {
+        this.logger.warn(
+          `Could not watch ${fullPath}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+  }
+
+  private stopFileWatch(): void {
+    for (const watcher of this.fileWatchers) {
+      watcher.close();
+    }
+    this.fileWatchers = [];
+  }
+
+  private scheduleReloadFromFileChange(dir: string): void {
+    if (this.reloadDebounce) clearTimeout(this.reloadDebounce);
+    this.reloadDebounce = setTimeout(() => {
+      this.reloadDebounce = null;
+      const nextFingerprints = this.captureFingerprints(dir);
+      const changedFiles: string[] = [];
+      for (const file of REFERENCE_CSV_FILES) {
+        const prev = this.fileFingerprints.get(file);
+        const next = nextFingerprints.get(file) ?? '';
+        if (next && prev !== next) changedFiles.push(file);
+      }
+      if (!changedFiles.length) return;
+      this.loadAll('file_change', changedFiles);
+    }, 1500);
   }
 
   findDataPlus(doco: string): DataPlusRow | null {

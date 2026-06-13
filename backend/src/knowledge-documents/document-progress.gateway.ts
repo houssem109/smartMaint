@@ -8,13 +8,17 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { parseCorsOrigins } from '../common/cors.util';
 
 export type DocumentProgressPayload = Record<string, unknown> & { documentId: string };
 
 @WebSocketGateway({
   namespace: '/documents',
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin:
+      process.env.NODE_ENV === 'development'
+        ? true
+        : parseCorsOrigins(process.env.FRONTEND_URL),
     credentials: true,
   },
 })

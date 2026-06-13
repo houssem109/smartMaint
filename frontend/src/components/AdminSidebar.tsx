@@ -19,14 +19,11 @@ import {
   FileText,
   ClipboardList,
   Download,
+  Smartphone,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/auth-store';
 import api from '@/lib/api';
-
-interface AdminSidebarProps {
-  isOpen: boolean;
-  onToggle: () => void;
-}
+import { type SidebarProps, sidebarShellClassName } from '@/components/sidebar-types';
 
 type BadgeKey = 'knowledge' | 'pdfCandidates';
 
@@ -46,13 +43,20 @@ const navItems: {
   { href: '/dashboard/admin/knowledge-docs', label: 'PDF Library', icon: FileText, badgeKey: 'pdfCandidates' },
   { href: '/dashboard/admin/extraction-feedback', label: 'PDF review log', icon: ClipboardList },
   { href: '/dashboard/admin/problems-solutions-export', label: 'Problems export', icon: Download },
+  { href: '/dashboard/admin/mobile-install', label: 'Phone install', icon: Smartphone },
 ];
 
-export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
+export default function AdminSidebar({
+  isOpen,
+  onToggle,
+  mobileOpen,
+  onNavigate,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const logout = useAuthStore((s) => s.logout);
   const [counts, setCounts] = useState({ knowledge: 0, pdfCandidates: 0 });
+  const showLabel = isOpen || mobileOpen;
 
   useEffect(() => {
     const load = async () => {
@@ -86,19 +90,13 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
   };
 
   return (
-    <aside
-      className={cn(
-        'sticky top-0 flex h-screen flex-col border-r border-border bg-card transition-[width] duration-300 ease-in-out shrink-0',
-        isOpen ? 'w-56' : 'w-[4.25rem]'
-      )}
-    >
+    <aside className={sidebarShellClassName(isOpen, mobileOpen)}>
       <div className="accent-band-top" aria-hidden />
 
-      {/* Header: toggle + brand */}
       <div
         className={cn(
           'flex h-14 items-center border-b border-border shrink-0',
-          isOpen ? 'gap-2 px-3' : 'justify-center px-0'
+          showLabel ? 'gap-2 px-3' : 'justify-center px-0',
         )}
       >
         <Button
@@ -114,7 +112,7 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
             <PanelLeft className="h-5 w-5" />
           )}
         </Button>
-        {isOpen && (
+        {showLabel && (
           <div className="flex flex-1 justify-center pr-6">
             <span className="font-semibold text-foreground truncate tracking-tight">
               Smart<span className="text-primary">Maint</span>
@@ -123,10 +121,8 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
         )}
       </div>
 
-      {/* Nav links - always visible, labels only when open */}
       <nav className="sidebar-scroll flex flex-1 flex-col gap-0.5 p-2 pr-1 overflow-y-auto">
         {navItems.map(({ href, label, icon: Icon, badgeKey }) => {
-          // Dashboard (admin root): active only when exactly on /dashboard/admin
           const isActive =
             href === '/dashboard/admin'
               ? pathname === '/dashboard/admin'
@@ -135,14 +131,14 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
           const isTecho = href === '/dashboard/techo';
           const className = cn(
             'sidebar-nav-link',
-            isOpen ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
+            showLabel ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
             isActive && 'sidebar-nav-link-active',
             isActive && isTecho && 'ring-1 ring-accent/30',
           );
           const inner = (
             <>
               <Icon className="h-5 w-5 shrink-0" />
-              {isOpen && (
+              {showLabel && (
                 <>
                   <span className="truncate flex-1 text-left">{label}</span>
                   {n > 0 && (
@@ -162,39 +158,45 @@ export default function AdminSidebar({ isOpen, onToggle }: AdminSidebarProps) {
             </>
           );
           return (
-            <Link key={href} href={href} title={!isOpen ? label : undefined} className={className}>
+            <Link
+              key={href}
+              href={href}
+              title={!showLabel ? label : undefined}
+              className={className}
+              onClick={onNavigate}
+            >
               {inner}
             </Link>
           );
         })}
       </nav>
 
-      {/* Settings + Logout at bottom */}
       <div className="border-t border-border p-2 shrink-0 space-y-0.5">
         <Link
           href="/dashboard/settings"
-          title={!isOpen ? 'Settings' : undefined}
+          title={!showLabel ? 'Settings' : undefined}
+          onClick={onNavigate}
           className={cn(
             'sidebar-nav-link',
-            isOpen ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
+            showLabel ? 'gap-3 px-3 py-2 text-sm' : 'justify-center p-2.5',
             (pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/')) &&
               'sidebar-nav-link-active',
           )}
         >
           <Settings className="h-5 w-5 shrink-0" />
-          {isOpen && <span>Settings</span>}
+          {showLabel && <span>Settings</span>}
         </Link>
         <Button
           variant="ghost"
           className={cn(
             'w-full text-foreground/80 hover:bg-destructive/10 hover:text-destructive text-sm font-medium',
-            isOpen ? 'justify-start gap-3 px-3 py-2 h-auto' : 'justify-center p-2.5 h-auto',
+            showLabel ? 'justify-start gap-3 px-3 py-2 h-auto' : 'justify-center p-2.5 h-auto',
           )}
           onClick={handleLogout}
-          title={!isOpen ? 'Log out' : undefined}
+          title={!showLabel ? 'Log out' : undefined}
         >
           <LogOut className="h-5 w-5 shrink-0" />
-          {isOpen && <span>Log out</span>}
+          {showLabel && <span>Log out</span>}
         </Button>
       </div>
     </aside>

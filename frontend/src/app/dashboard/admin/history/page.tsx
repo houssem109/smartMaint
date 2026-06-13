@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import ConfirmModal from '@/components/ConfirmModal';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   RefreshCw,
@@ -77,6 +78,7 @@ const ENTITY_FILTER_OPTIONS = [
   { value: 'pipeline_error', label: 'Pipeline errors' },
   { value: 'knowledge_extraction_candidate', label: 'Extraction reviews' },
   { value: 'machine_name_suggestion', label: 'Machine names' },
+  { value: 'reference_data', label: 'Reference data (CSV)' },
 ];
 
 const ACTION_FILTER_OPTIONS = [
@@ -100,6 +102,9 @@ const EVENT_LABELS: Record<string, string> = {
   machine_name_suggestion_rejected: 'Machine name suggestion rejected',
   machine_name_suggestion_superseded: 'Other name suggestion auto-rejected',
   machine_name_suggestion: 'Technician proposed a machine name',
+  reference_data_loaded: 'Sales reference data loaded at startup',
+  reference_data_reloaded: 'Sales reference data reloaded (CSV updated)',
+  reference_data_load_failed: 'Sales reference data load failed',
 };
 
 function formatPerformer(entry: TicketHistoryEntry): string | null {
@@ -164,6 +169,7 @@ function getErrorMessage(entry: TicketHistoryEntry): string | null {
 /** PDF pipeline failures and logged errors — not normal approve/reject workflow. */
 function isIssueEntry(entry: TicketHistoryEntry): boolean {
   if (entry.entityType === 'pipeline_error') return true;
+  if (entry.entityType === 'reference_data' && entry.actionType === 'error') return true;
   if (entry.actionType === 'error') return true;
   if (
     entry.entityType === 'knowledge_extraction_candidate' ||
@@ -177,7 +183,7 @@ function isIssueEntry(entry: TicketHistoryEntry): boolean {
 }
 
 function formatFieldChange(key: string, value: unknown): string | null {
-  if (key === 'deletedSnapshot' || key === 'restoredFromDelete' || key === 'error' || key === 'source') {
+  if (key === 'deletedSnapshot' || key === 'restoredFromDelete' || key === 'error') {
     return null;
   }
   if (key === 'event' && typeof value === 'string') {
@@ -188,6 +194,32 @@ function formatFieldChange(key: string, value: unknown): string | null {
   }
   if (key === 'jobType' && typeof value === 'string') {
     return `Job: ${value.replace(/_/g, ' ')}`;
+  }
+  if (key === 'data_plus' && typeof value === 'number') {
+    return `Orders loaded: ${value}`;
+  }
+  if (key === 'order_lines' && typeof value === 'number') {
+    return `Order lines loaded: ${value}`;
+  }
+  if (key === 'articles' && typeof value === 'number') {
+    return `Articles loaded: ${value}`;
+  }
+  if (key === 'magasins' && typeof value === 'number') {
+    return `Stores loaded: ${value}`;
+  }
+  if (key === 'changedFiles' && Array.isArray(value) && value.length > 0) {
+    return `Updated files: ${value.join(', ')}`;
+  }
+  if (key === 'source' && typeof value === 'string') {
+    const labels: Record<string, string> = {
+      startup: 'Trigger: application startup',
+      file_change: 'Trigger: CSV file updated',
+      manual_reload: 'Trigger: manual reload',
+    };
+    return labels[value] ?? `Source: ${value}`;
+  }
+  if (key === 'dataDir' && typeof value === 'string') {
+    return `Data folder: ${value}`;
   }
   if (key === 'proposedName' && typeof value === 'string') {
     return `Suggested name: ${value}`;
@@ -247,6 +279,8 @@ function getEntityKindLabel(entityType: string): string {
       return 'Extraction';
     case 'machine_name_suggestion':
       return 'Machine name';
+    case 'reference_data':
+      return 'Reference data';
     default:
       return entityType.replace(/_/g, ' ');
   }
@@ -309,6 +343,10 @@ function getEntityDisplayName(entry: TicketHistoryEntry): string {
     return changes.documentOriginalName as string || 'Machine name suggestion';
   }
 
+  if (entry.entityType === 'reference_data') {
+    return 'Sales reference data (CSV)';
+  }
+
   return getEntityKindLabel(entry.entityType);
 }
 
@@ -361,6 +399,37 @@ function getSummaryLines(entry: TicketHistoryEntry): string[] {
       lines.push(`Note: ${entry.reason.trim()}`);
     }
     return lines.length > 0 ? lines : ['PDF suggestion reviewed.'];
+  }
+
+  if (entry.entityType === 'reference_data') {
+    const event = changes.event;
+    if (typeof event === 'string' && EVENT_LABELS[event]) {
+      lines.push(EVENT_LABELS[event]);
+    }
+    if (typeof changes.data_plus === 'number') {
+      lines.push(`Orders loaded: ${changes.data_plus}`);
+    }
+    if (typeof changes.order_lines === 'number') {
+      lines.push(`Order lines loaded: ${changes.order_lines}`);
+    }
+    if (typeof changes.articles === 'number') {
+      lines.push(`Articles loaded: ${changes.articles}`);
+    }
+    if (typeof changes.magasins === 'number') {
+      lines.push(`Stores loaded: ${changes.magasins}`);
+    }
+    if (Array.isArray(changes.changedFiles) && changes.changedFiles.length > 0) {
+      lines.push(`Updated files: ${(changes.changedFiles as string[]).join(', ')}`);
+    }
+    if (typeof changes.source === 'string') {
+      const labels: Record<string, string> = {
+        startup: 'Trigger: application startup',
+        file_change: 'Trigger: CSV file updated',
+        manual_reload: 'Trigger: manual reload',
+      };
+      lines.push(labels[changes.source] ?? `Source: ${changes.source}`);
+    }
+    return lines.length > 0 ? lines : ['Reference data event recorded.'];
   }
 
   if (changes.deletedSnapshot) {
@@ -636,6 +705,7 @@ export default function TicketHistoryPage() {
   const [history, setHistory] = useState<TicketHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<TicketHistoryEntry | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<TicketHistoryEntry | null>(null);
   const [entityFilter, setEntityFilter] = useState('');
   const [actionFilter, setActionFilter] = useState('');
@@ -705,9 +775,17 @@ export default function TicketHistoryPage() {
   const isTicket = (entry: TicketHistoryEntry) => entry.entityType === 'ticket';
   const isUser = (entry: TicketHistoryEntry) => entry.entityType === 'user';
 
-  const handleRestore = async (entry: TicketHistoryEntry, e: React.MouseEvent) => {
+  const requestRestore = (entry: TicketHistoryEntry, e: React.MouseEvent) => {
     e.stopPropagation();
     if (entry.actionType !== 'delete') return;
+    if (!isTicket(entry) && !isUser(entry)) return;
+    setRestoreTarget(entry);
+  };
+
+  const confirmRestore = async () => {
+    const entry = restoreTarget;
+    if (!entry || entry.actionType !== 'delete' || restoringId) return;
+
     setRestoringId(entry.id);
     try {
       if (isTicket(entry)) {
@@ -725,13 +803,15 @@ export default function TicketHistoryPage() {
         } else {
           toast.success('User restored');
         }
-      } else {
-        return;
       }
       void fetchHistory();
       setSelectedEntry(null);
-    } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to restore');
+      setRestoreTarget(null);
+    } catch (err: unknown) {
+      const message =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Failed to restore';
+      toast.error(message);
     } finally {
       setRestoringId(null);
     }
@@ -887,7 +967,7 @@ export default function TicketHistoryPage() {
                                     variant="outline"
                                     size="sm"
                                     disabled={restoringId === entry.id}
-                                    onClick={(e) => handleRestore(entry, e)}
+                                    onClick={(e) => requestRestore(entry, e)}
                                   >
                                     {restoringId === entry.id ? '…' : 'Restore'}
                                   </Button>
@@ -938,6 +1018,25 @@ export default function TicketHistoryPage() {
         {selectedEntry && (
           <HistoryDetailModal entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
         )}
+
+        <ConfirmModal
+          isOpen={!!restoreTarget}
+          title="Restore this item?"
+          message={
+            restoreTarget
+              ? isTicket(restoreTarget)
+                ? `Restore the ticket "${getEntityDisplayName(restoreTarget)}"? It will appear again in the active tickets list.`
+                : `Restore the user account "${getEntityDisplayName(restoreTarget)}"? They may need a new password set in Users before they can sign in again.`
+              : ''
+          }
+          confirmText={restoringId ? 'Restoring…' : 'Restore'}
+          cancelText="Cancel"
+          type="info"
+          onConfirm={() => void confirmRestore()}
+          onCancel={() => {
+            if (!restoringId) setRestoreTarget(null);
+          }}
+        />
       </Layout>
     </ProtectedRoute>
   );

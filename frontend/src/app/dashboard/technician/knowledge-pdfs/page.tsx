@@ -51,6 +51,8 @@ function TechnicianKnowledgePdfsPageContent() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [nameFilter, setNameFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 3;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredDocs = useMemo(() => {
@@ -58,6 +60,23 @@ function TechnicianKnowledgePdfsPageContent() {
     if (!q) return docs;
     return docs.filter((d) => (d.originalName || d.fileName || '').toLowerCase().includes(q));
   }, [docs, nameFilter]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [nameFilter]);
+
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredDocs.length / pageSize)),
+    [filteredDocs.length],
+  );
+
+  const paginatedDocs = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredDocs.slice(start, start + pageSize);
+  }, [filteredDocs, page]);
+
+  const startIndex = filteredDocs.length === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endIndex = Math.min(page * pageSize, filteredDocs.length);
 
   const fetchDocs = async () => {
     setLoading(true);
@@ -271,8 +290,9 @@ function TechnicianKnowledgePdfsPageContent() {
                   No PDFs match &quot;{nameFilter.trim()}&quot;.
                 </div>
               ) : (
+                <>
                 <ul className="divide-y divide-border/50">
-                  {filteredDocs.map((d) => {
+                  {paginatedDocs.map((d) => {
                     const showProgress =
                       (typeof d.totalPages === 'number' && d.totalPages > 0) ||
                       typeof d.progressPercent === 'number';
@@ -333,6 +353,30 @@ function TechnicianKnowledgePdfsPageContent() {
                     );
                   })}
                 </ul>
+                <div className="flex items-center justify-between border-t border-border/40 pt-4">
+                  <span className="text-xs text-muted-foreground">
+                    Showing {startIndex}-{endIndex} of {filteredDocs.length} PDFs
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page === 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page === totalPages}
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+                </>
               )}
             </CardContent>
           </Card>

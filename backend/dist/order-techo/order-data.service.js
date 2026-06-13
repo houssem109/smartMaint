@@ -5,16 +5,31 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
 var OrderDataService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrderDataService = void 0;
 const common_1 = require("@nestjs/common");
+const fs_1 = require("fs");
 const path_1 = require("path");
 const order_csv_util_1 = require("./order-csv.util");
+const reference_data_load_log_service_1 = require("./reference-data-load-log.service");
+const REFERENCE_CSV_FILES = [
+    'data_plus.csv',
+    'order_lines.csv',
+    'article.csv',
+    'magasin.csv',
+];
 let OrderDataService = OrderDataService_1 = class OrderDataService {
-    constructor() {
+    constructor(loadLog) {
+        this.loadLog = loadLog;
         this.logger = new common_1.Logger(OrderDataService_1.name);
         this.loaded = false;
+        this.fileWatchers = [];
+        this.reloadDebounce = null;
+        this.fileFingerprints = new Map();
         this.dataPlusByDoco = new Map();
         this.orderLinesByKey = new Map();
         this.articlesByKey = new Map();
@@ -25,15 +40,22 @@ let OrderDataService = OrderDataService_1 = class OrderDataService {
             this.logger.log('Order Techo disabled (ORDER_TECHO_ENABLED=false)');
             return;
         }
-        this.loadAll();
+        this.loadAll('startup');
+    }
+    onModuleDestroy() {
+        this.stopFileWatch();
+        if (this.reloadDebounce) {
+            clearTimeout(this.reloadDebounce);
+            this.reloadDebounce = null;
+        }
     }
     isReady() {
         return this.loaded;
     }
     reload() {
-        this.loadAll();
+        this.loadAll('manual_reload');
     }
-    loadAll() {
+    loadAll(source = 'startup', changedFiles) {
         const dir = (0, order_csv_util_1.resolveOrderDataDir)();
         try {
             const articles = (0, order_csv_util_1.parseSemicolonCsv)((0, path_1.join)(dir, 'article.csv'));
@@ -101,12 +123,84 @@ let OrderDataService = OrderDataService_1 = class OrderDataService {
                 });
             }
             this.loaded = true;
-            this.logger.log(`Order Techo data loaded from ${dir}: data_plus=${this.dataPlusByDoco.size}, order_lines=${this.orderLinesByKey.size}, articles=${this.articlesByKey.size}, magasins=${this.magasinByName.size}`);
+            const counts = {
+                dataPlus: this.dataPlusByDoco.size,
+                orderLines: this.orderLinesByKey.size,
+                articles: this.articlesByKey.size,
+                magasins: this.magasinByName.size,
+            };
+            this.logger.log(`Order Techo data loaded from ${dir}: data_plus=${counts.dataPlus}, order_lines=${counts.orderLines}, articles=${counts.articles}, magasins=${counts.magasins}`);
+            this.fileFingerprints = this.captureFingerprints(dir);
+            if (source === 'startup' && process.env.NODE_ENV !== 'test') {
+                this.startFileWatch(dir);
+            }
+            void this.loadLog.logSuccess(source, dir, counts, changedFiles).catch((err) => {
+                this.logger.warn(`Failed to write reference data activity log: ${err instanceof Error ? err.message : err}`);
+            });
         }
         catch (e) {
             this.loaded = false;
-            this.logger.error(`Failed to load order CSV from ${dir}: ${e instanceof Error ? e.message : e}`);
+            const message = e instanceof Error ? e.message : String(e);
+            this.logger.error(`Failed to load order CSV from ${dir}: ${message}`);
+            void this.loadLog.logFailure(source, dir, message).catch((err) => {
+                this.logger.warn(`Failed to write reference data error log: ${err instanceof Error ? err.message : err}`);
+            });
         }
+    }
+    captureFingerprints(dir) {
+        const fingerprints = new Map();
+        for (const file of REFERENCE_CSV_FILES) {
+            fingerprints.set(file, this.fingerprintFile((0, path_1.join)(dir, file)));
+        }
+        return fingerprints;
+    }
+    fingerprintFile(filePath) {
+        try {
+            const stat = (0, fs_1.statSync)(filePath);
+            return `${stat.mtimeMs}:${stat.size}`;
+        }
+        catch {
+            return '';
+        }
+    }
+    startFileWatch(dir) {
+        this.stopFileWatch();
+        for (const file of REFERENCE_CSV_FILES) {
+            const fullPath = (0, path_1.join)(dir, file);
+            if (!(0, fs_1.existsSync)(fullPath))
+                continue;
+            try {
+                const watcher = (0, fs_1.watch)(fullPath, () => this.scheduleReloadFromFileChange(dir));
+                this.fileWatchers.push(watcher);
+            }
+            catch (e) {
+                this.logger.warn(`Could not watch ${fullPath}: ${e instanceof Error ? e.message : e}`);
+            }
+        }
+    }
+    stopFileWatch() {
+        for (const watcher of this.fileWatchers) {
+            watcher.close();
+        }
+        this.fileWatchers = [];
+    }
+    scheduleReloadFromFileChange(dir) {
+        if (this.reloadDebounce)
+            clearTimeout(this.reloadDebounce);
+        this.reloadDebounce = setTimeout(() => {
+            this.reloadDebounce = null;
+            const nextFingerprints = this.captureFingerprints(dir);
+            const changedFiles = [];
+            for (const file of REFERENCE_CSV_FILES) {
+                const prev = this.fileFingerprints.get(file);
+                const next = nextFingerprints.get(file) ?? '';
+                if (next && prev !== next)
+                    changedFiles.push(file);
+            }
+            if (!changedFiles.length)
+                return;
+            this.loadAll('file_change', changedFiles);
+        }, 1500);
     }
     findDataPlus(doco) {
         return this.dataPlusByDoco.get(doco.trim()) ?? null;
@@ -132,6 +226,7 @@ let OrderDataService = OrderDataService_1 = class OrderDataService {
 };
 exports.OrderDataService = OrderDataService;
 exports.OrderDataService = OrderDataService = OrderDataService_1 = __decorate([
-    (0, common_1.Injectable)()
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [reference_data_load_log_service_1.ReferenceDataLoadLogService])
 ], OrderDataService);
 //# sourceMappingURL=order-data.service.js.map

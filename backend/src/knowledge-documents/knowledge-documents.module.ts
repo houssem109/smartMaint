@@ -13,6 +13,8 @@ import { PipelinePreferences } from './entities/pipeline-preferences.entity';
 import { KnowledgeEntry } from '../knowledge/entities/knowledge-entry.entity';
 import { KnowledgeDocumentsService } from './knowledge-documents.service';
 import { KnowledgeDocumentsController } from './knowledge-documents.controller';
+import { PdfBasicPipelineController } from './pdf-basic-pipeline.controller';
+import { PdfBasicPipelineService } from './pdf-basic-pipeline.service';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { AiModule } from '../ai/ai.module';
 import { RagModule } from '../ai/rag.module';
@@ -26,8 +28,10 @@ import {
   KnowledgeDocumentsOcrQueueProcessor,
   KnowledgeDocumentsQueueProcessor,
   KnowledgeDocumentsVisionQueueProcessor,
+  PdfBasicPipelineQueueProcessor,
 } from './knowledge-documents.queue.processor';
 import {
+  BASIC_PIPELINE_QUEUE,
   EXTRACTION_QUEUE,
   GATE_QUEUE,
   INDEXING_QUEUE,
@@ -55,6 +59,7 @@ import {
       { name: OCR_QUEUE },
       { name: VISION_QUEUE },
       { name: INDEXING_QUEUE },
+      { name: BASIC_PIPELINE_QUEUE },
     ),
     KnowledgeModule,
     AiModule,
@@ -71,9 +76,11 @@ import {
     KnowledgeDocumentsOcrQueueProcessor,
     KnowledgeDocumentsVisionQueueProcessor,
     KnowledgeDocumentsIndexingQueueProcessor,
+    PdfBasicPipelineService,
+    PdfBasicPipelineQueueProcessor,
   ],
-  controllers: [KnowledgeDocumentsController],
-  exports: [KnowledgeDocumentsService],
+  controllers: [KnowledgeDocumentsController, PdfBasicPipelineController],
+  exports: [KnowledgeDocumentsService, PdfBasicPipelineService],
 })
 export class KnowledgeDocumentsModule {}
 

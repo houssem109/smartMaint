@@ -15,7 +15,7 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Check, ChevronLeft, ChevronRight, Edit3, X, FileJson, FileSpreadsheet } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Edit3, ExternalLink, Loader2, X, FileJson, FileSpreadsheet } from 'lucide-react';
 import { downloadCsv, downloadJson } from '@/lib/export-download';
 import {
   adminApprovePayload,
@@ -195,6 +195,7 @@ export default function KnowledgeDocDetailsPage() {
 
   const [doc, setDoc] = useState<KnowledgeDocument | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openingPdf, setOpeningPdf] = useState(false);
   const [extractions, setExtractions] = useState<KnowledgeExtractionCandidate[]>([]);
   const [pageAnalysis, setPageAnalysis] = useState<PageAnalysisRow[]>([]);
   const [docBatchPages, setDocBatchPages] = useState(20);
@@ -546,6 +547,30 @@ export default function KnowledgeDocDetailsPage() {
     }
   };
 
+  const handleOpenPdf = async () => {
+    if (!doc) return;
+    setOpeningPdf(true);
+    try {
+      const res = await api.get(`/knowledge-documents/${doc.id}/download`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data as BlobPart], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 120_000);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Failed to open PDF');
+    } finally {
+      setOpeningPdf(false);
+    }
+  };
+
   const handleRunOcr = async () => {
     if (!id) return;
     setSaving(true);
@@ -740,6 +765,25 @@ export default function KnowledgeDocDetailsPage() {
               </Badge>
               <Button variant="outline" size="sm" onClick={fetchAll}>
                 Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void handleOpenPdf()}
+                disabled={!doc || openingPdf}
+              >
+                {openingPdf ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Opening…
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink className="h-4 w-4" />
+                    Open PDF
+                  </>
+                )}
               </Button>
               <Button variant="outline" size="sm" onClick={handleDownload} disabled={!doc}>
                 Download

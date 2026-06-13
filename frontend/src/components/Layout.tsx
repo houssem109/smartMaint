@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import AdminSidebar from './AdminSidebar';
 import TechnicianSidebar from './TechnicianSidebar';
 import WorkerSidebar from './WorkerSidebar';
-import { Sun, Moon, Bell, Inbox } from 'lucide-react';
+import { Sun, Moon, Bell, Inbox, Menu } from 'lucide-react';
 import api from '@/lib/api';
 import {
   buildNotificationPreview,
@@ -31,6 +31,33 @@ export default function Layout({ children, title }: LayoutProps) {
   const { user } = useAuthStore();
   const { theme, toggleTheme } = useThemeStore();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const sync = () => {
+      const mobile = !mq.matches;
+      setIsMobile(mobile);
+      if (!mobile) setMobileNavOpen(false);
+    };
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  const sidebarProps = {
+    isOpen: isMobile ? true : sidebarOpen,
+    onToggle: () => {
+      if (isMobile) {
+        setMobileNavOpen(false);
+      } else {
+        setSidebarOpen((open) => !open);
+      }
+    },
+    mobileOpen: mobileNavOpen,
+    onNavigate: () => setMobileNavOpen(false),
+  };
 
   const [hasUnreadNotifications, setHasUnreadNotifications] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -137,21 +164,37 @@ export default function Layout({ children, title }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-background text-foreground transition-colors flex">
-      {user?.role === 'worker' && (
-        <WorkerSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          aria-label="Close menu"
+          onClick={() => setMobileNavOpen(false)}
+        />
       )}
-      {user?.role === 'technician' && (
-        <TechnicianSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
-      )}
+
+      {user?.role === 'worker' && <WorkerSidebar {...sidebarProps} />}
+      {user?.role === 'technician' && <TechnicianSidebar {...sidebarProps} />}
       {(user?.role === 'admin' || user?.role === 'superadmin') && (
-        <AdminSidebar isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
+        <AdminSidebar {...sidebarProps} />
       )}
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 bg-card border-b border-border">
           <div className="accent-band-top" aria-hidden />
-          <div className="flex h-14 items-center gap-4 px-4 sm:px-6 lg:px-8">
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">{title}</h1>
+          <div className="flex h-14 items-center gap-3 px-4 sm:px-6 lg:px-8">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 md:hidden"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <h1 className="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-foreground sm:text-lg">
+              {title}
+            </h1>
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {notificationsEnabled && (
               <div className="relative" ref={notificationsRef}>

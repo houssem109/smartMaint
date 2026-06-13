@@ -1,41 +1,44 @@
-'use client';
-
-import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
-import { Toaster } from 'sonner';
-import { useThemeStore } from '@/store/theme-store';
-import TechoChatWidget from '@/components/TechoChatWidget';
+import type { Metadata, Viewport } from 'next';
+import ClientLayout from '@/components/ClientLayout';
 import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'SmartMaint AI',
+  description: 'Maintenance tickets, knowledge base, and Techo assistant',
+  applicationName: 'SmartMaint',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/icons/icon-192.png',
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'SmartMaint',
+  },
+  formatDetection: {
+    telephone: false,
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#1E40AF',
+  width: 'device-width',
+  initialScale: 1,
+};
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { theme } = useThemeStore();
-  const pathname = usePathname();
-  const isLoginPage = pathname === '/login';
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (isLoginPage || theme === 'light') {
-      root.classList.remove('dark');
-    } else {
-      root.classList.add('dark');
-    }
-  }, [theme, isLoginPage]);
-
   return (
-    <html lang="en" className={theme}>
+    <html lang="en">
       <body>
-        {children}
-        {!isLoginPage && <TechoChatWidget />}
-        <Toaster
-          position="bottom-left"
-          theme={theme}
-          duration={4000}
-          richColors
-        />
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );
